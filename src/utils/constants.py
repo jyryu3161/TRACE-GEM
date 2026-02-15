@@ -37,6 +37,15 @@ SOURCE_WEIGHTS = {
 BATCH_SIZE = 10
 MAX_CONCURRENT_REQUESTS = 5
 
+# KEGG organism code -> full organism name
+KEGG_CODE_TO_NAME: dict[str, str] = {
+    "eco": "Escherichia coli",
+    "sce": "Saccharomyces cerevisiae",
+    "hsa": "Homo sapiens",
+    "bsu": "Bacillus subtilis",
+    "ppu": "Pseudomonas putida",
+}
+
 # Common organism mappings (model ID prefix -> KEGG org code)
 ORGANISM_MAP = {
     "iJO1366": "eco",

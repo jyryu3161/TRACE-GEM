@@ -9,7 +9,7 @@ import cobra
 
 from src.core.gpr_parser import extract_genes, parse_gpr
 from src.core.models import Gene, Metabolite, ModelData, Reaction
-from src.utils.constants import ORGANISM_MAP
+from src.utils.constants import KEGG_CODE_TO_NAME, ORGANISM_MAP
 
 logger = logging.getLogger("gem_evaluator.sbml_parser")
 
@@ -148,11 +148,4 @@ class SBMLParser:
             )
 
     def _kegg_code_to_name(self, code: str) -> str:
-        names = {
-            "eco": "Escherichia coli",
-            "sce": "Saccharomyces cerevisiae",
-            "hsa": "Homo sapiens",
-            "bsu": "Bacillus subtilis",
-            "ppu": "Pseudomonas putida",
-        }
-        return names.get(code, code)
+        return KEGG_CODE_TO_NAME.get(code, code)

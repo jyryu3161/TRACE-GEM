@@ -11,8 +11,12 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QSplitter,
@@ -48,7 +52,7 @@ from src.gui.workers import (
     LoadModelWorker,
 )
 from src.utils.config import Config
-from src.utils.constants import APP_NAME, APP_VERSION
+from src.utils.constants import APP_NAME, APP_VERSION, KEGG_CODE_TO_NAME
 
 logger = logging.getLogger("gem_evaluator.gui")
 
@@ -328,21 +332,105 @@ class MainWindow(QMainWindow):
         worker.signals.error.connect(self._on_model_error)
         self._thread_pool.start(worker)
 
+    def _show_organism_dialog(
+        self, detected_code: str | None, detected_name: str | None
+    ) -> tuple[str, str] | None:
+        """Show dialog for user to confirm/enter KEGG organism code.
+
+        Returns (kegg_code, organism_name) or None if cancelled.
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Set Organism")
+        dialog.setMinimumWidth(400)
+
+        layout = QVBoxLayout(dialog)
+
+        info_label = QLabel()
+        if detected_code:
+            info_label.setText(
+                f"Auto-detected organism: <b>{detected_code}</b>"
+                f" ({detected_name or ''}). Confirm or modify below."
+            )
+        else:
+            info_label.setText(
+                "Could not auto-detect organism from model. "
+                "Please enter the KEGG organism code."
+            )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        form = QFormLayout()
+
+        code_edit = QLineEdit()
+        code_edit.setPlaceholderText("e.g. eco")
+        if detected_code:
+            code_edit.setText(detected_code)
+
+        name_edit = QLineEdit()
+        name_edit.setPlaceholderText("e.g. Escherichia coli")
+        if detected_name:
+            name_edit.setText(detected_name)
+
+        # Auto-fill organism name when a known KEGG code is entered
+        def _on_code_changed(text: str) -> None:
+            code = text.strip().lower()
+            known_name = KEGG_CODE_TO_NAME.get(code)
+            if known_name:
+                name_edit.setText(known_name)
+
+        code_edit.textChanged.connect(_on_code_changed)
+
+        form.addRow("KEGG Organism Code:", code_edit)
+        form.addRow("Organism Name:", name_edit)
+        layout.addLayout(form)
+
+        ref_label = QLabel(
+            "<small>Common codes: "
+            "<b>eco</b> (E. coli), <b>sce</b> (S. cerevisiae), "
+            "<b>hsa</b> (H. sapiens), <b>bsu</b> (B. subtilis)</small>"
+        )
+        ref_label.setWordWrap(True)
+        layout.addWidget(ref_label)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            code = code_edit.text().strip().lower()
+            name = name_edit.text().strip()
+            if not code:
+                return None
+            if not name:
+                name = KEGG_CODE_TO_NAME.get(code, code)
+            return (code, name)
+        return None
+
     def _on_model_loaded(self, model: object) -> None:
         if not isinstance(model, ModelData):
             return
         self._model = model
 
-        # Update config with detected organism
+        # Show organism dialog for user to confirm/enter
+        result = self._show_organism_dialog(
+            model.kegg_organism_code, model.organism
+        )
+
         needs_reinit = self._engine is None
-        if model.kegg_organism_code:
-            if model.kegg_organism_code != self._config.kegg_organism_code:
+        if result:
+            kegg_code, org_name = result
+            if kegg_code != self._config.kegg_organism_code:
                 needs_reinit = True
-            self._config.kegg_organism_code = model.kegg_organism_code
-        if model.organism:
-            if model.organism != self._config.organism_name:
+            if org_name != self._config.organism_name:
                 needs_reinit = True
-            self._config.organism_name = model.organism
+            self._config.kegg_organism_code = kegg_code
+            self._config.organism_name = org_name
+            model.kegg_organism_code = kegg_code
+            model.organism = org_name
+            self._config.save()
 
         # Reinit only when settings changed or engine is unavailable.
         if needs_reinit:
