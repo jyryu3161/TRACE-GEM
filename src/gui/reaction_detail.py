@@ -1,0 +1,221 @@
+"""Reaction detail panel showing equation, GPR, bounds, cross-references."""
+
+from __future__ import annotations
+
+import logging
+
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTextBrowser,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from src.core.models import ModelData, Reaction, ReactionEvidence
+from src.gui.theme import THEME
+
+logger = logging.getLogger("gem_evaluator.gui.reaction_detail")
+
+
+class ReactionDetailWidget(QWidget):
+    """Shows detailed information about a selected reaction."""
+
+    evaluate_requested = Signal(str)  # reaction_id
+    reaction_modified = Signal(str)  # reaction_id
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._reaction: Reaction | None = None
+        self._model: ModelData | None = None
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Title
+        self._title = QLabel("Select a reaction")
+        self._title.setObjectName("sectionTitle")
+        layout.addWidget(self._title)
+
+        # Info group
+        info_group = QGroupBox("Reaction Info")
+        info_form = QFormLayout(info_group)
+
+        self._id_label = QLabel("-")
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText("Reaction name")
+        self._subsystem_edit = QLineEdit()
+        self._subsystem_edit.setPlaceholderText("Subsystem")
+
+        # Bounds
+        bounds_layout = QHBoxLayout()
+        self._lower_bound_spin = QDoubleSpinBox()
+        self._lower_bound_spin.setRange(-1000.0, 1000.0)
+        self._lower_bound_spin.setDecimals(1)
+        self._lower_bound_spin.setPrefix("lower: ")
+        self._upper_bound_spin = QDoubleSpinBox()
+        self._upper_bound_spin.setRange(-1000.0, 1000.0)
+        self._upper_bound_spin.setDecimals(1)
+        self._upper_bound_spin.setPrefix("upper: ")
+        bounds_layout.addWidget(self._lower_bound_spin)
+        bounds_layout.addWidget(self._upper_bound_spin)
+
+        info_form.addRow("ID:", self._id_label)
+        info_form.addRow("Name:", self._name_edit)
+        info_form.addRow("Subsystem:", self._subsystem_edit)
+        info_form.addRow("Bounds:", bounds_layout)
+
+        layout.addWidget(info_group)
+
+        # Equation
+        eq_group = QGroupBox("Equation")
+        eq_layout = QVBoxLayout(eq_group)
+        self._equation_edit = QTextEdit()
+        self._equation_edit.setMaximumHeight(80)
+        eq_layout.addWidget(self._equation_edit)
+        layout.addWidget(eq_group)
+
+        # GPR
+        gpr_group = QGroupBox("Gene-Protein-Reaction Rule")
+        gpr_layout = QVBoxLayout(gpr_group)
+        self._gpr_edit = QTextEdit()
+        self._gpr_edit.setMaximumHeight(80)
+        gpr_layout.addWidget(self._gpr_edit)
+        layout.addWidget(gpr_group)
+
+        # Cross-references
+        xref_group = QGroupBox("Cross-References")
+        xref_layout = QVBoxLayout(xref_group)
+        self._xref_browser = QTextBrowser()
+        self._xref_browser.setMaximumHeight(120)
+        self._xref_browser.setOpenExternalLinks(True)
+        xref_layout.addWidget(self._xref_browser)
+        layout.addWidget(xref_group)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        self._eval_btn = QPushButton("Evaluate This Reaction")
+        self._eval_btn.clicked.connect(self._on_evaluate_clicked)
+        self._eval_btn.setEnabled(False)
+
+        self._save_btn = QPushButton("Save Changes")
+        self._save_btn.clicked.connect(self._save_changes)
+        self._save_btn.setEnabled(False)
+
+        btn_layout.addStretch()
+        btn_layout.addWidget(self._save_btn)
+        btn_layout.addWidget(self._eval_btn)
+        layout.addLayout(btn_layout)
+
+        layout.addStretch()
+
+    def set_model(self, model: ModelData) -> None:
+        """Store reference to ModelData (including cobra_model) for sync on save."""
+        self._model = model
+
+    def set_reaction(self, reaction: Reaction) -> None:
+        self._reaction = reaction
+        self._title.setText(f"Reaction: {reaction.id}")
+        self._id_label.setText(reaction.id)
+        self._name_edit.setText(reaction.name)
+        self._subsystem_edit.setText(reaction.subsystem or "")
+        self._lower_bound_spin.setValue(reaction.lower_bound)
+        self._upper_bound_spin.setValue(reaction.upper_bound)
+        self._equation_edit.setPlainText(reaction.equation)
+        self._gpr_edit.setPlainText(reaction.gene_reaction_rule or "")
+
+        # Cross-references from annotation
+        xref_lines = []
+        for key, values in reaction.annotation.items():
+            for v in values:
+                xref_lines.append(f'<b style="color: {THEME.text};">{key}:</b> {v}')
+        self._xref_browser.setHtml(
+            f'<div style="color: {THEME.text};">{"<br>".join(xref_lines)}</div>'
+            if xref_lines
+            else f'<span style="color: {THEME.muted_text};">No annotations</span>'
+        )
+
+        self._eval_btn.setEnabled(True)
+        self._save_btn.setEnabled(True)
+
+    def update_evidence(self, evidence: ReactionEvidence) -> None:
+        if not evidence:
+            return
+
+        # Update cross-references with resolved IDs
+        lines = []
+        if evidence.ec_numbers:
+            lines.append(f"<b>EC Numbers:</b> {', '.join(evidence.ec_numbers)}")
+        if evidence.kegg_reaction_ids:
+            for kid in evidence.kegg_reaction_ids:
+                url = f"https://www.kegg.jp/entry/{kid}"
+                lines.append(f'<b>KEGG:</b> <a href="{url}">{kid}</a>')
+
+        # Show matching results
+        if evidence.substrate_match_ratio > 0 or evidence.product_match_ratio > 0:
+            lines.append(
+                f"<b>Substrate match:</b> {evidence.substrate_match_ratio:.0%} | "
+                f"<b>Product match:</b> {evidence.product_match_ratio:.0%}"
+            )
+        if lines:
+            self._xref_browser.setHtml(
+                f'<div style="color: {THEME.text};">{"<br>".join(lines)}</div>'
+            )
+
+    def clear(self) -> None:
+        self._reaction = None
+        self._title.setText("Select a reaction")
+        self._id_label.setText("-")
+        self._name_edit.clear()
+        self._subsystem_edit.clear()
+        self._lower_bound_spin.setValue(-1000.0)
+        self._upper_bound_spin.setValue(1000.0)
+        self._equation_edit.clear()
+        self._gpr_edit.clear()
+        self._xref_browser.setHtml("")
+        self._eval_btn.setEnabled(False)
+        self._save_btn.setEnabled(False)
+
+    def _on_evaluate_clicked(self) -> None:
+        if self._reaction:
+            self.evaluate_requested.emit(self._reaction.id)
+
+    def _save_changes(self) -> None:
+        if not self._reaction:
+            return
+
+        reaction = self._reaction
+
+        # Update Reaction dataclass fields
+        reaction.name = self._name_edit.text()
+        reaction.subsystem = self._subsystem_edit.text() or None
+        reaction.lower_bound = self._lower_bound_spin.value()
+        reaction.upper_bound = self._upper_bound_spin.value()
+        reaction.gene_reaction_rule = self._gpr_edit.toPlainText()
+
+        # Sync with cobra model if available
+        if self._model and self._model.cobra_model:
+            try:
+                import cobra
+
+                cm = self._model.cobra_model
+                if isinstance(cm, cobra.Model):
+                    cobra_rxn = cm.reactions.get_by_id(reaction.id)
+                    cobra_rxn.name = reaction.name
+                    cobra_rxn.lower_bound = reaction.lower_bound
+                    cobra_rxn.upper_bound = reaction.upper_bound
+                    cobra_rxn.gene_reaction_rule = reaction.gene_reaction_rule
+                    cobra_rxn.subsystem = reaction.subsystem or ""
+            except Exception as e:
+                logger.warning("Failed to sync cobra model for %s: %s", reaction.id, e)
+
+        self.reaction_modified.emit(reaction.id)

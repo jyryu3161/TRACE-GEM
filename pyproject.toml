@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "gem-evaluator"
+version = "0.2.0"
+description = "Genome-Scale Metabolic Model Evidence Evaluator"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Jaeyong Ryu"},
+]
+dependencies = [
+    "cobra>=0.29.0",
+    "PySide6>=6.6.0",
+    "pyqtgraph>=0.13.0",
+    "biopython>=1.83",
+    "aiohttp>=3.9.0",
+    "aiosqlite>=0.19.0",
+    "google-genai>=1.0.0",
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-qt>=4.3",
+    "pytest-cov>=4.1",
+    "aioresponses>=0.7",
+]
+
+[project.scripts]
+gem-evaluator = "src.app:main"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+qt_api = "pyside6"

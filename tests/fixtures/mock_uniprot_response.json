@@ -1,0 +1,21 @@
+{
+  "results": [
+    {
+      "entryType": "UniProtKB reviewed (Swiss-Prot)",
+      "primaryAccession": "P0A6P9",
+      "uniProtkbId": "ENO_ECOLI",
+      "organism": {
+        "scientificName": "Escherichia coli (strain K12)"
+      },
+      "proteinDescription": {
+        "recommendedName": {
+          "fullName": {"value": "Enolase"},
+          "ecNumbers": [{"value": "4.2.1.11"}]
+        }
+      },
+      "genes": [
+        {"geneName": {"value": "eno"}, "orderedLocusNames": [{"value": "b2779"}]}
+      ]
+    }
+  ]
+}

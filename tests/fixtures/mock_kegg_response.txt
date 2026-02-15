@@ -1,0 +1,9 @@
+ENTRY       R00658                      Reaction
+NAME        2-phospho-D-glycerate hydro-lyase
+DEFINITION  2-Phospho-D-glycerate <=> Phosphoenolpyruvate + H2O
+EQUATION    C00631 <=> C00074 + C00001
+ENZYME      4.2.1.11
+PATHWAY     rn00010  Glycolysis / Gluconeogenesis
+            rn00680  Methane metabolism
+ORTHOLOGY   K01689  enolase [EC:4.2.1.11]
+///

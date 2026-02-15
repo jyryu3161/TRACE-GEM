@@ -1,0 +1,32 @@
+{
+  "bigg_id": "ENO",
+  "name": "enolase",
+  "model_count": 8,
+  "database_links": {
+    "EC Number": [
+      {"id": "4.2.1.11", "link": "http://identifiers.org/ec-code/4.2.1.11"}
+    ],
+    "KEGG Reaction": [
+      {"id": "R00658", "link": "http://identifiers.org/kegg.reaction/R00658"}
+    ],
+    "MetaCyc Reaction": [
+      {"id": "ENOLASE-RXN", "link": "http://identifiers.org/metacyc.reaction/ENOLASE-RXN"}
+    ],
+    "RHEA": [
+      {"id": "10164", "link": "http://identifiers.org/rhea/10164"}
+    ],
+    "SEED Reaction": [
+      {"id": "rxn00459", "link": "http://identifiers.org/seed.reaction/rxn00459"}
+    ]
+  },
+  "models_containing_reaction": [
+    {"bigg_id": "iJO1366", "organism": "Escherichia coli str. K-12 substr. MG1655"},
+    {"bigg_id": "iML1515", "organism": "Escherichia coli str. K-12 substr. MG1655"},
+    {"bigg_id": "iAF1260", "organism": "Escherichia coli str. K-12 substr. MG1655"},
+    {"bigg_id": "iMM904", "organism": "Saccharomyces cerevisiae S288C"},
+    {"bigg_id": "Recon3D", "organism": "Homo sapiens"},
+    {"bigg_id": "iND750", "organism": "Saccharomyces cerevisiae S288C"},
+    {"bigg_id": "iYO844", "organism": "Bacillus subtilis"},
+    {"bigg_id": "iJN746", "organism": "Pseudomonas putida"}
+  ]
+}

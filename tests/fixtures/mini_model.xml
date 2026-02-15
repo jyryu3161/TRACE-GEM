@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level2" level="2" version="1">
+  <model id="mini_test_model" name="Mini Test Model">
+    <listOfCompartments>
+      <compartment id="c" name="cytoplasm"/>
+      <compartment id="e" name="extracellular"/>
+    </listOfCompartments>
+    <listOfSpecies>
+      <species id="M_glc_DASH_D_c" name="D-Glucose" compartment="c" boundaryCondition="false">
+        <notes><body xmlns="http://www.w3.org/1999/xhtml"><p>FORMULA: C6H12O6</p></body></notes>
+      </species>
+      <species id="M_g6p_c" name="D-Glucose 6-phosphate" compartment="c" boundaryCondition="false">
+        <notes><body xmlns="http://www.w3.org/1999/xhtml"><p>FORMULA: C6H13O9P</p></body></notes>
+      </species>
+      <species id="M_atp_c" name="ATP" compartment="c" boundaryCondition="false"/>
+      <species id="M_adp_c" name="ADP" compartment="c" boundaryCondition="false"/>
+      <species id="M_h_c" name="H+" compartment="c" boundaryCondition="false"/>
+      <species id="M_pep_c" name="Phosphoenolpyruvate" compartment="c" boundaryCondition="false"/>
+      <species id="M_2pg_c" name="D-Glycerate 2-phosphate" compartment="c" boundaryCondition="false"/>
+      <species id="M_h2o_c" name="H2O" compartment="c" boundaryCondition="false"/>
+      <species id="M_glc_DASH_D_e" name="D-Glucose" compartment="e" boundaryCondition="true"/>
+    </listOfSpecies>
+    <listOfReactions>
+      <reaction id="R_HEX1" name="Hexokinase" reversible="false">
+        <notes><body xmlns="http://www.w3.org/1999/xhtml"><p>GENE_ASSOCIATION: b2388</p><p>SUBSYSTEM: Glycolysis/Gluconeogenesis</p></body></notes>
+        <listOfReactants>
+          <speciesReference species="M_glc_DASH_D_c" stoichiometry="1"/>
+          <speciesReference species="M_atp_c" stoichiometry="1"/>
+        </listOfReactants>
+        <listOfProducts>
+          <speciesReference species="M_g6p_c" stoichiometry="1"/>
+          <speciesReference species="M_adp_c" stoichiometry="1"/>
+          <speciesReference species="M_h_c" stoichiometry="1"/>
+        </listOfProducts>
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><ci>FLUX_VALUE</ci></math>
+          <listOfParameters>
+            <parameter id="LOWER_BOUND" value="0"/>
+            <parameter id="UPPER_BOUND" value="1000"/>
+            <parameter id="OBJECTIVE_COEFFICIENT" value="0"/>
+          </listOfParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R_ENO" name="enolase" reversible="true">
+        <notes><body xmlns="http://www.w3.org/1999/xhtml"><p>GENE_ASSOCIATION: b2779</p><p>SUBSYSTEM: Glycolysis/Gluconeogenesis</p></body></notes>
+        <listOfReactants>
+          <speciesReference species="M_2pg_c" stoichiometry="1"/>
+        </listOfReactants>
+        <listOfProducts>
+          <speciesReference species="M_pep_c" stoichiometry="1"/>
+          <speciesReference species="M_h2o_c" stoichiometry="1"/>
+        </listOfProducts>
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><ci>FLUX_VALUE</ci></math>
+          <listOfParameters>
+            <parameter id="LOWER_BOUND" value="-1000"/>
+            <parameter id="UPPER_BOUND" value="1000"/>
+            <parameter id="OBJECTIVE_COEFFICIENT" value="0"/>
+          </listOfParameters>
+        </kineticLaw>
+      </reaction>
+      <reaction id="R_EX_glc_LPAREN_e_RPAREN_" name="D-Glucose exchange" reversible="true">
+        <notes><body xmlns="http://www.w3.org/1999/xhtml"><p>SUBSYSTEM: Exchange</p></body></notes>
+        <listOfReactants>
+          <speciesReference species="M_glc_DASH_D_e" stoichiometry="1"/>
+        </listOfReactants>
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><ci>FLUX_VALUE</ci></math>
+          <listOfParameters>
+            <parameter id="LOWER_BOUND" value="-10"/>
+            <parameter id="UPPER_BOUND" value="1000"/>
+            <parameter id="OBJECTIVE_COEFFICIENT" value="0"/>
+          </listOfParameters>
+        </kineticLaw>
+      </reaction>
+    </listOfReactions>
+  </model>
+</sbml>

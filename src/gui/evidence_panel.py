@@ -1,0 +1,170 @@
+"""Evidence panel showing multi-source verification results."""
+
+from __future__ import annotations
+
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
+
+from src.core.models import EvidenceSource, ReactionEvidence
+from src.evidence.evidence_types import SOURCE_LABELS, STRENGTH_COLORS, STRENGTH_LABELS
+from src.gui.theme import THEME, score_color
+
+
+class EvidencePanelWidget(QWidget):
+    """Panel showing evidence details with KEGG, Gemini, and Perplexity results."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Score display
+        score_layout = QHBoxLayout()
+        score_layout.addWidget(QLabel("Confidence Score:"))
+        self._score_label = QLabel("-")
+        self._score_label.setObjectName("scoreLabel")
+        score_layout.addWidget(self._score_label)
+        score_layout.addStretch()
+        layout.addLayout(score_layout)
+
+        # Evidence browser (single view, no tabs)
+        self._browser = QTextBrowser()
+        self._browser.setOpenExternalLinks(True)
+        self._browser.setPlainText("Select a reaction and evaluate")
+        layout.addWidget(self._browser)
+
+    def set_evidence(self, evidence: ReactionEvidence) -> None:
+        score = evidence.confidence_score
+        color = score_color(score)
+        self._score_label.setText(f"{score:.3f}")
+        self._score_label.setStyleSheet(f"color: {color}; font-size: 24px; font-weight: bold;")
+
+        html_parts = []
+
+        # KEGG Verification summary card
+        html_parts.append(
+            f'<div style="margin-bottom: 12px; padding: 10px; '
+            f"background-color: {THEME.evidence_item_bg}; "
+            f'color: {THEME.text}; border-radius: 4px;">'
+            f"<h3>KEGG Verification</h3>"
+        )
+
+        # Match ratios with overlap detail from raw_data
+        kegg_items = [i for i in evidence.items if i.source == EvidenceSource.KEGG]
+        if evidence.substrate_match_ratio > 0 or evidence.product_match_ratio > 0:
+            sub_color = self._ratio_color(evidence.substrate_match_ratio)
+            prod_color = self._ratio_color(evidence.product_match_ratio)
+
+            # Try to extract overlap counts from raw_data
+            sub_detail = f"{evidence.substrate_match_ratio:.0%}"
+            prod_detail = f"{evidence.product_match_ratio:.0%}"
+            if kegg_items and kegg_items[0].raw_data:
+                rd = kegg_items[0].raw_data
+                model_subs = rd.get("model_substrates", [])
+                kegg_subs = rd.get("kegg_substrates", [])
+                if model_subs or kegg_subs:
+                    s_overlap = len(set(model_subs) & set(kegg_subs))
+                    s_total = len(set(model_subs) | set(kegg_subs))
+                    sub_detail = f"{s_overlap}/{s_total} ({evidence.substrate_match_ratio:.0%})"
+                model_prods = rd.get("model_products", [])
+                kegg_prods = rd.get("kegg_products", [])
+                if model_prods or kegg_prods:
+                    p_overlap = len(set(model_prods) & set(kegg_prods))
+                    p_total = len(set(model_prods) | set(kegg_prods))
+                    prod_detail = f"{p_overlap}/{p_total} ({evidence.product_match_ratio:.0%})"
+
+            html_parts.append(
+                f'<b>Substrates matched:</b> <span style="color: {sub_color};">'
+                f"{sub_detail}</span> | "
+                f'<b>Products matched:</b> <span style="color: {prod_color};">'
+                f"{prod_detail}</span><br>"
+            )
+
+        # KEGG reaction links
+        if evidence.kegg_reaction_ids:
+            links = []
+            for kid in evidence.kegg_reaction_ids:
+                url = f"https://www.kegg.jp/entry/{kid}"
+                links.append(f'<a href="{url}">{kid}</a>')
+            html_parts.append(f"<b>KEGG IDs:</b> {', '.join(links)}<br>")
+
+        # EC numbers
+        if evidence.ec_numbers:
+            html_parts.append(f"<b>EC Numbers:</b> {', '.join(evidence.ec_numbers)}<br>")
+
+        html_parts.append("</div>")
+
+        # Gemini verification card
+        gemini_items = [i for i in evidence.items if i.source == EvidenceSource.GEMINI]
+        if gemini_items:
+            item = gemini_items[0]
+            strength_color = STRENGTH_COLORS[item.strength]
+            html_parts.append(
+                f'<div style="margin-bottom: 12px; padding: 10px; '
+                f"background-color: {THEME.evidence_item_bg}; "
+                f'color: {THEME.text}; border-radius: 4px;">'
+                f"<h3>LLM Verification (Gemini)</h3>"
+                f'<span style="color: {strength_color};">'
+                f"{STRENGTH_LABELS[item.strength]}</span><br>"
+                f"{item.description}"
+                f"</div>"
+            )
+
+        # Perplexity verification card
+        pplx_items = [i for i in evidence.items if i.source == EvidenceSource.PERPLEXITY]
+        if pplx_items:
+            item = pplx_items[0]
+            strength_color = STRENGTH_COLORS[item.strength]
+            html_parts.append(
+                f'<div style="margin-bottom: 12px; padding: 10px; '
+                f"background-color: {THEME.evidence_item_bg}; "
+                f'color: {THEME.text}; border-radius: 4px;">'
+                f"<h3>Species Check (Perplexity)</h3>"
+                f'<span style="color: {strength_color};">'
+                f"{STRENGTH_LABELS[item.strength]}</span><br>"
+                f"{item.description}"
+                f"</div>"
+            )
+
+        # Individual evidence items (all sources)
+        for item in evidence.items:
+            strength_label = STRENGTH_LABELS[item.strength]
+            strength_color = STRENGTH_COLORS[item.strength]
+            source_label = SOURCE_LABELS.get(item.source, item.source.value)
+
+            html_parts.append(
+                f'<div style="margin-bottom: 8px; padding: 8px; '
+                f"border-left: 4px solid {strength_color}; "
+                f"background-color: {THEME.evidence_item_bg}; "
+                f'color: {THEME.text};">'
+                f'<b style="color: {strength_color};">[{source_label}] {strength_label}</b><br>'
+                f"{item.description}"
+            )
+            if item.url:
+                html_parts.append(f'<br><a href="{item.url}">View source</a>')
+            html_parts.append("</div>")
+
+        self._browser.setHtml("".join(html_parts))
+
+    def clear(self) -> None:
+        self._score_label.setText("-")
+        self._score_label.setStyleSheet(f"color: {THEME.neutral};")
+        self._browser.setPlainText("Select a reaction and evaluate")
+
+    @staticmethod
+    def _ratio_color(ratio: float) -> str:
+        """Return color based on match ratio."""
+        if ratio >= 0.8:
+            return THEME.strength_strong
+        elif ratio >= 0.5:
+            return THEME.strength_moderate
+        else:
+            return THEME.strength_weak
