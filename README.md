@@ -32,14 +32,34 @@ LLM 검증 기능을 사용하려면 아래 API 키가 필요합니다. 없어�
 
 ## 설치
 
-### 1. 저장소 클론
+### 1. Git LFS 설치
+
+`data/` 폴더의 매핑 데이터 파일(최대 77MB)은 Git LFS로 관리됩니다. 클론 전에 Git LFS가 설치되어 있어야 합니다.
+
+```bash
+# macOS
+brew install git-lfs
+
+# Ubuntu / Debian
+sudo apt install git-lfs
+
+# Windows (Git for Windows에 포함)
+# 별도 설치 불필요
+
+git lfs install
+```
+
+### 2. 저장소 클론
 
 ```bash
 git clone https://github.com/jyryu3161/model_evaluator.git
 cd model_evaluator
 ```
 
-### 2. 가상환경 생성 및 활성화
+> Git LFS가 설치된 상태에서 클론하면 `data/` 파일이 자동으로 다운로드됩니다.
+> 이미 클론한 경우 `git lfs pull`로 데이터 파일을 받을 수 있습니다.
+
+### 3. 가상환경 생성 및 활성화
 
 ```bash
 python -m venv .venv
@@ -51,7 +71,7 @@ source .venv/bin/activate
 .venv\Scripts\activate
 ```
 
-### 3. 의존성 설치
+### 4. 의존성 설치
 
 ```bash
 # 실행만 하는 경우
@@ -67,7 +87,7 @@ pip install -r requirements-dev.txt
 pip install -e ".[dev]"
 ```
 
-### 4. Pre-commit 훅 설치 (개발 시)
+### 5. Pre-commit 훅 설치 (개발 시)
 
 ```bash
 pre-commit install
