@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 
 from src.core.models import ReactionEvidence
+from src.evidence.evidence_types import get_ordered_sources
 from src.gui.theme import THEME
 
 try:
@@ -16,7 +17,7 @@ except ImportError:
 
 
 class ScoreVisualizationWidget(QWidget):
-    """Charts showing score distribution, match ratios, and subsystem breakdown."""
+    """Charts showing score distribution, match ratios, by-source, and subsystem breakdown."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -43,10 +44,16 @@ class ScoreVisualizationWidget(QWidget):
         self._tabs.addTab(self._hist_widget, "Distribution")
 
         # Match ratio chart
-        self._match_widget = pg.PlotWidget(title="KEGG Match Ratios")
+        self._match_widget = pg.PlotWidget(title="Database Match Ratios")
         self._match_widget.setLabel("bottom", "Match Ratio")
         self._match_widget.setLabel("left", "Reaction Count")
         self._tabs.addTab(self._match_widget, "Match Ratios")
+
+        # By Source chart (new)
+        self._source_widget = pg.PlotWidget(title="Average Score by Source")
+        self._source_widget.setLabel("bottom", "Source")
+        self._source_widget.setLabel("left", "Average Score")
+        self._tabs.addTab(self._source_widget, "By Source")
 
         # Per-subsystem chart
         self._subsystem_widget = pg.PlotWidget(title="Average Score by Subsystem")
@@ -70,6 +77,7 @@ class ScoreVisualizationWidget(QWidget):
 
         self._update_histogram(scores)
         self._update_match_chart(evidence)
+        self._update_source_chart(evidence)
         if subsystem_map:
             self._update_subsystem_chart(evidence, subsystem_map)
 
@@ -137,6 +145,36 @@ class ScoreVisualizationWidget(QWidget):
 
         # Add legend
         self._match_widget.addLegend()
+
+    def _update_source_chart(self, evidence: dict[str, ReactionEvidence]) -> None:
+        """Show average score per evidence source."""
+        self._source_widget.clear()
+
+        ordered = get_ordered_sources()
+        names = []
+        averages = []
+        brushes = []
+
+        for source, sc in ordered:
+            attr = f"{source.value}_score"
+            scores = [getattr(ev, attr, 0.0) for ev in evidence.values()]
+            avg = sum(scores) / len(scores) if scores else 0.0
+            names.append(sc.display_name)
+            averages.append(avg)
+            brushes.append(pg.mkBrush(sc.color))
+
+        x = list(range(len(names)))
+        bar = pg.BarGraphItem(
+            x=x,
+            height=averages,
+            width=0.6,
+            brushes=brushes,
+            pen=pg.mkPen(THEME.chart_pen, width=1),
+        )
+        self._source_widget.addItem(bar)
+
+        ax = self._source_widget.getAxis("bottom")
+        ax.setTicks([list(zip(x, names, strict=False))])
 
     def _update_subsystem_chart(
         self,

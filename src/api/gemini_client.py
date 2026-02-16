@@ -204,8 +204,10 @@ class GeminiClient:
             strength = EvidenceStrength.WEAK
 
         match_text = "Match" if is_match else "Mismatch"
-        met_tag = "(metabolites: verified)" if metabolites_in_org is True else (
-            "(metabolites: issues found)" if metabolites_in_org is False else ""
+        met_tag = (
+            "(metabolites: verified)"
+            if metabolites_in_org is True
+            else ("(metabolites: issues found)" if metabolites_in_org is False else "")
         )
         description = (
             f"LLM Verification ({kegg_id}): {match_text} "

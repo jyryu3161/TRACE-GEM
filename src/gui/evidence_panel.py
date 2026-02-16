@@ -10,13 +10,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.core.models import EvidenceSource, ReactionEvidence
-from src.evidence.evidence_types import SOURCE_LABELS, STRENGTH_COLORS, STRENGTH_LABELS
+from src.core.models import EvidenceItem, EvidenceSource, ReactionEvidence
+from src.evidence.evidence_types import (
+    SOURCE_LABELS,
+    SOURCE_REGISTRY,
+    STRENGTH_COLORS,
+    STRENGTH_LABELS,
+)
 from src.gui.theme import THEME, score_color
 
 
 class EvidencePanelWidget(QWidget):
-    """Panel showing evidence details with KEGG, Gemini, and Perplexity results."""
+    """Panel showing evidence details with all source results."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -49,90 +54,29 @@ class EvidencePanelWidget(QWidget):
 
         html_parts = []
 
-        # KEGG Verification summary card
-        html_parts.append(
-            f'<div style="margin-bottom: 12px; padding: 10px; '
-            f"background-color: {THEME.evidence_item_bg}; "
-            f'color: {THEME.text}; border-radius: 4px;">'
-            f"<h3>KEGG Verification</h3>"
-        )
+        # KEGG Verification summary card (special — includes match ratios)
+        html_parts.append(self._render_kegg_card(evidence))
 
-        # Match ratios with overlap detail from raw_data
-        kegg_items = [i for i in evidence.items if i.source == EvidenceSource.KEGG]
-        if evidence.substrate_match_ratio > 0 or evidence.product_match_ratio > 0:
-            sub_color = self._ratio_color(evidence.substrate_match_ratio)
-            prod_color = self._ratio_color(evidence.product_match_ratio)
-
-            # Try to extract overlap counts from raw_data
-            sub_detail = f"{evidence.substrate_match_ratio:.0%}"
-            prod_detail = f"{evidence.product_match_ratio:.0%}"
-            if kegg_items and kegg_items[0].raw_data:
-                rd = kegg_items[0].raw_data
-                model_subs = rd.get("model_substrates", [])
-                kegg_subs = rd.get("kegg_substrates", [])
-                if model_subs or kegg_subs:
-                    s_overlap = len(set(model_subs) & set(kegg_subs))
-                    s_total = len(set(model_subs) | set(kegg_subs))
-                    sub_detail = f"{s_overlap}/{s_total} ({evidence.substrate_match_ratio:.0%})"
-                model_prods = rd.get("model_products", [])
-                kegg_prods = rd.get("kegg_products", [])
-                if model_prods or kegg_prods:
-                    p_overlap = len(set(model_prods) & set(kegg_prods))
-                    p_total = len(set(model_prods) | set(kegg_prods))
-                    prod_detail = f"{p_overlap}/{p_total} ({evidence.product_match_ratio:.0%})"
-
-            html_parts.append(
-                f'<b>Substrates matched:</b> <span style="color: {sub_color};">'
-                f"{sub_detail}</span> | "
-                f'<b>Products matched:</b> <span style="color: {prod_color};">'
-                f"{prod_detail}</span><br>"
-            )
-
-        # KEGG reaction links
-        if evidence.kegg_reaction_ids:
-            links = []
-            for kid in evidence.kegg_reaction_ids:
-                url = f"https://www.kegg.jp/entry/{kid}"
-                links.append(f'<a href="{url}">{kid}</a>')
-            html_parts.append(f"<b>KEGG IDs:</b> {', '.join(links)}<br>")
-
-        # EC numbers
-        if evidence.ec_numbers:
-            html_parts.append(f"<b>EC Numbers:</b> {', '.join(evidence.ec_numbers)}<br>")
-
-        html_parts.append("</div>")
+        # Database source cards (BiGG, UniProt, PubMed, MetaCyc)
+        for source in (
+            EvidenceSource.BIGG,
+            EvidenceSource.UNIPROT,
+            EvidenceSource.PUBMED,
+            EvidenceSource.METACYC,
+        ):
+            items = [i for i in evidence.items if i.source == source]
+            if items:
+                html_parts.append(self._render_source_card(source, items[0]))
 
         # Gemini verification card
         gemini_items = [i for i in evidence.items if i.source == EvidenceSource.GEMINI]
         if gemini_items:
-            item = gemini_items[0]
-            strength_color = STRENGTH_COLORS[item.strength]
-            html_parts.append(
-                f'<div style="margin-bottom: 12px; padding: 10px; '
-                f"background-color: {THEME.evidence_item_bg}; "
-                f'color: {THEME.text}; border-radius: 4px;">'
-                f"<h3>LLM Verification (Gemini)</h3>"
-                f'<span style="color: {strength_color};">'
-                f"{STRENGTH_LABELS[item.strength]}</span><br>"
-                f"{item.description}"
-                f"</div>"
-            )
+            html_parts.append(self._render_source_card(EvidenceSource.GEMINI, gemini_items[0]))
 
         # Perplexity verification card
         pplx_items = [i for i in evidence.items if i.source == EvidenceSource.PERPLEXITY]
         if pplx_items:
-            item = pplx_items[0]
-            strength_color = STRENGTH_COLORS[item.strength]
-            html_parts.append(
-                f'<div style="margin-bottom: 12px; padding: 10px; '
-                f"background-color: {THEME.evidence_item_bg}; "
-                f'color: {THEME.text}; border-radius: 4px;">'
-                f"<h3>Species Check (Perplexity)</h3>"
-                f'<span style="color: {strength_color};">'
-                f"{STRENGTH_LABELS[item.strength]}</span><br>"
-                f"{item.description}"
-                f"</div>"
-            )
+            html_parts.append(self._render_source_card(EvidenceSource.PERPLEXITY, pplx_items[0]))
 
         # Individual evidence items (all sources)
         for item in evidence.items:
@@ -153,6 +97,84 @@ class EvidencePanelWidget(QWidget):
             html_parts.append("</div>")
 
         self._browser.setHtml("".join(html_parts))
+
+    def _render_kegg_card(self, evidence: ReactionEvidence) -> str:
+        """Render KEGG-specific card with match ratios."""
+        parts = []
+        kegg_color = SOURCE_REGISTRY[EvidenceSource.KEGG].color
+
+        parts.append(
+            f'<div style="margin-bottom: 12px; padding: 10px; '
+            f"border-left: 4px solid {kegg_color}; "
+            f"background-color: {THEME.evidence_item_bg}; "
+            f'color: {THEME.text}; border-radius: 4px;">'
+            f"<h3>KEGG Verification</h3>"
+        )
+
+        kegg_items = [i for i in evidence.items if i.source == EvidenceSource.KEGG]
+        if evidence.substrate_match_ratio > 0 or evidence.product_match_ratio > 0:
+            sub_color = self._ratio_color(evidence.substrate_match_ratio)
+            prod_color = self._ratio_color(evidence.product_match_ratio)
+
+            sub_detail = f"{evidence.substrate_match_ratio:.0%}"
+            prod_detail = f"{evidence.product_match_ratio:.0%}"
+            if kegg_items and kegg_items[0].raw_data:
+                rd = kegg_items[0].raw_data
+                model_subs = rd.get("model_substrates", [])
+                kegg_subs = rd.get("kegg_substrates", [])
+                if model_subs or kegg_subs:
+                    s_overlap = len(set(model_subs) & set(kegg_subs))
+                    s_total = len(set(model_subs) | set(kegg_subs))
+                    sub_detail = f"{s_overlap}/{s_total} ({evidence.substrate_match_ratio:.0%})"
+                model_prods = rd.get("model_products", [])
+                kegg_prods = rd.get("kegg_products", [])
+                if model_prods or kegg_prods:
+                    p_overlap = len(set(model_prods) & set(kegg_prods))
+                    p_total = len(set(model_prods) | set(kegg_prods))
+                    prod_detail = f"{p_overlap}/{p_total} ({evidence.product_match_ratio:.0%})"
+
+            parts.append(
+                f'<b>Substrates matched:</b> <span style="color: {sub_color};">'
+                f"{sub_detail}</span> | "
+                f'<b>Products matched:</b> <span style="color: {prod_color};">'
+                f"{prod_detail}</span><br>"
+            )
+
+        if evidence.kegg_reaction_ids:
+            links = []
+            for kid in evidence.kegg_reaction_ids:
+                url = f"https://www.kegg.jp/entry/{kid}"
+                links.append(f'<a href="{url}">{kid}</a>')
+            parts.append(f"<b>KEGG IDs:</b> {', '.join(links)}<br>")
+
+        if evidence.ec_numbers:
+            parts.append(f"<b>EC Numbers:</b> {', '.join(evidence.ec_numbers)}<br>")
+
+        parts.append("</div>")
+        return "".join(parts)
+
+    @staticmethod
+    def _render_source_card(source: EvidenceSource, item: EvidenceItem) -> str:
+        """Render a generic evidence source card."""
+        sc = SOURCE_REGISTRY.get(source)
+        source_color = sc.color if sc else THEME.neutral
+        display_name = sc.display_name if sc else source.value
+        strength_color = STRENGTH_COLORS[item.strength]
+
+        parts = [
+            f'<div style="margin-bottom: 12px; padding: 10px; '
+            f"border-left: 4px solid {source_color}; "
+            f"background-color: {THEME.evidence_item_bg}; "
+            f'color: {THEME.text}; border-radius: 4px;">',
+            f"<h3>{display_name}</h3>",
+            f'<span style="color: {strength_color};">',
+            f"{STRENGTH_LABELS[item.strength]}</span><br>",
+            item.description,
+        ]
+        if item.url:
+            parts.append(f'<br><a href="{item.url}">View source</a>')
+        parts.append("</div>")
+        return "".join(parts)
 
     def clear(self) -> None:
         self._score_label.setText("-")

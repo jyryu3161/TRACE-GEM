@@ -30,6 +30,10 @@ class EvidenceEngine:
         self._config = config
         self._cache: CacheManager | None = None
         self._kegg: KEGGClient | None = None
+        self._bigg: Any = None
+        self._uniprot: Any = None
+        self._pubmed: Any = None
+        self._metacyc: Any = None
         self._gemini: Any = None
         self._perplexity: Any = None
         self._mapper: IdentifierMapper | None = None
@@ -50,6 +54,53 @@ class EvidenceEngine:
             cache_manager=self._cache,
         )
         self._mapper = IdentifierMapper(self._mapping_data)
+
+        # Initialize BiGG client
+        if self._config.enable_bigg:
+            try:
+                from src.api.bigg_client import BiGGClient
+
+                self._bigg = BiGGClient(cache_manager=self._cache)
+                logger.info("BiGG client initialized")
+            except Exception as e:
+                logger.warning("Failed to initialize BiGG client: %s", e)
+
+        # Initialize UniProt client
+        if self._config.enable_uniprot:
+            try:
+                from src.api.uniprot_client import UniProtClient
+
+                self._uniprot = UniProtClient(
+                    taxonomy_id=self._config.uniprot_taxonomy_id,
+                    cache_manager=self._cache,
+                )
+                logger.info("UniProt client initialized")
+            except Exception as e:
+                logger.warning("Failed to initialize UniProt client: %s", e)
+
+        # Initialize PubMed client
+        if self._config.enable_pubmed:
+            try:
+                from src.api.pubmed_client import PubMedClient
+
+                self._pubmed = PubMedClient(
+                    email=self._config.pubmed_email,
+                    api_key=self._config.pubmed_api_key,
+                    cache_manager=self._cache,
+                )
+                logger.info("PubMed client initialized")
+            except Exception as e:
+                logger.warning("Failed to initialize PubMed client: %s", e)
+
+        # Initialize MetaCyc client
+        if self._config.enable_metacyc:
+            try:
+                from src.api.metacyc_client import MetaCycClient
+
+                self._metacyc = MetaCycClient(cache_manager=self._cache)
+                logger.info("MetaCyc client initialized")
+            except Exception as e:
+                logger.warning("Failed to initialize MetaCyc client: %s", e)
 
         # Initialize Gemini client if API key is available
         if self._config.gemini_api_key and self._config.enable_gemini:
@@ -81,15 +132,19 @@ class EvidenceEngine:
         """Close all API clients and cache."""
         if self._closed:
             return
-        if self._kegg:
-            await self._kegg.close()
-            self._kegg = None
-        if self._gemini:
-            await self._gemini.close()
-            self._gemini = None
-        if self._perplexity:
-            await self._perplexity.close()
-            self._perplexity = None
+        for client_attr in (
+            "_kegg",
+            "_bigg",
+            "_uniprot",
+            "_pubmed",
+            "_metacyc",
+            "_gemini",
+            "_perplexity",
+        ):
+            client = getattr(self, client_attr, None)
+            if client:
+                await client.close()
+                setattr(self, client_attr, None)
         if self._cache:
             await self._cache.close()
             self._cache = None
@@ -103,7 +158,7 @@ class EvidenceEngine:
         return self._mapper
 
     async def evaluate_reaction(self, reaction: Reaction) -> ReactionEvidence:
-        """Evaluate a single reaction using KEGG + optional LLM verification."""
+        """Evaluate a single reaction against all enabled sources."""
         evidence = ReactionEvidence(reaction_id=reaction.id)
         evidence.status = EvaluationStatus.IN_PROGRESS
 
@@ -138,6 +193,62 @@ class EvidenceEngine:
                         evidence.product_match_ratio = prod_match
                     kegg_parsed_data = item.raw_data.get("kegg_parsed")
 
+            # Step 4: BiGG verification
+            if self._bigg:
+                try:
+                    bigg_items = await self._bigg.check_evidence(
+                        reaction,
+                        bigg_id=reaction.id,
+                    )
+                    evidence.items.extend(bigg_items)
+                except Exception as e:
+                    logger.warning("BiGG verification failed for %s: %s", reaction.id, e)
+
+            # Step 5: UniProt verification
+            if self._uniprot:
+                try:
+                    uniprot_items = await self._uniprot.check_evidence(
+                        reaction,
+                        ec_numbers=ext_ids.ec_numbers,
+                    )
+                    evidence.items.extend(uniprot_items)
+                except Exception as e:
+                    logger.warning("UniProt verification failed for %s: %s", reaction.id, e)
+
+            # Step 6: PubMed verification
+            if self._pubmed:
+                try:
+                    pubmed_items = await self._pubmed.check_evidence(
+                        reaction,
+                        ec_numbers=ext_ids.ec_numbers,
+                        organism_name=self._config.organism_name,
+                    )
+                    evidence.items.extend(pubmed_items)
+                except Exception as e:
+                    logger.warning("PubMed verification failed for %s: %s", reaction.id, e)
+
+            # Step 7: MetaCyc verification
+            if self._metacyc:
+                try:
+                    # Try to extract MetaCyc IDs from BiGG database_links
+                    metacyc_ids: list[str] = []
+                    for item in evidence.items:
+                        if item.raw_data and "database_links" in item.raw_data:
+                            db_links = item.raw_data["database_links"]
+                            for mc_entry in db_links.get("MetaCyc Reaction", []):
+                                mc_id = mc_entry.get("id", "")
+                                if mc_id:
+                                    metacyc_ids.append(mc_id)
+
+                    metacyc_items = await self._metacyc.check_evidence(
+                        reaction,
+                        metacyc_ids=metacyc_ids,
+                        ec_numbers=ext_ids.ec_numbers,
+                    )
+                    evidence.items.extend(metacyc_items)
+                except Exception as e:
+                    logger.warning("MetaCyc verification failed for %s: %s", reaction.id, e)
+
             # Resolve metabolite names for LLM prompts
             reactant_names: dict[str, str] = {}
             product_names: dict[str, str] = {}
@@ -148,7 +259,7 @@ class EvidenceEngine:
                 name = self._mapper.get_metabolite_name(met_id) if self._mapper else None
                 product_names[met_id] = name or met_id
 
-            # Step 4: Gemini verification (if KEGG match exists)
+            # Step 8: Gemini verification (if KEGG match exists)
             if self._gemini and kegg_parsed_data:
                 try:
                     gemini_item = await self._gemini.verify_reaction_match(
@@ -164,7 +275,7 @@ class EvidenceEngine:
                 except Exception as e:
                     logger.warning("Gemini verification failed for %s: %s", reaction.id, e)
 
-            # Step 5: Perplexity verification
+            # Step 9: Perplexity verification
             if self._perplexity:
                 try:
                     pplx_item = await self._perplexity.verify_reaction_existence(
@@ -178,7 +289,7 @@ class EvidenceEngine:
                 except Exception as e:
                     logger.warning("Perplexity verification failed for %s: %s", reaction.id, e)
 
-            # Step 6: Score
+            # Step 10: Score
             self._scorer.score(evidence)
             evidence.status = EvaluationStatus.EVALUATED
 
@@ -214,7 +325,7 @@ class EvidenceEngine:
                 nonlocal completed
                 if cancel_event and cancel_event.is_set():
                     return
-                async with semaphore:
+                async with semaphore:  # noqa: B023
                     if cancel_event and cancel_event.is_set():
                         return
                     await self.evaluate_reaction(reaction)

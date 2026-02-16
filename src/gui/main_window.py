@@ -195,37 +195,48 @@ class MainWindow(QMainWindow):
         self._statusbar = QStatusBar()
         self.setStatusBar(self._statusbar)
 
-        self._gemini_status = QLabel()
-        self._perplexity_status = QLabel()
-        self._statusbar.addPermanentWidget(self._gemini_status)
-        self._statusbar.addPermanentWidget(self._perplexity_status)
-        self._update_llm_status()
+        self._source_status_labels: dict[str, QLabel] = {}
+        self._update_source_status()
 
         self._statusbar.showMessage("Ready — Open an SBML model to begin")
 
-    def _update_llm_status(self) -> None:
-        """Update the permanent LLM connection indicators in the status bar."""
-        if self._config.gemini_api_key and self._config.enable_gemini:
-            self._gemini_status.setText(" Gemini: ON ")
-            self._gemini_status.setStyleSheet(
-                "color: #4caf50; font-weight: bold; margin-right: 8px;"
-            )
-        else:
-            reason = "no key" if not self._config.gemini_api_key else "disabled"
-            self._gemini_status.setText(f" Gemini: OFF ({reason}) ")
-            self._gemini_status.setStyleSheet(
-                "color: #999; margin-right: 8px;"
-            )
+    def _update_source_status(self) -> None:
+        """Update the permanent source connection indicators in the status bar."""
+        from src.evidence.evidence_types import get_ordered_sources
 
-        if self._config.perplexity_api_key and self._config.enable_perplexity:
-            self._perplexity_status.setText(" Perplexity: ON ")
-            self._perplexity_status.setStyleSheet(
-                "color: #4caf50; font-weight: bold;"
-            )
-        else:
-            reason = "no key" if not self._config.perplexity_api_key else "disabled"
-            self._perplexity_status.setText(f" Perplexity: OFF ({reason}) ")
-            self._perplexity_status.setStyleSheet("color: #999;")
+        # Remove old labels
+        for label in self._source_status_labels.values():
+            self._statusbar.removeWidget(label)
+            label.deleteLater()
+        self._source_status_labels.clear()
+
+        for source, sc in get_ordered_sources():
+            if source == EvidenceSource.KEGG:
+                continue  # KEGG always active, no indicator needed
+
+            # Determine on/off status
+            is_enabled = getattr(self._config, sc.enable_key, False) if sc.enable_key else True
+            needs_key = sc.requires_api_key
+            has_key = bool(getattr(self._config, sc.config_key, None)) if sc.config_key else True
+
+            label = QLabel()
+            name = sc.display_name
+
+            if is_enabled and (has_key or not needs_key):
+                label.setText(f" {name}: ON ")
+                label.setStyleSheet(f"color: {sc.color}; font-weight: bold; margin-right: 6px;")
+            else:
+                if not is_enabled:
+                    reason = "disabled"
+                elif needs_key and not has_key:
+                    reason = "no key"
+                else:
+                    reason = "off"
+                label.setText(f" {name}: OFF ({reason}) ")
+                label.setStyleSheet("color: #999; margin-right: 6px;")
+
+            self._statusbar.addPermanentWidget(label)
+            self._source_status_labels[source.value] = label
 
     # --- Engine init ---
 
@@ -268,7 +279,7 @@ class MainWindow(QMainWindow):
         self._engine = engine
         if engine.mapper:
             self._metabolite_panel.set_mapper(engine.mapper)
-        self._update_llm_status()
+        self._update_source_status()
         self._statusbar.showMessage("Evidence engine ready")
         logger.info("Evidence engine initialized")
 
@@ -353,8 +364,7 @@ class MainWindow(QMainWindow):
             )
         else:
             info_label.setText(
-                "Could not auto-detect organism from model. "
-                "Please enter the KEGG organism code."
+                "Could not auto-detect organism from model. Please enter the KEGG organism code."
             )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -415,9 +425,7 @@ class MainWindow(QMainWindow):
         self._model = model
 
         # Show organism dialog for user to confirm/enter
-        result = self._show_organism_dialog(
-            model.kegg_organism_code, model.organism
-        )
+        result = self._show_organism_dialog(model.kegg_organism_code, model.organism)
 
         needs_reinit = self._engine is None
         if result:
@@ -598,6 +606,13 @@ class MainWindow(QMainWindow):
             return
 
         results = self._engine.get_all_results()
+
+        # Build dynamic header and score columns from all sources
+        from src.evidence.evidence_types import get_ordered_sources
+
+        source_order = get_ordered_sources()
+        score_headers = [f"{sc.display_name} Score" for _, sc in source_order]
+
         with open(filepath, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(
@@ -608,27 +623,22 @@ class MainWindow(QMainWindow):
                     "Genes",
                     "GPR",
                     "Confidence Score",
-                    "KEGG Score",
-                    "Gemini Score",
-                    "Perplexity Score",
+                    *score_headers,
                     "Substrate Match",
                     "Product Match",
                     "EC Numbers",
                     "KEGG IDs",
                     "Status",
-                    "Gemini Analysis",
-                    "Perplexity Analysis",
                 ]
             )
             for rxn in self._model.reactions:
                 ev = results.get(rxn.id, ReactionEvidence(rxn.id))
-                gemini_desc = ""
-                pplx_desc = ""
-                for item in ev.items:
-                    if item.source == EvidenceSource.GEMINI:
-                        gemini_desc = item.description
-                    elif item.source == EvidenceSource.PERPLEXITY:
-                        pplx_desc = item.description
+                # Dynamic per-source scores
+                per_source = []
+                for source, _ in source_order:
+                    attr = f"{source.value}_score"
+                    per_source.append(f"{getattr(ev, attr, 0.0):.4f}")
+
                 writer.writerow(
                     [
                         rxn.id,
@@ -637,16 +647,12 @@ class MainWindow(QMainWindow):
                         ";".join(rxn.genes),
                         rxn.gene_reaction_rule,
                         f"{ev.confidence_score:.4f}",
-                        f"{ev.kegg_score:.4f}",
-                        f"{ev.gemini_score:.4f}",
-                        f"{ev.perplexity_score:.4f}",
+                        *per_source,
                         f"{ev.substrate_match_ratio:.4f}",
                         f"{ev.product_match_ratio:.4f}",
                         ";".join(ev.ec_numbers),
                         ";".join(ev.kegg_reaction_ids),
                         ev.status.value,
-                        gemini_desc,
-                        pplx_desc,
                     ]
                 )
 
@@ -682,9 +688,8 @@ class MainWindow(QMainWindow):
                 "genes": rxn.genes,
                 "confidence_score": ev.confidence_score,
                 "scores": {
-                    "kegg": ev.kegg_score,
-                    "gemini": ev.gemini_score,
-                    "perplexity": ev.perplexity_score,
+                    source.value: getattr(ev, f"{source.value}_score", 0.0)
+                    for source in EvidenceSource
                 },
                 "verification": {
                     "substrate_match_ratio": ev.substrate_match_ratio,
@@ -742,7 +747,7 @@ class MainWindow(QMainWindow):
             if isinstance(widget, QSplitter):
                 right = widget.widget(1)
                 if isinstance(right, QTabWidget):
-                    right.setCurrentIndex(3)  # Charts tab
+                    right.setCurrentIndex(right.count() - 1)  # Charts tab (last)
                     self._update_charts()
                     break
 
@@ -764,8 +769,8 @@ class MainWindow(QMainWindow):
             "About GEM Evaluator",
             f"<h2>{APP_NAME} v{APP_VERSION}</h2>"
             "<p>Genome-Scale Metabolic Model Evidence Evaluator</p>"
-            "<p>Evaluates reactions in SBML models against KEGG, Gemini, "
-            "and Perplexity to verify reaction evidence.</p>",
+            "<p>Evaluates reactions in SBML models against KEGG, BiGG, UniProt, "
+            "PubMed, MetaCyc, Gemini, and Perplexity to verify reaction evidence.</p>",
         )
 
     def _show_settings(self) -> None:
@@ -774,7 +779,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self._config, self)
         if dialog.exec():
             self._config.save()
-            self._update_llm_status()
+            self._update_source_status()
             self._init_engine()  # Reinit with new settings
 
     def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]

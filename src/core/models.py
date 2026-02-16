@@ -15,6 +15,10 @@ class EvidenceStrength(Enum):
 
 class EvidenceSource(Enum):
     KEGG = "kegg"
+    BIGG = "bigg"
+    UNIPROT = "uniprot"
+    PUBMED = "pubmed"
+    METACYC = "metacyc"
     GEMINI = "gemini"
     PERPLEXITY = "perplexity"
 
@@ -155,6 +159,10 @@ class ReactionEvidence:
 
     # Per-source scores
     kegg_score: float = 0.0
+    bigg_score: float = 0.0
+    uniprot_score: float = 0.0
+    pubmed_score: float = 0.0
+    metacyc_score: float = 0.0
     gemini_score: float = 0.0
     perplexity_score: float = 0.0
 

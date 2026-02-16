@@ -184,8 +184,10 @@ class PerplexityClient:
         else:
             status_text = "Uncertain"
 
-        met_tag = "(metabolites: verified)" if metabolites_verified is True else (
-            "(metabolites: issues found)" if metabolites_verified is False else ""
+        met_tag = (
+            "(metabolites: verified)"
+            if metabolites_verified is True
+            else ("(metabolites: issues found)" if metabolites_verified is False else "")
         )
         description = (
             f"Species Check ({organism}): {status_text} (confidence: {confidence:.0%}) — {summary}"

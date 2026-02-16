@@ -23,16 +23,29 @@ class Config:
     batch_size: int = 10
     max_concurrent: int = 5
 
-    # API keys for LLM verification
+    # API keys
     gemini_api_key: str | None = None
     perplexity_api_key: str | None = None
+    pubmed_api_key: str | None = None
+    pubmed_email: str | None = None
 
-    # Scoring weights (3 sources)
-    weight_kegg: float = 0.50
-    weight_gemini: float = 0.25
-    weight_perplexity: float = 0.25
+    # UniProt taxonomy ID (83333 = E. coli K12)
+    uniprot_taxonomy_id: str = "83333"
 
-    # LLM feature flags
+    # Scoring weights (7 sources — Option A)
+    weight_kegg: float = 0.30
+    weight_bigg: float = 0.15
+    weight_uniprot: float = 0.15
+    weight_pubmed: float = 0.10
+    weight_metacyc: float = 0.10
+    weight_gemini: float = 0.10
+    weight_perplexity: float = 0.10
+
+    # Source enable flags
+    enable_bigg: bool = True
+    enable_uniprot: bool = True
+    enable_pubmed: bool = True
+    enable_metacyc: bool = False
     enable_gemini: bool = True
     enable_perplexity: bool = True
 
@@ -47,7 +60,7 @@ class Config:
                 data = json.loads(CONFIG_FILE_PATH.read_text())
                 filtered = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
                 # Strip whitespace from API keys to prevent header injection errors
-                for key in ("gemini_api_key", "perplexity_api_key"):
+                for key in ("gemini_api_key", "perplexity_api_key", "pubmed_api_key"):
                     if key in filtered and isinstance(filtered[key], str):
                         filtered[key] = filtered[key].strip() or None
                 return cls(**filtered)
@@ -69,6 +82,10 @@ class Config:
     def weights(self) -> dict[str, float]:
         return {
             "kegg": self.weight_kegg,
+            "bigg": self.weight_bigg,
+            "uniprot": self.weight_uniprot,
+            "pubmed": self.weight_pubmed,
+            "metacyc": self.weight_metacyc,
             "gemini": self.weight_gemini,
             "perplexity": self.weight_perplexity,
         }

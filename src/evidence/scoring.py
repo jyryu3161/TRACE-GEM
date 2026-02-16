@@ -27,6 +27,10 @@ class ConfidenceScorer:
 
         # Store per-source scores
         evidence.kegg_score = source_scores.get(EvidenceSource.KEGG, 0.0)
+        evidence.bigg_score = source_scores.get(EvidenceSource.BIGG, 0.0)
+        evidence.uniprot_score = source_scores.get(EvidenceSource.UNIPROT, 0.0)
+        evidence.pubmed_score = source_scores.get(EvidenceSource.PUBMED, 0.0)
+        evidence.metacyc_score = source_scores.get(EvidenceSource.METACYC, 0.0)
         evidence.gemini_score = source_scores.get(EvidenceSource.GEMINI, 0.0)
         evidence.perplexity_score = source_scores.get(EvidenceSource.PERPLEXITY, 0.0)
 

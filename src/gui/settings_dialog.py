@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from src.core.models import EvidenceSource
+from src.evidence.evidence_types import SOURCE_REGISTRY, get_ordered_sources
 from src.utils.config import Config
 
 
@@ -27,6 +29,12 @@ class SettingsDialog(QDialog):
         self._config = config
         self.setWindowTitle("Settings")
         self.setMinimumWidth(500)
+
+        # Dynamic widget storage keyed by EvidenceSource
+        self._enable_checks: dict[EvidenceSource, QCheckBox] = {}
+        self._api_key_edits: dict[EvidenceSource, QLineEdit] = {}
+        self._weight_spins: dict[EvidenceSource, QDoubleSpinBox] = {}
+
         self._setup_ui()
         self._load_values()
 
@@ -41,61 +49,56 @@ class SettingsDialog(QDialog):
 
         self._organism_name = QLineEdit()
         self._kegg_code = QLineEdit()
+        self._uniprot_taxonomy = QLineEdit()
 
         org_form.addRow("Organism Name:", self._organism_name)
         org_form.addRow("KEGG Organism Code:", self._kegg_code)
+        org_form.addRow("UniProt Taxonomy ID:", self._uniprot_taxonomy)
         org_form.addRow(
             QLabel("<i>Common codes: eco (E.coli), sce (S.cerevisiae), hsa (H.sapiens)</i>")
         )
         tabs.addTab(org_tab, "Organism")
 
-        # API Keys tab
+        # API Keys tab — dynamic from SOURCE_REGISTRY
         api_tab = QGroupBox()
         api_form = QFormLayout(api_tab)
 
-        self._gemini_key = QLineEdit()
-        self._gemini_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._gemini_key.setPlaceholderText("Enter Gemini API key")
-        self._enable_gemini = QCheckBox("Enable Gemini verification")
+        for source, sc in get_ordered_sources():
+            if sc.requires_api_key or sc.config_key:
+                key_edit = QLineEdit()
+                key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+                key_edit.setPlaceholderText(f"Enter {sc.display_name} API key")
+                self._api_key_edits[source] = key_edit
+                api_form.addRow(f"{sc.display_name} API Key:", key_edit)
 
-        self._perplexity_key = QLineEdit()
-        self._perplexity_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._perplexity_key.setPlaceholderText("Enter Perplexity API key")
-        self._enable_perplexity = QCheckBox("Enable Perplexity verification")
+            if sc.enable_key:
+                check = QCheckBox(f"Enable {sc.display_name}")
+                self._enable_checks[source] = check
+                api_form.addRow("", check)
 
-        api_form.addRow("Gemini API Key:", self._gemini_key)
-        api_form.addRow("", self._enable_gemini)
-        api_form.addRow(QLabel("<i>Uses Gemini 2.5 Flash to verify KEGG reaction mappings</i>"))
-        api_form.addRow("", QLabel(""))  # spacer
-        api_form.addRow("Perplexity API Key:", self._perplexity_key)
-        api_form.addRow("", self._enable_perplexity)
-        api_form.addRow(
-            QLabel("<i>Uses Perplexity Sonar for species-specific reaction verification</i>")
-        )
+            if sc.description and (sc.requires_api_key or sc.config_key):
+                api_form.addRow(QLabel(f"<i>{sc.description}</i>"))
+                api_form.addRow("", QLabel(""))  # spacer
+
+        # PubMed email (special field)
+        self._pubmed_email = QLineEdit()
+        self._pubmed_email.setPlaceholderText("Email for NCBI E-utilities")
+        api_form.addRow("PubMed Email:", self._pubmed_email)
+
         tabs.addTab(api_tab, "API Keys")
 
-        # Scoring Weights tab
+        # Scoring Weights tab — dynamic 7 sources
         weight_tab = QGroupBox()
         weight_form = QFormLayout(weight_tab)
 
-        self._w_kegg = QDoubleSpinBox()
-        self._w_kegg.setRange(0.0, 1.0)
-        self._w_kegg.setSingleStep(0.05)
-        self._w_kegg.setDecimals(2)
+        for source, sc in get_ordered_sources():
+            spin = QDoubleSpinBox()
+            spin.setRange(0.0, 1.0)
+            spin.setSingleStep(0.05)
+            spin.setDecimals(2)
+            self._weight_spins[source] = spin
+            weight_form.addRow(f"{sc.display_name}:", spin)
 
-        self._w_gemini = QDoubleSpinBox()
-        self._w_gemini.setRange(0.0, 1.0)
-        self._w_gemini.setSingleStep(0.05)
-        self._w_gemini.setDecimals(2)
-
-        self._w_perplexity = QDoubleSpinBox()
-        self._w_perplexity.setRange(0.0, 1.0)
-        self._w_perplexity.setSingleStep(0.05)
-        self._w_perplexity.setDecimals(2)
-
-        weight_form.addRow("KEGG:", self._w_kegg)
-        weight_form.addRow("Gemini:", self._w_gemini)
-        weight_form.addRow("Perplexity:", self._w_perplexity)
         weight_form.addRow(
             QLabel(
                 "<i>Weights are normalized at scoring time. "
@@ -130,15 +133,24 @@ class SettingsDialog(QDialog):
     def _load_values(self) -> None:
         self._organism_name.setText(self._config.organism_name)
         self._kegg_code.setText(self._config.kegg_organism_code)
+        self._uniprot_taxonomy.setText(self._config.uniprot_taxonomy_id)
+        self._pubmed_email.setText(self._config.pubmed_email or "")
 
-        self._gemini_key.setText(self._config.gemini_api_key or "")
-        self._enable_gemini.setChecked(self._config.enable_gemini)
-        self._perplexity_key.setText(self._config.perplexity_api_key or "")
-        self._enable_perplexity.setChecked(self._config.enable_perplexity)
+        # Load enable flags
+        for source, check in self._enable_checks.items():
+            sc = SOURCE_REGISTRY[source]
+            check.setChecked(getattr(self._config, sc.enable_key, False))
 
-        self._w_kegg.setValue(self._config.weight_kegg)
-        self._w_gemini.setValue(self._config.weight_gemini)
-        self._w_perplexity.setValue(self._config.weight_perplexity)
+        # Load API keys
+        for source, edit in self._api_key_edits.items():
+            sc = SOURCE_REGISTRY[source]
+            if sc.config_key:
+                edit.setText(getattr(self._config, sc.config_key, "") or "")
+
+        # Load weights
+        for source, spin in self._weight_spins.items():
+            sc = SOURCE_REGISTRY[source]
+            spin.setValue(getattr(self._config, sc.weight_key, 0.0))
 
         self._batch_size.setValue(self._config.batch_size)
         self._max_concurrent.setValue(self._config.max_concurrent)
@@ -146,15 +158,25 @@ class SettingsDialog(QDialog):
     def _save_and_accept(self) -> None:
         self._config.organism_name = self._organism_name.text()
         self._config.kegg_organism_code = self._kegg_code.text()
+        self._config.uniprot_taxonomy_id = self._uniprot_taxonomy.text().strip() or "83333"
+        self._config.pubmed_email = self._pubmed_email.text().strip() or None
 
-        self._config.gemini_api_key = self._gemini_key.text().strip() or None
-        self._config.enable_gemini = self._enable_gemini.isChecked()
-        self._config.perplexity_api_key = self._perplexity_key.text().strip() or None
-        self._config.enable_perplexity = self._enable_perplexity.isChecked()
+        # Save enable flags
+        for source, check in self._enable_checks.items():
+            sc = SOURCE_REGISTRY[source]
+            setattr(self._config, sc.enable_key, check.isChecked())
 
-        self._config.weight_kegg = self._w_kegg.value()
-        self._config.weight_gemini = self._w_gemini.value()
-        self._config.weight_perplexity = self._w_perplexity.value()
+        # Save API keys
+        for source, edit in self._api_key_edits.items():
+            sc = SOURCE_REGISTRY[source]
+            if sc.config_key:
+                val = edit.text().strip() or None
+                setattr(self._config, sc.config_key, val)
+
+        # Save weights
+        for source, spin in self._weight_spins.items():
+            sc = SOURCE_REGISTRY[source]
+            setattr(self._config, sc.weight_key, spin.value())
 
         self._config.batch_size = self._batch_size.value()
         self._config.max_concurrent = self._max_concurrent.value()

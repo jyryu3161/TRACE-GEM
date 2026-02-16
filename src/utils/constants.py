@@ -18,19 +18,32 @@ EVIDENCE_CACHE_TTL = 24 * 3600  # 24 hours
 
 # API base URLs
 KEGG_API_BASE = "https://rest.kegg.jp"
+BIGG_API_BASE = "http://bigg.ucsd.edu/api/v2"
+UNIPROT_API_BASE = "https://rest.uniprot.org"
+PUBMED_API_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+METACYC_API_BASE = "https://websvc.biocyc.org"
 
 # Rate limits (requests per second)
 RATE_LIMITS = {
     "kegg": 3.0,
+    "bigg": 5.0,
+    "uniprot": 3.0,
+    "pubmed_no_key": 3.0,
+    "pubmed_with_key": 10.0,
+    "metacyc": 1.0,
     "gemini": 5.0,
     "perplexity": 2.0,
 }
 
-# Scoring weights (3 sources)
+# Scoring weights (7 sources — Option A)
 SOURCE_WEIGHTS = {
-    "kegg": 0.50,
-    "gemini": 0.25,
-    "perplexity": 0.25,
+    "kegg": 0.30,
+    "bigg": 0.15,
+    "uniprot": 0.15,
+    "pubmed": 0.10,
+    "metacyc": 0.10,
+    "gemini": 0.10,
+    "perplexity": 0.10,
 }
 
 # Batch processing
