@@ -1,15 +1,21 @@
 # GEM Evaluator
 
-Genome-Scale Metabolic Model Evidence Evaluator — SBML 모델의 반응(reaction)을 생물학적 데이터베이스(KEGG)와 LLM(Gemini, Perplexity)을 사용하여 검증하고 confidence score를 산출하는 데스크톱 애플리케이션.
+Genome-Scale Metabolic Model Evidence Evaluator — SBML 모델의 반응(reaction)을 7개 생물학적 데이터베이스 및 LLM 소스(KEGG, BiGG, UniProt, PubMed, MetaCyc, Gemini, Perplexity)를 사용하여 검증하고 confidence score를 산출하는 도구.
 
 ## 주요 기능
 
 - **SBML 모델 로딩**: COBRApy 기반 SBML 파싱 (반응, 유전자, 대사물질 추출)
-- **KEGG 검증**: BiGG ID → KEGG 매핑을 통한 반응 존재 여부 및 기질/산물 일치도 확인
-- **LLM 검증**: Gemini 2.5 Flash / Perplexity Sonar를 활용한 반응 정합성 및 organism 특이성 검증
-- **대사물질 검증**: 반응의 reactant/product가 해당 organism에서 존재하는지 LLM을 통해 추가 검증
-- **Confidence Scoring**: KEGG (50%) + Gemini (25%) + Perplexity (25%) 가중 점수 산출
+- **다중 소스 검증**: 7개 evidence 소스를 통한 반응 검증
+  - **KEGG**: BiGG ID → KEGG 매핑을 통한 반응 존재 여부 및 기질/산물 일치도 확인
+  - **BiGG Models**: 범용 반응 데이터베이스 검증
+  - **UniProt**: 단백질/유전자 기반 evidence
+  - **PubMed**: 문헌 기반 evidence
+  - **MetaCyc**: MetaCyc/BioCyc 경로 데이터베이스
+  - **Gemini**: LLM 기반 반응 정합성 검증
+  - **Perplexity**: LLM 기반 organism 특이성 검증
+- **Confidence Scoring**: 7-source 가중 점수 산출
 - **GUI**: PySide6(Qt6) 기반 데스크톱 UI (반응 테이블, evidence 패널, 점수 시각화)
+- **CLI 배치 평가**: 서버/자동화 환경에서 전체 반응 평가 및 결과 파일 내보내기
 - **Export**: CSV / JSON 형식으로 평가 결과 내보내기
 - **캐싱**: SQLite 기반 API 응답 캐시 (TTL 설정 가능)
 
@@ -23,7 +29,7 @@ Genome-Scale Metabolic Model Evidence Evaluator — SBML 모델의 반응(reacti
 
 ### API 키 (선택)
 
-LLM 검증 기능을 사용하려면 아래 API 키가 필요합니다. 없어도 KEGG 기반 평가는 동작합니다.
+LLM 검증 기능을 사용하려면 아래 API 키가 필요합니다. 없어도 KEGG/BiGG/UniProt/PubMed/MetaCyc 기반 평가는 동작합니다.
 
 | 서비스 | 용도 | 발급처 |
 |--------|------|--------|
@@ -107,11 +113,19 @@ pre-commit install
   "organism_name": "Escherichia coli",
   "gemini_api_key": "YOUR_GEMINI_API_KEY",
   "perplexity_api_key": "YOUR_PERPLEXITY_API_KEY",
+  "enable_bigg": true,
+  "enable_uniprot": true,
+  "enable_pubmed": true,
+  "enable_metacyc": false,
   "enable_gemini": true,
   "enable_perplexity": true,
-  "weight_kegg": 0.50,
-  "weight_gemini": 0.25,
-  "weight_perplexity": 0.25,
+  "weight_kegg": 0.30,
+  "weight_bigg": 0.15,
+  "weight_uniprot": 0.15,
+  "weight_pubmed": 0.10,
+  "weight_metacyc": 0.10,
+  "weight_gemini": 0.10,
+  "weight_perplexity": 0.10,
   "batch_size": 10,
   "max_concurrent": 5
 }
@@ -123,9 +137,13 @@ pre-commit install
 |------|--------|------|
 | `kegg_organism_code` | `eco` | KEGG organism 코드 (예: `eco`, `sce`, `hsa`) |
 | `organism_name` | `Escherichia coli` | LLM 프롬프트에 사용되는 organism 이름 |
-| `weight_kegg` | `0.50` | KEGG 검증 가중치 |
-| `weight_gemini` | `0.25` | Gemini 검증 가중치 |
-| `weight_perplexity` | `0.25` | Perplexity 검증 가중치 |
+| `weight_kegg` | `0.30` | KEGG 검증 가중치 |
+| `weight_bigg` | `0.15` | BiGG 검증 가중치 |
+| `weight_uniprot` | `0.15` | UniProt 검증 가중치 |
+| `weight_pubmed` | `0.10` | PubMed 검증 가중치 |
+| `weight_metacyc` | `0.10` | MetaCyc 검증 가중치 |
+| `weight_gemini` | `0.10` | Gemini 검증 가중치 |
+| `weight_perplexity` | `0.10` | Perplexity 검증 가중치 |
 | `batch_size` | `10` | 배치 평가 크기 |
 | `max_concurrent` | `5` | 최대 동시 평가 수 |
 
@@ -151,7 +169,35 @@ python -m src.app
 gem-evaluator
 ```
 
-### 사용 순서
+### CLI 배치 평가
+
+서버/자동화 환경에서 전체 반응을 평가하고 결과를 파일로 내보냅니다.
+
+```bash
+# 기본 CSV 출력
+python -m src.cli input/iJO1366.xml
+
+# 출력 파일 지정 (확장자로 형식 자동 판별)
+python -m src.cli input/iJO1366.xml -o output.csv
+python -m src.cli input/iJO1366.xml -o output.json
+
+# 형식 강제 지정
+python -m src.cli input/iJO1366.xml -o results.txt -f json
+
+# 옵션
+python -m src.cli input/iJO1366.xml --organism eco --skip-exchange --batch-size 20 --max-concurrent 10
+
+# 도움말
+python -m src.cli --help
+```
+
+또는 (editable 설치 시):
+
+```bash
+gem-evaluator-cli input/iJO1366.xml -o output.csv
+```
+
+### GUI 사용 순서
 
 1. **모델 로드**: File > Open 에서 SBML 파일(`.xml`) 선택
 2. **Settings 확인**: Settings에서 organism, API 키, 가중치 설정
@@ -204,10 +250,14 @@ src/
 │   ├── base_client.py     # ABC: 속도 제한, 재시도, 서킷 브레이커
 │   ├── rate_limiter.py    # 토큰 버킷 속도 제한기
 │   ├── kegg_client.py     # KEGG REST API 클라이언트
+│   ├── bigg_client.py     # BiGG Models API 클라이언트
+│   ├── uniprot_client.py  # UniProt REST API 클라이언트
+│   ├── pubmed_client.py   # PubMed/NCBI API 클라이언트
+│   ├── metacyc_client.py  # MetaCyc/BioCyc API 클라이언트
 │   ├── gemini_client.py   # Gemini 2.5 Flash 검증 클라이언트
 │   └── perplexity_client.py # Perplexity Sonar 검증 클라이언트
 ├── evidence/          # Evidence 수집 및 스코어링
-│   ├── engine.py          # 오케스트레이터: 모든 소스별 반응 검증 실행
+│   ├── engine.py          # 오케스트레이터: 7개 소스별 반응 검증 실행
 │   ├── scoring.py         # 가중 다중 소스 confidence 점수 산출
 │   └── evidence_types.py  # 임계값 및 표시 상수
 ├── gui/               # PySide6 (Qt6) GUI
@@ -223,7 +273,7 @@ src/
 │   ├── score_visualization.py # PyQtGraph 차트
 │   ├── progress_dialog.py # 진행률 대화상자
 │   ├── settings_dialog.py # 설정 대화상자
-│   ├── theme.py           # 다크 테마
+│   ├── theme.py           # 테마 시스템
 │   └── styles.py          # 스타일시트
 ├── cache/             # SQLite 캐싱 레이어
 │   ├── cache_manager.py
@@ -232,16 +282,18 @@ src/
 │   ├── config.py
 │   ├── constants.py
 │   └── logging_config.py
-└── app.py             # 엔트리 포인트
+├── app.py             # GUI 엔트리 포인트
+└── cli.py             # CLI 배치 평가 엔트리 포인트
 ```
 
 ## 기술 스택
 
 - **SBML 파싱**: COBRApy (libsbml 래핑)
 - **GUI**: PySide6 (Qt6) + PyQtGraph
-- **API**: aiohttp (REST), Biopython (KEGG), google-genai (Gemini), openai SDK (Perplexity)
+- **DB APIs**: Biopython (KEGG, PubMed), aiohttp (BiGG, UniProt, MetaCyc REST)
+- **LLM APIs**: google-genai (Gemini), openai SDK (Perplexity)
 - **캐싱**: SQLite (aiosqlite)
-- **비동기**: QRunnable 워커 + asyncio 이벤트 루프 (워커 스레드)
+- **비동기**: QRunnable 워커 + asyncio 이벤트 루프 (워커 스레드, GUI) / asyncio.run (CLI)
 
 ## 라이선스
 

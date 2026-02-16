@@ -34,6 +34,7 @@ dev = [
 
 [project.scripts]
 gem-evaluator = "src.app:main"
+gem-evaluator-cli = "src.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["src*"]
