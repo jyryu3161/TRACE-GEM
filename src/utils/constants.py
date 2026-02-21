@@ -60,6 +60,17 @@ KEGG_CODE_TO_NAME: dict[str, str] = {
 }
 
 # Common organism mappings (model ID prefix -> KEGG org code)
+# Gap-fill defaults
+DEFAULT_UNIVERSAL_MODEL = "data/bigg_universal_model_fixed.json"
+DEFAULT_TASK_FILE = "data/universal_essential_tasks.csv"
+GAPFILL_LOWER_BOUND = 0.05
+GAPFILL_MAX_PENALTY = 1000.0
+ORGANISM_FILTER_CACHE_TTL = 30 * 24 * 3600  # 30 days
+
+# Version control defaults
+VERSION_DIR = CONFIG_DIR / "versions"
+MAX_VERSIONS_DEFAULT = 20
+
 ORGANISM_MAP = {
     "iJO1366": "eco",
     "iML1515": "eco",

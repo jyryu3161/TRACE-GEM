@@ -1,0 +1,178 @@
+"""Universal metabolic model loader (JSON/SBML).
+
+Loads universal models (e.g., BiGG universal) and extracts candidate reactions
+that are not present in a user's model for gap-filling analysis.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import cobra
+
+from src.core.gpr_parser import extract_genes, parse_gpr
+from src.core.models import CandidateReaction, ModelData, Reaction
+
+logger = logging.getLogger("gem_evaluator.universal_loader")
+
+# Prefixes for utility reactions to exclude from candidates
+_UTILITY_PREFIXES = ("EX_", "DM_", "SK_", "sink_")
+
+
+class UniversalLoader:
+    """Load a universal model and extract candidate reactions."""
+
+    def load(self, filepath: str | Path) -> cobra.Model:
+        """Auto-detect format by extension and load.
+
+        .json -> load_json()
+        .xml, .sbml -> load_sbml()
+        """
+        filepath = Path(filepath)
+        suffix = filepath.suffix.lower()
+        if suffix == ".json":
+            return self.load_json(filepath)
+        if suffix in (".xml", ".sbml"):
+            return self.load_sbml(filepath)
+        raise ValueError(
+            f"Unsupported file format '{suffix}'. Expected .json, .xml, or .sbml."
+        )
+
+    def load_json(self, filepath: str | Path) -> cobra.Model:
+        """Load a universal model from BiGG JSON format."""
+        filepath = Path(filepath)
+        if not filepath.exists():
+            raise FileNotFoundError(f"Universal model file not found: {filepath}")
+
+        logger.info("Loading universal model (JSON) from %s", filepath)
+        model = cobra.io.load_json_model(str(filepath))
+        logger.info(
+            "Loaded universal model '%s': %d reactions, %d metabolites",
+            model.id,
+            len(model.reactions),
+            len(model.metabolites),
+        )
+        return model
+
+    def load_sbml(self, filepath: str | Path) -> cobra.Model:
+        """Load a universal model from SBML/XML format."""
+        filepath = Path(filepath)
+        if not filepath.exists():
+            raise FileNotFoundError(f"Universal model file not found: {filepath}")
+
+        logger.info("Loading universal model (SBML) from %s", filepath)
+        model = cobra.io.read_sbml_model(str(filepath))
+        logger.info(
+            "Loaded universal model '%s': %d reactions, %d metabolites",
+            model.id,
+            len(model.reactions),
+            len(model.metabolites),
+        )
+        return model
+
+    def extract_candidates(
+        self,
+        universal: cobra.Model,
+        user_model: ModelData,
+    ) -> list[CandidateReaction]:
+        """Extract reactions from universal model not present in user model.
+
+        Normalizes IDs (R_ prefix, case-insensitive) and excludes
+        exchange/demand/sink utility reactions.
+        """
+        model_ids = self._build_model_reaction_ids(user_model)
+        candidates: list[CandidateReaction] = []
+
+        for rxn in universal.reactions:
+            if self._is_utility_reaction(rxn.id):
+                continue
+
+            normalized = rxn.id.lower()
+            normalized_no_prefix = (
+                rxn.id[2:].lower() if rxn.id.startswith("R_") else rxn.id.lower()
+            )
+
+            if normalized in model_ids or normalized_no_prefix in model_ids:
+                continue
+
+            reaction = self._convert_reaction(rxn)
+            candidates.append(
+                CandidateReaction(
+                    reaction=reaction,
+                    source_model=universal.id or "bigg_universal",
+                )
+            )
+
+        logger.info(
+            "Extracted %d candidate reactions from universal model "
+            "(%d total, %d in user model, utility excluded)",
+            len(candidates),
+            len(universal.reactions),
+            len(user_model.reactions),
+        )
+        return candidates
+
+    def _build_model_reaction_ids(self, model: ModelData) -> set[str]:
+        """Build normalized set of user model reaction IDs."""
+        ids: set[str] = set()
+        for rxn in model.reactions:
+            ids.add(rxn.id.lower())
+            if rxn.id.startswith("R_"):
+                ids.add(rxn.id[2:].lower())
+            else:
+                ids.add(f"R_{rxn.id}".lower())
+        return ids
+
+    def _is_utility_reaction(self, rxn_id: str) -> bool:
+        """Check if reaction is an exchange, demand, or sink reaction."""
+        return any(rxn_id.startswith(p) for p in _UTILITY_PREFIXES)
+
+    def _convert_reaction(self, rxn: cobra.Reaction) -> Reaction:
+        """Convert a cobra.Reaction to internal Reaction dataclass.
+
+        Follows the same pattern as SBMLParser._convert_reaction.
+        """
+        gene_rule = rxn.gene_reaction_rule or ""
+        genes = extract_genes(gene_rule)
+        gpr_tree = parse_gpr(gene_rule)
+
+        reactants: dict[str, float] = {}
+        products: dict[str, float] = {}
+        for met, coef in rxn.metabolites.items():
+            if coef < 0:
+                reactants[met.id] = abs(coef)
+            else:
+                products[met.id] = coef
+
+        annotation = self._normalize_annotation(rxn.annotation)
+
+        return Reaction(
+            id=rxn.id,
+            name=rxn.name or rxn.id,
+            equation=rxn.build_reaction_string(use_metabolite_names=True),
+            subsystem=rxn.subsystem or None,
+            lower_bound=rxn.lower_bound,
+            upper_bound=rxn.upper_bound,
+            gene_reaction_rule=gene_rule,
+            gpr_tree=gpr_tree,
+            genes=genes,
+            reactants=reactants,
+            products=products,
+            annotation=annotation,
+        )
+
+    def _normalize_annotation(self, annotation: dict) -> dict[str, list[str]]:
+        """Normalize COBRApy annotation dict to {db: [ids]}."""
+        result: dict[str, list[str]] = {}
+        if not annotation:
+            return result
+
+        for key, value in annotation.items():
+            if isinstance(value, str):
+                result[key] = [value]
+            elif isinstance(value, list):
+                result[key] = [str(v) for v in value]
+            else:
+                result[key] = [str(value)]
+        return result

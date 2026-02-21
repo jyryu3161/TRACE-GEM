@@ -19,12 +19,16 @@ class SBMLParser:
 
     def load_model(self, filepath: str | Path) -> ModelData:
         """Load an SBML model and convert to internal ModelData format."""
+        import warnings
+
         filepath = Path(filepath)
         if not filepath.exists():
             raise FileNotFoundError(f"SBML file not found: {filepath}")
 
         logger.info("Loading SBML model from %s", filepath)
-        cobra_model = cobra.io.read_sbml_model(str(filepath))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            cobra_model = cobra.io.read_sbml_model(str(filepath))
         logger.info(
             "Loaded model '%s': %d reactions, %d metabolites, %d genes",
             cobra_model.id,

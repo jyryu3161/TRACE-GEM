@@ -30,6 +30,14 @@ class EvaluationStatus(Enum):
     ERROR = "error"
 
 
+class ReactionOrigin(Enum):
+    """Origin of a reaction in the workflow."""
+
+    MODEL = "model"
+    UNIVERSAL = "universal"
+    GAP_FILLED = "gap_filled"
+
+
 # --- GPR tree nodes ---
 
 
@@ -186,3 +194,122 @@ class ExternalIDs:
     kegg_substrate_ids: list[str] = field(default_factory=list)
     kegg_product_ids: list[str] = field(default_factory=list)
     mnxr_ids: list[str] = field(default_factory=list)
+
+
+# --- Gap-filling data ---
+
+
+@dataclass
+class CandidateReaction:
+    """Candidate reaction from a universal model for gap-filling."""
+
+    reaction: Reaction
+    source_model: str = "bigg_universal"
+    organism_exists: bool | None = None
+    kegg_organism_genes: list[str] = field(default_factory=list)
+    assigned_gpr: str = ""
+    penalty: float = 1.0
+    selected: bool = False
+
+
+@dataclass
+class MetabolicTask:
+    """Metabolic task definition for model validation."""
+
+    task_id: str
+    task_type: str  # "Metabolite" or "Reaction"
+    target_id: str
+    medium: dict[str, float] = field(default_factory=dict)
+    constraints: dict[str, tuple[float, float]] = field(default_factory=dict)
+    expected_operator: str = ">"
+    expected_value: float = 0.0
+    description: str = ""
+    category: str = ""
+
+
+@dataclass
+class TaskResult:
+    """Result of running a single metabolic task."""
+
+    task: MetabolicTask
+    passed: bool
+    actual_value: float
+    error_message: str | None = None
+    phase: str = "before"  # "before" or "after"
+
+
+@dataclass
+class GapFillResult:
+    """Complete result of a gap-filling workflow."""
+
+    added_reactions: list[CandidateReaction] = field(default_factory=list)
+    task_results_before: list[TaskResult] = field(default_factory=list)
+    task_results_after: list[TaskResult] = field(default_factory=list)
+    tasks_fixed: int = 0
+    total_tasks: int = 0
+    iterations: int = 0
+    infeasible_tasks: list[str] = field(default_factory=list)
+
+
+# --- Version control data ---
+
+
+@dataclass
+class ReactionChange:
+    """A single field change in a reaction."""
+
+    reaction_id: str
+    field: str  # "lower_bound", "upper_bound", "gene_reaction_rule", "name", "subsystem"
+    old_value: str
+    new_value: str
+
+
+@dataclass
+class ModelDiff:
+    """Diff between two model versions."""
+
+    reactions_added: list[str] = field(default_factory=list)
+    reactions_removed: list[str] = field(default_factory=list)
+    reactions_modified: list[ReactionChange] = field(default_factory=list)
+    genes_added: list[str] = field(default_factory=list)
+    genes_removed: list[str] = field(default_factory=list)
+    metabolites_added: list[str] = field(default_factory=list)
+    metabolites_removed: list[str] = field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return not any([
+            self.reactions_added, self.reactions_removed, self.reactions_modified,
+            self.genes_added, self.genes_removed,
+            self.metabolites_added, self.metabolites_removed,
+        ])
+
+    @property
+    def summary_counts(self) -> str:
+        parts = []
+        if self.reactions_added:
+            parts.append(f"+{len(self.reactions_added)} reactions")
+        if self.reactions_removed:
+            parts.append(f"-{len(self.reactions_removed)} reactions")
+        if self.reactions_modified:
+            parts.append(f"~{len(self.reactions_modified)} modified")
+        if self.genes_added:
+            parts.append(f"+{len(self.genes_added)} genes")
+        if self.genes_removed:
+            parts.append(f"-{len(self.genes_removed)} genes")
+        return ", ".join(parts) if parts else "No changes"
+
+
+@dataclass
+class ModelVersion:
+    """Metadata for a single model version snapshot."""
+
+    version_id: str
+    timestamp: str
+    parent_version_id: str | None = None
+    model_id: str = ""
+    description: str = ""
+    change_type: str = "initial_load"  # initial_load, manual_edit, gap_fill, restore
+    diff: ModelDiff | None = None
+    task_pass_rate: str | None = None  # "35/52"
+    sbml_filename: str = "model.xml"

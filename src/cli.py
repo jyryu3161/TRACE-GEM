@@ -12,7 +12,14 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from src.core.models import EvidenceSource, Reaction, ReactionEvidence
+from src.core.models import (
+    EvidenceSource,
+    GapFillResult,
+    MetabolicTask,
+    ModelData,
+    Reaction,
+    ReactionEvidence,
+)
 from src.utils.config import Config
 from src.utils.constants import KEGG_CODE_TO_NAME
 
@@ -67,6 +74,44 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip exchange reactions (EX_*)",
     )
+
+    # Gap-filling options
+    gf_group = parser.add_argument_group("Gap-filling options")
+    gf_group.add_argument(
+        "--gap-fill",
+        action="store_true",
+        help="Enable gap-filling mode",
+    )
+    gf_group.add_argument(
+        "--universal",
+        metavar="PATH",
+        default=None,
+        help="Path to universal model file (JSON/SBML). Default: BiGG universal",
+    )
+    gf_group.add_argument(
+        "--tasks",
+        metavar="PATH",
+        default=None,
+        help="Path to metabolic tasks CSV file. Default: universal essential tasks",
+    )
+    gf_group.add_argument(
+        "--output-model",
+        metavar="PATH",
+        default=None,
+        help="Path to save improved SBML model after gap-filling",
+    )
+    gf_group.add_argument(
+        "--output-report",
+        metavar="PATH",
+        default=None,
+        help="Path to save gap-filling report CSV",
+    )
+    gf_group.add_argument(
+        "--skip-evaluation",
+        action="store_true",
+        help="Skip evidence evaluation of model and candidates",
+    )
+
     return parser
 
 
@@ -252,6 +297,257 @@ async def async_main(
         await engine.close()
 
 
+async def async_gapfill_main(
+    config: Config,
+    model_data: ModelData,
+    universal_path: str,
+    tasks_path: str,
+    output_model: str | None,
+    output_report: str | None,
+    skip_evaluation: bool,
+) -> None:
+    """Run the async gap-filling pipeline."""
+    from src.core.task_parser import TaskParser
+    from src.core.universal_loader import UniversalLoader
+    from src.evidence.engine import EvidenceEngine
+    from src.gapfill.engine import GapFillEngine
+
+    start_time = time.monotonic()
+
+    # Step 1: Load universal model
+    _eprint("Loading universal model...")
+    loader = UniversalLoader()
+    universal_model = loader.load(universal_path)
+    _eprint(
+        f"  Universal model: {len(universal_model.reactions)} reactions, "
+        f"{len(universal_model.metabolites)} metabolites"
+    )
+
+    # Step 2: Extract candidates
+    _eprint("Extracting candidate reactions...")
+    candidates = loader.extract_candidates(universal_model, model_data)
+    _eprint(f"  {len(candidates)} candidate reactions extracted")
+
+    # Step 3: Parse metabolic tasks
+    _eprint(f"Loading metabolic tasks from {Path(tasks_path).name}...")
+    task_parser = TaskParser()
+    tasks = task_parser.parse(tasks_path)
+    _eprint(f"  {len(tasks)} tasks loaded")
+
+    # Step 4: Evidence evaluation (optional)
+    evidence_results: dict[str, ReactionEvidence] = {}
+
+    evidence_engine = EvidenceEngine(config)
+    try:
+        await evidence_engine.initialize()
+
+        if not skip_evaluation:
+            # Evaluate model reactions
+            reactions = list(model_data.reactions)
+            _eprint(f"Evaluating {len(reactions)} model reactions...")
+            eval_start = time.monotonic()
+
+            def model_progress(completed: int, total: int, reaction_id: str) -> None:
+                pct = completed / total * 100 if total else 0
+                filled = int(pct / 5)
+                bar = "=" * filled + ">" + " " * (20 - filled - 1)
+                elapsed = time.monotonic() - eval_start
+                _eprint(
+                    f"\r  Model eval: [{bar}] {completed}/{total} ({pct:.1f}%) "
+                    f"-- {reaction_id} [{_format_time(elapsed)}]",
+                    end="",
+                )
+
+            evidence_results = await evidence_engine.evaluate_batch(
+                reactions, progress_callback=model_progress
+            )
+            _eprint(f"\n  Model evaluation complete: {len(evidence_results)} reactions scored")
+
+            # Evaluate candidates
+            _eprint(f"Evaluating {len(candidates)} candidate reactions...")
+            cand_start = time.monotonic()
+
+            def cand_progress(completed: int, total: int, reaction_id: str) -> None:
+                pct = completed / total * 100 if total else 0
+                filled = int(pct / 5)
+                bar = "=" * filled + ">" + " " * (20 - filled - 1)
+                elapsed = time.monotonic() - cand_start
+                _eprint(
+                    f"\r  Candidate eval: [{bar}] {completed}/{total} ({pct:.1f}%) "
+                    f"-- {reaction_id} [{_format_time(elapsed)}]",
+                    end="",
+                )
+
+            cand_results = await evidence_engine.evaluate_candidates_batch(
+                candidates, progress_callback=cand_progress
+            )
+            evidence_results.update(cand_results)
+            _eprint(f"\n  Candidate evaluation complete: {len(cand_results)} reactions scored")
+        else:
+            _eprint("Skipping evidence evaluation (--skip-evaluation)")
+
+        # Step 5: Run gap-fill pipeline
+        _eprint("Starting gap-fill pipeline...")
+        assert model_data.cobra_model is not None, "COBRA model not available"
+
+        gapfill_engine = GapFillEngine(config)
+        cache_mgr = evidence_engine._cache  # Reuse existing cache
+        mapping_data = evidence_engine._mapping_data
+
+        try:
+            await gapfill_engine.initialize(
+                organism_code=config.kegg_organism_code,
+                cache_manager=cache_mgr,
+                mapping_data=mapping_data,
+            )
+
+            def gf_progress(phase: str, current: int, total: int, detail: str) -> None:
+                _eprint(f"\r  [{phase}] {current}/{total} -- {detail}    ", end="")
+
+            gf_result = await gapfill_engine.run(
+                user_model=model_data.cobra_model,
+                universal_model=universal_model,
+                candidates=candidates,
+                tasks=tasks,
+                evidence_results=evidence_results,
+                progress_callback=gf_progress,
+            )
+            _eprint("")  # newline after progress
+
+        finally:
+            await gapfill_engine.close()
+
+    finally:
+        await evidence_engine.close()
+
+    elapsed = time.monotonic() - start_time
+
+    # Step 6: Print task results summary
+    _eprint(f"\nGap-fill complete in {_format_time(elapsed)}")
+    _eprint(f"  Reactions added: {len(gf_result.added_reactions)}")
+    _eprint(f"  Tasks fixed: {gf_result.tasks_fixed}/{gf_result.total_tasks}")
+
+    if gf_result.infeasible_tasks:
+        _eprint(f"  Infeasible tasks: {', '.join(gf_result.infeasible_tasks)}")
+
+    # Before/After task results table
+    before_map = {r.task.task_id: r for r in gf_result.task_results_before}
+    after_map = {r.task.task_id: r for r in gf_result.task_results_after}
+
+    _eprint("")
+    _eprint(f"{'Task ID':<8} {'Description':<45} {'Before':>7} {'After':>7} {'Status':>8}")
+    _eprint("-" * 80)
+
+    for task in tasks:
+        before = before_map.get(task.task_id)
+        after = after_map.get(task.task_id)
+        b_str = "PASS" if (before and before.passed) else "FAIL"
+        a_str = "PASS" if (after and after.passed) else "FAIL"
+
+        if b_str == "FAIL" and a_str == "PASS":
+            status = "FIXED"
+        elif b_str == "PASS" and a_str == "FAIL":
+            status = "REGRESS"
+        elif b_str == "FAIL" and a_str == "FAIL":
+            status = "FAILING"
+        else:
+            status = "OK"
+
+        desc = task.description[:44] if len(task.description) > 44 else task.description
+        _eprint(f"{task.task_id:<8} {desc:<45} {b_str:>7} {a_str:>7} {status:>8}")
+
+    before_pass = sum(1 for r in gf_result.task_results_before if r.passed)
+    after_pass = sum(1 for r in gf_result.task_results_after if r.passed)
+    _eprint("-" * 80)
+    _eprint(
+        f"{'TOTAL':<8} {'':45} {before_pass:>4}/{len(tasks):<2} {after_pass:>4}/{len(tasks):<2}"
+    )
+
+    # Step 7: Save improved model
+    if output_model and model_data.cobra_model:
+        import cobra as cobra_io
+
+        cobra_io.io.write_sbml_model(model_data.cobra_model, output_model)
+        _eprint(f"\nImproved model saved to {output_model}")
+
+    # Step 8: Save report CSV
+    if output_report:
+        _save_gapfill_report(output_report, gf_result, tasks)
+        _eprint(f"Gap-fill report saved to {output_report}")
+
+
+def _save_gapfill_report(
+    filepath: str,
+    result: GapFillResult,
+    tasks: list[MetabolicTask],
+) -> None:
+    """Save gap-filling results to a CSV report."""
+    before_map = {r.task.task_id: r for r in result.task_results_before}
+    after_map = {r.task.task_id: r for r in result.task_results_after}
+
+    with open(filepath, "w", newline="") as f:
+        writer = csv.writer(f)
+
+        # Section 1: Summary
+        writer.writerow(["Gap-Fill Summary"])
+        writer.writerow(["Reactions Added", len(result.added_reactions)])
+        writer.writerow(["Tasks Fixed", result.tasks_fixed])
+        writer.writerow(["Total Tasks", result.total_tasks])
+        writer.writerow(["Iterations", result.iterations])
+        writer.writerow(["Infeasible Tasks", ";".join(result.infeasible_tasks)])
+        writer.writerow([])
+
+        # Section 2: Added reactions
+        writer.writerow(["Added Reactions"])
+        writer.writerow(["Reaction ID", "Name", "Subsystem", "Penalty", "GPR"])
+        for candidate in result.added_reactions:
+            rxn = candidate.reaction
+            writer.writerow([
+                rxn.id,
+                rxn.name,
+                rxn.subsystem or "",
+                f"{candidate.penalty:.4f}",
+                candidate.assigned_gpr,
+            ])
+        writer.writerow([])
+
+        # Section 3: Task results
+        writer.writerow(["Task Results"])
+        writer.writerow([
+            "Task ID", "Type", "Target", "Category", "Description",
+            "Before Pass", "Before Value", "After Pass", "After Value", "Status",
+        ])
+        for task in tasks:
+            before = before_map.get(task.task_id)
+            after = after_map.get(task.task_id)
+            b_pass = before.passed if before else False
+            b_val = before.actual_value if before else 0.0
+            a_pass = after.passed if after else False
+            a_val = after.actual_value if after else 0.0
+
+            if not b_pass and a_pass:
+                status = "FIXED"
+            elif b_pass and not a_pass:
+                status = "REGRESSION"
+            elif not b_pass and not a_pass:
+                status = "FAILING"
+            else:
+                status = "OK"
+
+            writer.writerow([
+                task.task_id,
+                task.task_type,
+                task.target_id,
+                task.category,
+                task.description,
+                str(b_pass),
+                f"{b_val:.6f}",
+                str(a_pass),
+                f"{a_val:.6f}",
+                status,
+            ])
+
+
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point."""
     parser = _build_parser()
@@ -301,6 +597,37 @@ def main(argv: list[str] | None = None) -> None:
             config.organism_name = model_data.organism
 
     _eprint(f"Organism: {config.organism_name} ({config.kegg_organism_code})")
+
+    # Gap-fill mode
+    if args.gap_fill:
+        from src.utils.constants import DEFAULT_TASK_FILE, DEFAULT_UNIVERSAL_MODEL
+
+        universal_path = args.universal or config.default_universal_model or DEFAULT_UNIVERSAL_MODEL
+        tasks_path = args.tasks or config.default_task_file or DEFAULT_TASK_FILE
+
+        # Validate paths
+        if not Path(universal_path).exists():
+            _eprint(f"Error: Universal model not found: {universal_path}")
+            sys.exit(1)
+        if not Path(tasks_path).exists():
+            _eprint(f"Error: Task file not found: {tasks_path}")
+            sys.exit(1)
+
+        _eprint(f"Universal model: {universal_path}")
+        _eprint(f"Task file: {tasks_path}")
+
+        asyncio.run(
+            async_gapfill_main(
+                config=config,
+                model_data=model_data,
+                universal_path=universal_path,
+                tasks_path=tasks_path,
+                output_model=args.output_model,
+                output_report=args.output_report,
+                skip_evaluation=args.skip_evaluation,
+            )
+        )
+        return
 
     # Filter reactions
     reactions = list(model_data.reactions)

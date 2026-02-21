@@ -8,11 +8,24 @@ import traceback
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
-from src.core.models import Reaction
+from src.core.models import CandidateReaction, ModelData, Reaction
 from src.evidence.engine import EvidenceEngine
 from src.utils.config import Config
 
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from src.cache.cache_manager import CacheManager
+    from src.core.mapping_data import MappingData
+
 logger = logging.getLogger("gem_evaluator.workers")
+
+
+def _safe_emit(signal, *args) -> None:
+    """Emit a signal, silently ignoring RuntimeError if the source was deleted."""
+    try:
+        signal.emit(*args)
+    except RuntimeError:
+        pass
 
 
 class WorkerSignals(QObject):
@@ -21,6 +34,16 @@ class WorkerSignals(QObject):
     started = Signal()
     progress = Signal(int, int, str)  # current, total, reaction_id
     result = Signal(object)  # ReactionEvidence or dict
+    error = Signal(str)
+    finished = Signal()
+
+
+class GapFillWorkerSignals(QObject):
+    """Signals for gap-fill workflow with phase-aware progress."""
+
+    started = Signal()
+    progress = Signal(str, int, int, str)  # phase, current, total, detail
+    result = Signal(object)  # GapFillResult
     error = Signal(str)
     finished = Signal()
 
@@ -37,20 +60,20 @@ class EvaluateReactionWorker(QRunnable):
 
     @Slot()
     def run(self) -> None:
-        self.signals.started.emit()
+        _safe_emit(self.signals.started)
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 result = loop.run_until_complete(self.engine.evaluate_reaction(self.reaction))
-                self.signals.result.emit(result)
+                _safe_emit(self.signals.result, result)
             finally:
                 loop.close()
         except Exception as e:
             logger.error("Worker error: %s\n%s", e, traceback.format_exc())
-            self.signals.error.emit(str(e))
+            _safe_emit(self.signals.error, str(e))
         finally:
-            self.signals.finished.emit()
+            _safe_emit(self.signals.finished)
 
 
 class EvaluateBatchWorker(QRunnable):
@@ -74,14 +97,14 @@ class EvaluateBatchWorker(QRunnable):
 
     @Slot()
     def run(self) -> None:
-        self.signals.started.emit()
+        _safe_emit(self.signals.started)
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._cancel_event = asyncio.Event()
 
             def on_progress(current: int, total: int, rxn_id: str) -> None:
-                self.signals.progress.emit(current, total, rxn_id)
+                _safe_emit(self.signals.progress, current, total, rxn_id)
 
             try:
                 results = loop.run_until_complete(
@@ -91,14 +114,14 @@ class EvaluateBatchWorker(QRunnable):
                         cancel_event=self._cancel_event,
                     )
                 )
-                self.signals.result.emit(results)
+                _safe_emit(self.signals.result, results)
             finally:
                 loop.close()
         except Exception as e:
             logger.error("Batch worker error: %s\n%s", e, traceback.format_exc())
-            self.signals.error.emit(str(e))
+            _safe_emit(self.signals.error, str(e))
         finally:
-            self.signals.finished.emit()
+            _safe_emit(self.signals.finished)
 
 
 class InitEngineWorker(QRunnable):
@@ -108,25 +131,25 @@ class InitEngineWorker(QRunnable):
         super().__init__()
         self.config = config
         self.signals = WorkerSignals()
-        self.setAutoDelete(True)
+        self.setAutoDelete(False)
 
     @Slot()
     def run(self) -> None:
-        self.signals.started.emit()
+        _safe_emit(self.signals.started)
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 engine = EvidenceEngine(self.config)
                 loop.run_until_complete(engine.initialize())
-                self.signals.result.emit(engine)
+                _safe_emit(self.signals.result, engine)
             finally:
                 loop.close()
         except Exception as e:
             logger.error("Init engine error: %s", e)
-            self.signals.error.emit(str(e))
+            _safe_emit(self.signals.error, str(e))
         finally:
-            self.signals.finished.emit()
+            _safe_emit(self.signals.finished)
 
 
 class CloseEngineWorker(QRunnable):
@@ -136,24 +159,24 @@ class CloseEngineWorker(QRunnable):
         super().__init__()
         self.engine = engine
         self.signals = WorkerSignals()
-        self.setAutoDelete(True)
+        self.setAutoDelete(False)
 
     @Slot()
     def run(self) -> None:
-        self.signals.started.emit()
+        _safe_emit(self.signals.started)
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 loop.run_until_complete(self.engine.close())
-                self.signals.result.emit(True)
+                _safe_emit(self.signals.result, True)
             finally:
                 loop.close()
         except Exception as e:
             logger.error("Close engine error: %s", e)
-            self.signals.error.emit(str(e))
+            _safe_emit(self.signals.error, str(e))
         finally:
-            self.signals.finished.emit()
+            _safe_emit(self.signals.finished)
 
 
 class LoadModelWorker(QRunnable):
@@ -163,19 +186,232 @@ class LoadModelWorker(QRunnable):
         super().__init__()
         self.filepath = filepath
         self.signals = WorkerSignals()
-        self.setAutoDelete(True)
+        self.setAutoDelete(False)
 
     @Slot()
     def run(self) -> None:
-        self.signals.started.emit()
+        _safe_emit(self.signals.started)
         try:
             from src.core.sbml_parser import SBMLParser
 
             parser = SBMLParser()
             model = parser.load_model(self.filepath)
-            self.signals.result.emit(model)
+            _safe_emit(self.signals.result, model)
         except Exception as e:
-            logger.error("Load model error: %s", e)
-            self.signals.error.emit(str(e))
+            logger.error("Load model error: %s\n%s", e, traceback.format_exc())
+            _safe_emit(self.signals.error, str(e))
         finally:
-            self.signals.finished.emit()
+            _safe_emit(self.signals.finished)
+
+
+class GapFillWorkflowWorker(QRunnable):
+    """Worker for the full gap-filling workflow pipeline.
+
+    Steps:
+    1. Load universal model
+    2. Extract candidates
+    3. Parse metabolic tasks
+    4. Optionally evaluate candidates with evidence engine
+    5. Run GapFillEngine pipeline
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        model_data: ModelData,
+        universal_path: str,
+        task_path: str | None,
+        evidence_engine: EvidenceEngine | None,
+        options: dict,
+    ) -> None:
+        super().__init__()
+        self.config = config
+        self.model_data = model_data
+        self.universal_path = universal_path
+        self.task_path = task_path
+        self.evidence_engine = evidence_engine
+        self.options = options
+        self.signals = GapFillWorkerSignals()
+        self.setAutoDelete(True)
+
+    @Slot()
+    def run(self) -> None:
+        _safe_emit(self.signals.started)
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(self._run_pipeline())
+                _safe_emit(self.signals.result, result)
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error("Gap-fill workflow error: %s\n%s", e, traceback.format_exc())
+            _safe_emit(self.signals.error, str(e))
+        finally:
+            _safe_emit(self.signals.finished)
+
+    async def _run_pipeline(self) -> object:
+        from src.core.task_parser import TaskParser
+        from src.core.universal_loader import UniversalLoader
+        from src.gapfill.engine import GapFillEngine
+
+        def on_progress(phase: str, current: int, total: int, detail: str) -> None:
+            _safe_emit(self.signals.progress, phase, current, total, detail)
+
+        # Step 1: Load universal model
+        on_progress("loading", 0, 1, "Loading universal model...")
+        loader = UniversalLoader()
+        universal_model = loader.load(self.universal_path)
+        on_progress("loading", 1, 1, "Universal model loaded")
+
+        # Step 2: Extract candidates
+        on_progress("extracting", 0, 1, "Extracting candidates...")
+        candidates = loader.extract_candidates(universal_model, self.model_data)
+        on_progress("extracting", 1, 1, f"{len(candidates)} candidates extracted")
+
+        # Step 3: Parse tasks
+        tasks = []
+        if self.task_path:
+            on_progress("parsing_tasks", 0, 1, "Parsing metabolic tasks...")
+            parser = TaskParser()
+            tasks = parser.parse(self.task_path)
+            on_progress("parsing_tasks", 1, 1, f"{len(tasks)} tasks parsed")
+
+        # Step 4: Evaluate candidates (optional)
+        evidence_results: dict = {}
+        if self.options.get("evaluate_candidates") and self.evidence_engine:
+            on_progress("evaluating", 0, len(candidates), "Evaluating candidates...")
+
+            def eval_progress(current: int, total: int, rxn_id: str) -> None:
+                _safe_emit(self.signals.progress, "evaluating", current, total, rxn_id)
+
+            evidence_results = await self.evidence_engine.evaluate_candidates_batch(
+                candidates, progress_callback=eval_progress
+            )
+
+        # Step 5: Run gap-fill engine
+        cobra_model = self.model_data.cobra_model
+        if cobra_model is None:
+            raise RuntimeError("No cobra model available on ModelData")
+
+        engine = GapFillEngine(self.config)
+        organism_code = self.model_data.kegg_organism_code or self.config.kegg_organism_code
+        await engine.initialize(organism_code=organism_code)
+        try:
+            result = await engine.run(
+                user_model=cobra_model,
+                universal_model=universal_model,
+                candidates=candidates,
+                tasks=tasks,
+                evidence_results=evidence_results,
+                progress_callback=on_progress,
+            )
+        finally:
+            await engine.close()
+
+        return result
+
+
+class EvaluateCandidatesWorker(QRunnable):
+    """Worker to evaluate candidate reactions with the evidence engine."""
+
+    def __init__(
+        self,
+        engine: EvidenceEngine,
+        candidates: list[CandidateReaction],
+    ) -> None:
+        super().__init__()
+        self.engine = engine
+        self.candidates = candidates
+        self.signals = WorkerSignals()
+        self._cancel_event: asyncio.Event | None = None
+        self.setAutoDelete(True)
+
+    def cancel(self) -> None:
+        if self._cancel_event:
+            self._cancel_event.set()
+
+    @Slot()
+    def run(self) -> None:
+        _safe_emit(self.signals.started)
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self._cancel_event = asyncio.Event()
+
+            def on_progress(current: int, total: int, rxn_id: str) -> None:
+                _safe_emit(self.signals.progress, current, total, rxn_id)
+
+            try:
+                results = loop.run_until_complete(
+                    self.engine.evaluate_candidates_batch(
+                        self.candidates,
+                        progress_callback=on_progress,
+                        cancel_event=self._cancel_event,
+                    )
+                )
+                _safe_emit(self.signals.result, results)
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error("Evaluate candidates error: %s\n%s", e, traceback.format_exc())
+            _safe_emit(self.signals.error, str(e))
+        finally:
+            _safe_emit(self.signals.finished)
+
+
+class OrganismFilterWorker(QRunnable):
+    """Worker to run organism-specificity filtering on candidates."""
+
+    def __init__(
+        self,
+        organism_code: str,
+        candidates: list[CandidateReaction],
+        cache_manager: CacheManager | None = None,
+        mapping_data: MappingData | None = None,
+    ) -> None:
+        super().__init__()
+        self.organism_code = organism_code
+        self.candidates = candidates
+        self.cache_manager = cache_manager
+        self.mapping_data = mapping_data
+        self.signals = WorkerSignals()
+        self.setAutoDelete(True)
+
+    @Slot()
+    def run(self) -> None:
+        _safe_emit(self.signals.started)
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(self._run_filter())
+                _safe_emit(self.signals.result, result)
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error("Organism filter error: %s\n%s", e, traceback.format_exc())
+            _safe_emit(self.signals.error, str(e))
+        finally:
+            _safe_emit(self.signals.finished)
+
+    async def _run_filter(self) -> list[CandidateReaction]:
+        from src.gapfill.organism_filter import OrganismFilter
+
+        def on_progress(current: int, total: int, rxn_id: str) -> None:
+            _safe_emit(self.signals.progress, current, total, rxn_id)
+
+        filt = OrganismFilter(
+            organism_code=self.organism_code,
+            cache_manager=self.cache_manager,
+            mapping_data=self.mapping_data,
+        )
+        await filt.initialize()
+        try:
+            result = await filt.filter_candidates(
+                self.candidates, progress_callback=on_progress
+            )
+        finally:
+            await filt.close()
+        return result

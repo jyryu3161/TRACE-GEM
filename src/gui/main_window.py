@@ -29,30 +29,39 @@ from PySide6.QtWidgets import (
 from src.core.models import (
     EvaluationStatus,
     EvidenceSource,
+    GapFillResult,
     ModelData,
     Reaction,
     ReactionEvidence,
 )
 from src.evidence.engine import EvidenceEngine
+from src.gui.candidate_table import CandidateTableWidget
 from src.gui.delegates import ScoreBarDelegate, StatusDelegate
+from src.gui.diff_dialog import DiffDialog
 from src.gui.evidence_panel import EvidencePanelWidget
+from src.gui.gapfill_panel import GapFillPanelWidget
 from src.gui.gene_panel import GenePanelWidget
 from src.gui.metabolite_panel import MetabolitePanelWidget
 from src.gui.model_overview import ModelOverviewWidget
 from src.gui.progress_dialog import ProgressDialog
 from src.gui.reaction_detail import ReactionDetailWidget
 from src.gui.reaction_table import ReactionTableWidget
+from src.gui.save_dialog import SaveDialog
 from src.gui.score_visualization import ScoreVisualizationWidget
 from src.gui.styles import MAIN_STYLESHEET
+from src.gui.task_panel import TaskPanelWidget
+from src.gui.version_panel import VersionPanelWidget
 from src.gui.workers import (
     CloseEngineWorker,
     EvaluateBatchWorker,
     EvaluateReactionWorker,
+    GapFillWorkflowWorker,
     InitEngineWorker,
     LoadModelWorker,
 )
 from src.utils.config import Config
 from src.utils.constants import APP_NAME, APP_VERSION, KEGG_CODE_TO_NAME
+from src.versioning.version_manager import VersionManager
 
 logger = logging.getLogger("gem_evaluator.gui")
 
@@ -72,7 +81,9 @@ class MainWindow(QMainWindow):
         self._pending_engine_init = False
         self._engine_init_token = 0
         self._engine_error: str | None = None
-        self._active_worker: object | None = None  # prevent GC of QRunnable
+        self._active_workers: list[object] = []  # prevent GC of QRunnable
+        self._gapfill_worker: GapFillWorkflowWorker | None = None
+        self._version_manager: VersionManager | None = None
 
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.setMinimumSize(1200, 800)
@@ -94,6 +105,8 @@ class MainWindow(QMainWindow):
         self._recent_menu = file_menu.addMenu("Recent Files")
         self._update_recent_menu()
         file_menu.addSeparator()
+        file_menu.addAction("&Save Version...", self._save_version, "Ctrl+Shift+S")
+        file_menu.addSeparator()
         settings_action = QAction("&Settings...", self)
         settings_action.setShortcut("Ctrl+,")
         settings_action.setMenuRole(QAction.MenuRole.NoRole)
@@ -109,11 +122,18 @@ class MainWindow(QMainWindow):
         eval_menu.addSeparator()
         eval_menu.addAction("&Clear Results", self._clear_results)
 
+        # Workflow menu
+        workflow_menu = menubar.addMenu("&Workflow")
+        workflow_menu.addAction("Start &Workflow...", self._start_workflow, "Ctrl+W")
+        workflow_menu.addAction("Load &Task File...", self._load_task_file)
+
         # Export menu
         export_menu = menubar.addMenu("E&xport")
         export_menu.addAction("Export &CSV...", self._export_csv, "Ctrl+S")
         export_menu.addAction("Export &JSON...", self._export_json)
         export_menu.addAction("Export &SBML...", self._export_sbml)
+        export_menu.addSeparator()
+        export_menu.addAction("Export &Improved SBML...", self._export_improved_sbml)
 
         # View menu
         view_menu = menubar.addMenu("&View")
@@ -141,9 +161,18 @@ class MainWindow(QMainWindow):
         self._overview.setMaximumHeight(250)
         left_layout.addWidget(self._overview)
 
+        # Left tabs: Model Reactions + Candidates
+        self._left_tabs = QTabWidget()
+
         self._reaction_table = ReactionTableWidget()
         self._reaction_table.reaction_selected.connect(self._on_reaction_selected)
-        left_layout.addWidget(self._reaction_table)
+        self._left_tabs.addTab(self._reaction_table, "Model Reactions")
+
+        self._candidate_table = CandidateTableWidget()
+        self._candidate_table.candidate_selected.connect(self._on_candidate_selected)
+        self._left_tabs.addTab(self._candidate_table, "Candidates")
+
+        left_layout.addWidget(self._left_tabs)
 
         splitter.addWidget(left_widget)
 
@@ -181,6 +210,26 @@ class MainWindow(QMainWindow):
         self._chart_widget = ScoreVisualizationWidget()
         right_tabs.addTab(self._chart_widget, "Charts")
 
+        # Tasks tab
+        self._task_panel = TaskPanelWidget()
+        right_tabs.addTab(self._task_panel, "Tasks")
+
+        # Gap-Fill tab
+        self._gapfill_panel = GapFillPanelWidget()
+        self._gapfill_panel.apply_requested.connect(self._on_apply_gapfill)
+        self._gapfill_panel.export_sbml_requested.connect(self._export_improved_sbml)
+        self._gapfill_panel.export_report_requested.connect(self._export_gapfill_report)
+        right_tabs.addTab(self._gapfill_panel, "Gap-Fill")
+
+        # Versions tab
+        self._version_panel = VersionPanelWidget()
+        self._version_panel.restore_requested.connect(self._restore_version)
+        self._version_panel.compare_requested.connect(self._compare_versions)
+        self._version_panel.export_requested.connect(self._export_version_sbml)
+        right_tabs.addTab(self._version_panel, "Versions")
+
+        self._right_tabs = right_tabs
+
         splitter.addWidget(right_tabs)
         splitter.setSizes([600, 500])
 
@@ -190,6 +239,10 @@ class MainWindow(QMainWindow):
         self._score_delegate = ScoreBarDelegate(self._reaction_table)
         self._status_delegate = StatusDelegate(self._reaction_table)
         self._reaction_table.set_delegates(self._score_delegate, self._status_delegate)
+
+        # Candidate table score delegate
+        self._candidate_score_delegate = ScoreBarDelegate(self._candidate_table)
+        self._candidate_table.set_score_delegate(self._candidate_score_delegate)
 
     def _setup_statusbar(self) -> None:
         self._statusbar = QStatusBar()
@@ -263,7 +316,7 @@ class MainWindow(QMainWindow):
         worker.signals.result.connect(lambda engine, t=token: self._on_engine_ready(t, engine))
         worker.signals.error.connect(lambda e, t=token: self._on_engine_init_error(t, e))
         worker.signals.finished.connect(lambda t=token: self._on_engine_init_finished(t))
-        self._active_worker = worker  # prevent GC before signals are delivered
+        self._active_workers.append(worker)  # prevent GC before signals are delivered
         self._thread_pool.start(worker)
 
     def _on_engine_ready(self, token: int, engine: object) -> None:
@@ -290,7 +343,7 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage(f"Engine init failed: {error}")
 
     def _on_engine_init_finished(self, token: int) -> None:
-        self._active_worker = None
+        self._active_workers = [w for w in self._active_workers if not isinstance(w, InitEngineWorker)]
         if token != self._engine_init_token:
             return
         self._engine_init_in_progress = False
@@ -310,17 +363,22 @@ class MainWindow(QMainWindow):
         worker.setAutoDelete(False)
         worker.signals.error.connect(lambda e: logger.warning("Engine close failed: %s", e))
         worker.signals.finished.connect(self._on_engine_closed_for_reinit)
-        self._active_worker = worker
+        self._active_workers.append(worker)
         self._thread_pool.start(worker)
 
     def _on_engine_closed_for_reinit(self) -> None:
-        self._active_worker = None
+        self._active_workers = [w for w in self._active_workers if not isinstance(w, CloseEngineWorker)]
         self._engine_close_in_progress = False
         self._start_engine_init()
 
     def _close_engine_background(self, engine: EvidenceEngine) -> None:
         worker = CloseEngineWorker(engine)
+        worker.setAutoDelete(False)
         worker.signals.error.connect(lambda e: logger.warning("Engine close failed: %s", e))
+        worker.signals.finished.connect(
+            lambda: self._active_workers.__contains__(worker) and self._active_workers.remove(worker)
+        )
+        self._active_workers.append(worker)
         self._thread_pool.start(worker)
 
     # --- File operations ---
@@ -339,8 +397,13 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage(f"Loading {Path(filepath).name}...")
         self._loading_filepath = filepath
         worker = LoadModelWorker(filepath)
+        worker.setAutoDelete(False)
         worker.signals.result.connect(self._on_model_loaded)
         worker.signals.error.connect(self._on_model_error)
+        worker.signals.finished.connect(
+            lambda: worker in self._active_workers and self._active_workers.remove(worker)
+        )
+        self._active_workers.append(worker)
         self._thread_pool.start(worker)
 
     def _show_organism_dialog(
@@ -460,6 +523,16 @@ class MainWindow(QMainWindow):
             self._config.save()
             self._update_recent_menu()
             self._loading_filepath = ""
+
+        # Initialize version control
+        if self._config.enable_versioning and model.cobra_model:
+            try:
+                self._version_manager = VersionManager(self._config)
+                self._version_manager.set_base_model(model.cobra_model, model.id)
+                self._version_panel.set_history(self._version_manager.get_history())
+            except Exception as e:
+                logger.warning("Version manager init failed: %s", e)
+                self._version_manager = None
 
         self._statusbar.showMessage(
             f"{model.id} | {model.reaction_count} reactions | "
@@ -732,6 +805,187 @@ class MainWindow(QMainWindow):
         cobra.io.write_sbml_model(self._model.cobra_model, filepath)
         self._statusbar.showMessage(f"SBML exported to {filepath}")
 
+    # --- Workflow ---
+
+    def _start_workflow(self) -> None:
+        """Open the workflow wizard and start gap-filling."""
+        if not self._model:
+            QMessageBox.warning(self, "No Model", "Load an SBML model first.")
+            return
+
+        from src.gui.workflow_wizard import WorkflowWizard
+
+        wizard = WorkflowWizard(self._config, self._model, self)
+        if wizard.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        selections = wizard.get_selections()
+        self._run_gapfill_workflow(selections)
+
+    def _load_task_file(self) -> None:
+        """Load a metabolic task CSV file and display results."""
+        if not self._model or not self._model.cobra_model:
+            QMessageBox.warning(self, "No Model", "Load an SBML model first.")
+            return
+
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Metabolic Task File",
+            "",
+            "CSV Files (*.csv);;All Files (*)",
+        )
+        if not filepath:
+            return
+
+        try:
+            from src.core.task_parser import TaskParser, TaskRunner
+
+            parser = TaskParser()
+            tasks = parser.parse(filepath)
+
+            runner = TaskRunner()
+            results = runner.run_all(self._model.cobra_model, tasks)
+
+            self._task_panel.set_results(results)
+            self._right_tabs.setCurrentWidget(self._task_panel)
+            self._statusbar.showMessage(
+                f"Loaded {len(tasks)} tasks — "
+                f"{sum(1 for r in results if r.passed)}/{len(results)} passed"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Tasks", str(e))
+
+    def _run_gapfill_workflow(self, selections: dict) -> None:
+        """Start the gap-filling workflow worker."""
+        if not self._model:
+            return
+
+        dialog = ProgressDialog("Gap-Fill Workflow", self)
+
+        worker = GapFillWorkflowWorker(
+            config=self._config,
+            model_data=self._model,
+            universal_path=selections.get("universal_model_path", ""),
+            task_path=selections.get("task_file_path"),
+            evidence_engine=self._engine,
+            options=selections,
+        )
+        self._gapfill_worker = worker
+
+        def on_progress(phase: str, current: int, total: int, detail: str) -> None:
+            display = f"[{phase}] {detail}"
+            dialog.update_progress(current, total, display)
+
+        worker.signals.progress.connect(on_progress)
+        worker.signals.result.connect(lambda r: self._on_gapfill_complete(r, dialog))
+        worker.signals.error.connect(lambda e: self._on_gapfill_error(e, dialog))
+
+        self._thread_pool.start(worker)
+        dialog.exec()
+
+    def _on_gapfill_complete(self, result: object, dialog: ProgressDialog) -> None:
+        dialog.set_complete()
+        self._gapfill_worker = None
+
+        if not isinstance(result, GapFillResult):
+            return
+
+        # Update task panel with before/after results
+        if result.task_results_before:
+            after = result.task_results_after if result.task_results_after else None
+            self._task_panel.set_results(result.task_results_before, after)
+
+        # Update gapfill panel
+        self._gapfill_panel.set_result(result)
+
+        # Update candidate table if we have added reactions
+        if result.added_reactions:
+            self._candidate_table.set_candidates(result.added_reactions)
+            self._left_tabs.setCurrentWidget(self._candidate_table)
+
+        # Switch to Gap-Fill tab
+        self._right_tabs.setCurrentWidget(self._gapfill_panel)
+
+        self._statusbar.showMessage(
+            f"Gap-fill complete: {len(result.added_reactions)} reactions added, "
+            f"{result.tasks_fixed}/{result.total_tasks} tasks fixed"
+        )
+        logger.info(
+            "Gap-fill complete: %d added, %d/%d fixed",
+            len(result.added_reactions),
+            result.tasks_fixed,
+            result.total_tasks,
+        )
+
+        # Auto-save version after gap-fill
+        if self._version_manager and self._model and self._model.cobra_model:
+            task_results = result.task_results_after or result.task_results_before or None
+            self._do_save_version(
+                change_type="gap_fill",
+                task_results=task_results,
+            )
+
+    def _on_gapfill_error(self, error: str, dialog: ProgressDialog) -> None:
+        dialog.set_complete()
+        self._gapfill_worker = None
+        QMessageBox.critical(self, "Gap-Fill Error", error)
+        self._statusbar.showMessage("Gap-fill failed")
+
+    def _on_apply_gapfill(self) -> None:
+        """Apply gap-fill results to the current model display."""
+        if self._model:
+            # Refresh the reaction table with updated model data
+            self._reaction_table.set_model_data(self._model)
+            self._overview.set_model(self._model)
+            self._statusbar.showMessage("Gap-fill results applied to model")
+
+    def _export_improved_sbml(self) -> None:
+        """Export the improved model after gap-filling."""
+        if not self._model or not self._model.cobra_model:
+            QMessageBox.warning(self, "No Model", "No model available for export.")
+            return
+
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Improved SBML",
+            f"{self._model.id}_improved.xml",
+            "SBML Files (*.xml);;All Files (*)",
+        )
+        if not filepath:
+            return
+
+        import cobra
+
+        cobra.io.write_sbml_model(self._model.cobra_model, filepath)
+        self._statusbar.showMessage(f"Improved SBML exported to {filepath}")
+
+    def _export_gapfill_report(self) -> None:
+        """Export gap-fill report as CSV."""
+        if not self._model:
+            return
+
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Gap-Fill Report",
+            f"{self._model.id}_gapfill_report.csv",
+            "CSV Files (*.csv);;All Files (*)",
+        )
+        if not filepath:
+            return
+
+        # Collect data from gapfill panel
+        # For now, write basic report from available data
+        with open(filepath, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Reaction ID", "Name", "Penalty", "GPR", "Selected"])
+
+        self._statusbar.showMessage(f"Report exported to {filepath}")
+
+    def _on_candidate_selected(self, reaction_id: str) -> None:
+        """Handle candidate reaction selection from candidate table."""
+        # Show basic info in the detail panel if available
+        pass
+
     # --- View ---
 
     def _show_charts(self) -> None:
@@ -810,6 +1064,180 @@ class MainWindow(QMainWindow):
             if rxn:
                 self._reaction_table.update_reaction_row(reaction_id)
         self._statusbar.showMessage(f"Reaction {reaction_id} modified")
+
+        # Auto-save version on edit if enabled
+        if (
+            self._config.auto_save_on_edit
+            and self._version_manager
+            and self._model
+            and self._model.cobra_model
+        ):
+            self._auto_save_version("manual_edit")
+
+    # --- Version control ---
+
+    def _save_version(self) -> None:
+        """Show the save dialog and save a new version."""
+        if not self._model or not self._model.cobra_model:
+            QMessageBox.warning(self, "No Model", "Load an SBML model first.")
+            return
+        if not self._version_manager:
+            QMessageBox.warning(
+                self, "Versioning Disabled", "Version control is not active."
+            )
+            return
+
+        current = self._version_manager.current_version
+        dialog = SaveDialog(self._config, current, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        options = dialog.get_options()
+
+        # Run QC if requested
+        task_results = None
+        if options["run_qc"]:
+            task_results = self._run_qc_for_version()
+
+        # Save version in worker thread via asyncio
+        self._do_save_version(
+            change_type=options["change_type"],
+            custom_description=options["description"],
+            task_results=task_results,
+        )
+
+        # Export SBML copy if requested
+        if options["export_sbml"]:
+            self._export_sbml()
+
+    def _do_save_version(
+        self,
+        change_type: str,
+        custom_description: str | None = None,
+        task_results=None,
+    ) -> None:
+        """Save a version synchronously by running async in a new event loop."""
+        if not self._version_manager or not self._model or not self._model.cobra_model:
+            return
+
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                version = loop.run_until_complete(
+                    self._version_manager.save_version(
+                        self._model.cobra_model,
+                        change_type,
+                        task_results=task_results,
+                        custom_description=custom_description,
+                    )
+                )
+            finally:
+                loop.close()
+
+            self._version_panel.set_history(self._version_manager.get_history())
+            self._statusbar.showMessage(
+                f"Saved version {version.version_id}: {version.description}"
+            )
+        except Exception as e:
+            logger.warning("Failed to save version: %s", e)
+            QMessageBox.warning(self, "Version Save Error", str(e))
+
+    def _auto_save_version(self, change_type: str) -> None:
+        """Auto-save a version without showing dialog."""
+        if not self._version_manager or not self._model or not self._model.cobra_model:
+            return
+        self._do_save_version(change_type=change_type)
+
+    def _restore_version(self, version_id: str) -> None:
+        """Restore a specific version."""
+        if not self._version_manager or not self._model:
+            return
+
+        try:
+            restored_model = self._version_manager.restore_version(version_id)
+
+            # Update the model data's cobra_model reference
+            self._model.cobra_model = restored_model
+
+            # Refresh all panels
+            self._reaction_table.set_model_data(self._model)
+            self._overview.set_model(self._model)
+            self._gene_panel.set_model(self._model)
+            self._metabolite_panel.set_model(self._model)
+            self._reaction_detail.clear()
+            self._evidence_panel.clear()
+            self._version_panel.set_history(self._version_manager.get_history())
+
+            self._statusbar.showMessage(f"Restored to version {version_id}")
+        except Exception as e:
+            logger.warning("Failed to restore version: %s", e)
+            QMessageBox.critical(self, "Restore Error", str(e))
+
+    def _compare_versions(self, version_a: str, version_b: str) -> None:
+        """Show a diff dialog comparing two versions."""
+        if not self._version_manager:
+            return
+
+        try:
+            diff = self._version_manager.compare_versions(version_a, version_b)
+            history = self._version_manager.get_history()
+
+            meta_a = next((v for v in history if v.version_id == version_a), None)
+            meta_b = next((v for v in history if v.version_id == version_b), None)
+
+            if not meta_a or not meta_b:
+                QMessageBox.warning(
+                    self, "Compare Error", "Could not find version metadata."
+                )
+                return
+
+            dialog = DiffDialog(diff, meta_a, meta_b, self)
+            dialog.exec()
+        except Exception as e:
+            logger.warning("Failed to compare versions: %s", e)
+            QMessageBox.critical(self, "Compare Error", str(e))
+
+    def _export_version_sbml(self, version_id: str) -> None:
+        """Export a specific version as SBML."""
+        if not self._version_manager:
+            return
+
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Version SBML",
+            f"{version_id}_model.xml",
+            "SBML Files (*.xml);;All Files (*)",
+        )
+        if not filepath:
+            return
+
+        try:
+            import cobra
+
+            model, _ = self._version_manager._storage.load_version(
+                self._version_manager._model_id, version_id
+            )
+            cobra.io.write_sbml_model(model, filepath)
+            self._statusbar.showMessage(f"Exported {version_id} to {filepath}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", str(e))
+
+    def _run_qc_for_version(self):
+        """Run metabolic task QC and return results."""
+        if not self._model or not self._model.cobra_model:
+            return None
+
+        try:
+            from src.core.task_parser import TaskParser, TaskRunner
+
+            task_file = self._config.default_task_file
+            parser = TaskParser()
+            tasks = parser.parse(task_file)
+            runner = TaskRunner()
+            return runner.run_all(self._model.cobra_model, tasks)
+        except Exception as e:
+            logger.warning("QC run failed: %s", e)
+            return None
 
     # --- Helpers ---
 

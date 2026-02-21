@@ -12,7 +12,11 @@ from src.cache.cache_manager import CacheManager
 from src.core.id_mapper import IdentifierMapper
 from src.core.mapping_data import MappingData
 from src.core.models import (
+    CandidateReaction,
     EvaluationStatus,
+    EvidenceItem,
+    EvidenceSource,
+    EvidenceStrength,
     Reaction,
     ReactionEvidence,
 )
@@ -340,6 +344,203 @@ class EvidenceEngine:
                     logger.warning("Batch subtask failed: %s", result)
 
             logger.info("Evaluated %d/%d reactions", completed, total)
+
+        return dict(self._results)
+
+    async def evaluate_candidate(self, candidate: CandidateReaction) -> ReactionEvidence:
+        """Evaluate a single candidate reaction from a universal model.
+
+        Differences from evaluate_reaction():
+        - Uses resolve_universal() for annotation format differences
+        - BiGG verification returns STRONG automatically (reaction is from BiGG universal)
+        - Candidates typically have no genes, so UniProt uses EC-based search only
+        """
+        reaction = candidate.reaction
+        evidence = ReactionEvidence(reaction_id=reaction.id)
+        evidence.status = EvaluationStatus.IN_PROGRESS
+
+        try:
+            assert self._mapper is not None, "Engine not initialized"
+            assert self._kegg is not None, "Engine not initialized"
+
+            # Step 1: Resolve external IDs using universal annotation format
+            ext_ids = await self._mapper.resolve_universal(reaction)
+            evidence.ec_numbers = ext_ids.ec_numbers
+            evidence.kegg_reaction_ids = ext_ids.kegg_reaction_ids
+
+            # Step 2: KEGG verification
+            kegg_items = await self._kegg.check_evidence(
+                reaction,
+                kegg_reaction_ids=ext_ids.kegg_reaction_ids,
+                model_substrates_kegg=ext_ids.kegg_substrate_ids,
+                model_products_kegg=ext_ids.kegg_product_ids,
+                ec_numbers=ext_ids.ec_numbers,
+            )
+            evidence.items.extend(kegg_items)
+
+            # Step 3: Extract match ratios from raw_data
+            kegg_parsed_data = None
+            for item in kegg_items:
+                if item.raw_data:
+                    sub_match = item.raw_data.get("substrate_match")
+                    prod_match = item.raw_data.get("product_match")
+                    if sub_match is not None:
+                        evidence.substrate_match_ratio = sub_match
+                    if prod_match is not None:
+                        evidence.product_match_ratio = prod_match
+                    kegg_parsed_data = item.raw_data.get("kegg_parsed")
+
+            # Step 4: BiGG verification — automatic STRONG for universal model candidates
+            evidence.items.append(
+                EvidenceItem(
+                    source=EvidenceSource.BIGG,
+                    strength=EvidenceStrength.STRONG,
+                    description=(
+                        f"Reaction exists in BiGG universal model "
+                        f"(source: {candidate.source_model})"
+                    ),
+                    url=f"http://bigg.ucsd.edu/universal/reactions/{reaction.id}",
+                )
+            )
+
+            # Step 5: UniProt verification (EC-based only, candidates have no genes)
+            if self._uniprot:
+                try:
+                    uniprot_items = await self._uniprot.check_evidence(
+                        reaction,
+                        ec_numbers=ext_ids.ec_numbers,
+                    )
+                    evidence.items.extend(uniprot_items)
+                except Exception as e:
+                    logger.warning("UniProt verification failed for %s: %s", reaction.id, e)
+
+            # Step 6: PubMed verification
+            if self._pubmed:
+                try:
+                    pubmed_items = await self._pubmed.check_evidence(
+                        reaction,
+                        ec_numbers=ext_ids.ec_numbers,
+                        organism_name=self._config.organism_name,
+                    )
+                    evidence.items.extend(pubmed_items)
+                except Exception as e:
+                    logger.warning("PubMed verification failed for %s: %s", reaction.id, e)
+
+            # Step 7: MetaCyc verification
+            if self._metacyc:
+                try:
+                    metacyc_ids: list[str] = []
+                    for item in evidence.items:
+                        if item.raw_data and "database_links" in item.raw_data:
+                            db_links = item.raw_data["database_links"]
+                            for mc_entry in db_links.get("MetaCyc Reaction", []):
+                                mc_id = mc_entry.get("id", "")
+                                if mc_id:
+                                    metacyc_ids.append(mc_id)
+
+                    metacyc_items = await self._metacyc.check_evidence(
+                        reaction,
+                        metacyc_ids=metacyc_ids,
+                        ec_numbers=ext_ids.ec_numbers,
+                    )
+                    evidence.items.extend(metacyc_items)
+                except Exception as e:
+                    logger.warning("MetaCyc verification failed for %s: %s", reaction.id, e)
+
+            # Resolve metabolite names for LLM prompts
+            reactant_names: dict[str, str] = {}
+            product_names: dict[str, str] = {}
+            for met_id in reaction.reactants:
+                name = self._mapper.get_metabolite_name(met_id) if self._mapper else None
+                reactant_names[met_id] = name or met_id
+            for met_id in reaction.products:
+                name = self._mapper.get_metabolite_name(met_id) if self._mapper else None
+                product_names[met_id] = name or met_id
+
+            # Step 8: Gemini verification (if KEGG match exists)
+            if self._gemini and kegg_parsed_data:
+                try:
+                    gemini_item = await self._gemini.verify_reaction_match(
+                        reaction,
+                        kegg_parsed_data,
+                        evidence.substrate_match_ratio,
+                        evidence.product_match_ratio,
+                        self._config.organism_name,
+                        reactant_names=reactant_names,
+                        product_names=product_names,
+                    )
+                    evidence.items.append(gemini_item)
+                except Exception as e:
+                    logger.warning("Gemini verification failed for %s: %s", reaction.id, e)
+
+            # Step 9: Perplexity verification
+            if self._perplexity:
+                try:
+                    pplx_item = await self._perplexity.verify_reaction_existence(
+                        reaction,
+                        self._config.organism_name,
+                        ext_ids.ec_numbers,
+                        reactant_names=reactant_names,
+                        product_names=product_names,
+                    )
+                    evidence.items.append(pplx_item)
+                except Exception as e:
+                    logger.warning("Perplexity verification failed for %s: %s", reaction.id, e)
+
+            # Step 10: Score
+            self._scorer.score(evidence)
+            evidence.status = EvaluationStatus.EVALUATED
+
+        except Exception as e:
+            logger.error("Candidate evaluation failed for %s: %s", reaction.id, e)
+            evidence.status = EvaluationStatus.ERROR
+            evidence.error_message = str(e)
+
+        self._results[reaction.id] = evidence
+        return evidence
+
+    async def evaluate_candidates_batch(
+        self,
+        candidates: list[CandidateReaction],
+        progress_callback: Callable[[int, int, str], None] | None = None,
+        cancel_event: asyncio.Event | None = None,
+    ) -> dict[str, ReactionEvidence]:
+        """Evaluate a batch of candidate reactions with progress reporting.
+
+        Uses the same batch/semaphore pattern as evaluate_batch().
+        """
+        total = len(candidates)
+        batch_size = max(1, self._config.batch_size or BATCH_SIZE)
+        max_concurrent = max(1, self._config.max_concurrent)
+        completed = 0
+
+        for i in range(0, total, batch_size):
+            if cancel_event and cancel_event.is_set():
+                logger.info("Candidate evaluation cancelled at %d/%d", i, total)
+                break
+
+            batch = candidates[i : i + batch_size]
+            semaphore = asyncio.Semaphore(max_concurrent)
+
+            async def _evaluate_with_limit(candidate: CandidateReaction) -> None:
+                nonlocal completed
+                if cancel_event and cancel_event.is_set():
+                    return
+                async with semaphore:  # noqa: B023
+                    if cancel_event and cancel_event.is_set():
+                        return
+                    await self.evaluate_candidate(candidate)
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, total, candidate.reaction.id)
+
+            tasks = [asyncio.create_task(_evaluate_with_limit(c)) for c in batch]
+            task_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in task_results:
+                if isinstance(result, Exception):
+                    logger.warning("Candidate batch subtask failed: %s", result)
+
+            logger.info("Evaluated %d/%d candidates", completed, total)
 
         return dict(self._results)
 

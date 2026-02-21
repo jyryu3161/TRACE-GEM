@@ -49,6 +49,22 @@ class Config:
     enable_gemini: bool = True
     enable_perplexity: bool = True
 
+    # Gap-fill settings
+    default_universal_model: str = "data/bigg_universal_model_fixed.json"
+    default_task_file: str = "data/universal_essential_tasks.csv"
+    gapfill_lower_bound: float = 0.05
+    gapfill_iterations: int = 1
+    organism_filter_cache_ttl: int = 30 * 24 * 3600
+    gapfill_penalty_epsilon: float = 0.01
+    gapfill_organism_penalty_multiplier: float = 10.0
+    gapfill_no_kegg_penalty_multiplier: float = 2.0
+
+    # Version control settings
+    enable_versioning: bool = True
+    max_versions: int = 20
+    auto_save_on_edit: bool = True
+    version_dir: str = ""  # default: ~/.gem_evaluator/versions/
+
     # UI settings
     recent_files: list[str] = field(default_factory=list)
     window_geometry: str | None = None
