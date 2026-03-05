@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from src.core.models import EvidenceSource, EvidenceStrength
-from src.gui.theme import THEME
 
 # Display labels
 STRENGTH_LABELS = {
@@ -20,17 +19,26 @@ SOURCE_LABELS = {
     EvidenceSource.BIGG: "BiGG Models",
     EvidenceSource.UNIPROT: "UniProt",
     EvidenceSource.PUBMED: "PubMed",
-    EvidenceSource.METACYC: "MetaCyc",
     EvidenceSource.GEMINI: "Gemini",
     EvidenceSource.PERPLEXITY: "Perplexity",
 }
 
-# Color coding for evidence strength (hex)
-STRENGTH_COLORS = {
-    EvidenceStrength.STRONG: THEME.strength_strong,
-    EvidenceStrength.MODERATE: THEME.strength_moderate,
-    EvidenceStrength.WEAK: THEME.strength_weak,
-    EvidenceStrength.ABSENT: THEME.strength_absent,
+# Default color coding for evidence strength (hex literals — no GUI dependency)
+STRENGTH_COLORS: dict[EvidenceStrength, str] = {
+    EvidenceStrength.STRONG: "#2ecc71",
+    EvidenceStrength.MODERATE: "#f1c40f",
+    EvidenceStrength.WEAK: "#e67e22",
+    EvidenceStrength.ABSENT: "#e74c3c",
+}
+
+# Default source colors (hex literals)
+_DEFAULT_SOURCE_COLORS: dict[EvidenceSource, str] = {
+    EvidenceSource.KEGG: "#3498db",
+    EvidenceSource.BIGG: "#2ecc71",
+    EvidenceSource.UNIPROT: "#9b59b6",
+    EvidenceSource.PUBMED: "#e74c3c",
+    EvidenceSource.GEMINI: "#1abc9c",
+    EvidenceSource.PERPLEXITY: "#34495e",
 }
 
 
@@ -51,7 +59,7 @@ class SourceConfig:
 SOURCE_REGISTRY: dict[EvidenceSource, SourceConfig] = {
     EvidenceSource.KEGG: SourceConfig(
         display_name="KEGG",
-        color=THEME.source_kegg,
+        color=_DEFAULT_SOURCE_COLORS[EvidenceSource.KEGG],
         requires_api_key=False,
         config_key="",
         enable_key="",
@@ -61,7 +69,7 @@ SOURCE_REGISTRY: dict[EvidenceSource, SourceConfig] = {
     ),
     EvidenceSource.BIGG: SourceConfig(
         display_name="BiGG Models",
-        color=THEME.source_bigg,
+        color=_DEFAULT_SOURCE_COLORS[EvidenceSource.BIGG],
         requires_api_key=False,
         config_key="",
         enable_key="enable_bigg",
@@ -71,7 +79,7 @@ SOURCE_REGISTRY: dict[EvidenceSource, SourceConfig] = {
     ),
     EvidenceSource.UNIPROT: SourceConfig(
         display_name="UniProt",
-        color=THEME.source_uniprot,
+        color=_DEFAULT_SOURCE_COLORS[EvidenceSource.UNIPROT],
         requires_api_key=False,
         config_key="",
         enable_key="enable_uniprot",
@@ -79,19 +87,9 @@ SOURCE_REGISTRY: dict[EvidenceSource, SourceConfig] = {
         description="UniProt protein/gene evidence",
         order=2,
     ),
-    EvidenceSource.METACYC: SourceConfig(
-        display_name="MetaCyc",
-        color=THEME.source_metacyc,
-        requires_api_key=False,
-        config_key="",
-        enable_key="enable_metacyc",
-        weight_key="weight_metacyc",
-        description="MetaCyc/BioCyc pathway database",
-        order=3,
-    ),
     EvidenceSource.PUBMED: SourceConfig(
         display_name="PubMed",
-        color=THEME.source_pubmed,
+        color=_DEFAULT_SOURCE_COLORS[EvidenceSource.PUBMED],
         requires_api_key=False,
         config_key="pubmed_api_key",
         enable_key="enable_pubmed",
@@ -101,7 +99,7 @@ SOURCE_REGISTRY: dict[EvidenceSource, SourceConfig] = {
     ),
     EvidenceSource.GEMINI: SourceConfig(
         display_name="Gemini",
-        color=THEME.source_gemini,
+        color=_DEFAULT_SOURCE_COLORS[EvidenceSource.GEMINI],
         requires_api_key=True,
         config_key="gemini_api_key",
         enable_key="enable_gemini",
@@ -111,7 +109,7 @@ SOURCE_REGISTRY: dict[EvidenceSource, SourceConfig] = {
     ),
     EvidenceSource.PERPLEXITY: SourceConfig(
         display_name="Perplexity",
-        color=THEME.source_perplexity,
+        color=_DEFAULT_SOURCE_COLORS[EvidenceSource.PERPLEXITY],
         requires_api_key=True,
         config_key="perplexity_api_key",
         enable_key="enable_perplexity",
@@ -139,6 +137,6 @@ def get_active_sources(config: object) -> list[EvidenceSource]:
         if source == EvidenceSource.KEGG:
             active.append(source)  # KEGG is always active
             continue
-        if sc.enable_key and getattr(config, sc.enable_key, False) or not sc.enable_key:
+        if (sc.enable_key and getattr(config, sc.enable_key, False)) or not sc.enable_key:
             active.append(source)
     return active

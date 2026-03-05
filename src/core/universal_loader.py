@@ -11,8 +11,8 @@ from pathlib import Path
 
 import cobra
 
-from src.core.gpr_parser import extract_genes, parse_gpr
-from src.core.models import CandidateReaction, ModelData, Reaction
+from src.core.cobra_utils import convert_cobra_reaction
+from src.core.models import CandidateReaction, ModelData
 
 logger = logging.getLogger("gem_evaluator.universal_loader")
 
@@ -96,7 +96,7 @@ class UniversalLoader:
             if normalized in model_ids or normalized_no_prefix in model_ids:
                 continue
 
-            reaction = self._convert_reaction(rxn)
+            reaction = convert_cobra_reaction(rxn)
             candidates.append(
                 CandidateReaction(
                     reaction=reaction,
@@ -127,52 +127,3 @@ class UniversalLoader:
     def _is_utility_reaction(self, rxn_id: str) -> bool:
         """Check if reaction is an exchange, demand, or sink reaction."""
         return any(rxn_id.startswith(p) for p in _UTILITY_PREFIXES)
-
-    def _convert_reaction(self, rxn: cobra.Reaction) -> Reaction:
-        """Convert a cobra.Reaction to internal Reaction dataclass.
-
-        Follows the same pattern as SBMLParser._convert_reaction.
-        """
-        gene_rule = rxn.gene_reaction_rule or ""
-        genes = extract_genes(gene_rule)
-        gpr_tree = parse_gpr(gene_rule)
-
-        reactants: dict[str, float] = {}
-        products: dict[str, float] = {}
-        for met, coef in rxn.metabolites.items():
-            if coef < 0:
-                reactants[met.id] = abs(coef)
-            else:
-                products[met.id] = coef
-
-        annotation = self._normalize_annotation(rxn.annotation)
-
-        return Reaction(
-            id=rxn.id,
-            name=rxn.name or rxn.id,
-            equation=rxn.build_reaction_string(use_metabolite_names=True),
-            subsystem=rxn.subsystem or None,
-            lower_bound=rxn.lower_bound,
-            upper_bound=rxn.upper_bound,
-            gene_reaction_rule=gene_rule,
-            gpr_tree=gpr_tree,
-            genes=genes,
-            reactants=reactants,
-            products=products,
-            annotation=annotation,
-        )
-
-    def _normalize_annotation(self, annotation: dict) -> dict[str, list[str]]:
-        """Normalize COBRApy annotation dict to {db: [ids]}."""
-        result: dict[str, list[str]] = {}
-        if not annotation:
-            return result
-
-        for key, value in annotation.items():
-            if isinstance(value, str):
-                result[key] = [value]
-            elif isinstance(value, list):
-                result[key] = [str(v) for v in value]
-            else:
-                result[key] = [str(value)]
-        return result

@@ -7,8 +7,12 @@ from pathlib import Path
 
 import cobra
 
-from src.core.gpr_parser import extract_genes, parse_gpr
-from src.core.models import Gene, Metabolite, ModelData, Reaction
+from src.core.cobra_utils import (
+    convert_cobra_gene,
+    convert_cobra_metabolite,
+    convert_cobra_reaction,
+)
+from src.core.models import ModelData
 from src.utils.constants import KEGG_CODE_TO_NAME, ORGANISM_MAP
 
 logger = logging.getLogger("gem_evaluator.sbml_parser")
@@ -43,9 +47,9 @@ class SBMLParser:
         return model_data
 
     def _convert_model(self, cobra_model: cobra.Model) -> ModelData:
-        reactions = [self._convert_reaction(r) for r in cobra_model.reactions]
-        metabolites = [self._convert_metabolite(m) for m in cobra_model.metabolites]
-        genes = [self._convert_gene(g) for g in cobra_model.genes]
+        reactions = [convert_cobra_reaction(r) for r in cobra_model.reactions]
+        metabolites = [convert_cobra_metabolite(m) for m in cobra_model.metabolites]
+        genes = [convert_cobra_gene(g) for g in cobra_model.genes]
 
         return ModelData(
             id=cobra_model.id,
@@ -54,68 +58,6 @@ class SBMLParser:
             metabolites=metabolites,
             genes=genes,
         )
-
-    def _convert_reaction(self, rxn: cobra.Reaction) -> Reaction:
-        gene_rule = rxn.gene_reaction_rule or ""
-        genes = extract_genes(gene_rule)
-        gpr_tree = parse_gpr(gene_rule)
-
-        reactants = {}
-        products = {}
-        for met, coef in rxn.metabolites.items():
-            if coef < 0:
-                reactants[met.id] = abs(coef)
-            else:
-                products[met.id] = coef
-
-        annotation = self._normalize_annotation(rxn.annotation)
-
-        return Reaction(
-            id=rxn.id,
-            name=rxn.name or rxn.id,
-            equation=rxn.build_reaction_string(use_metabolite_names=True),
-            subsystem=rxn.subsystem or None,
-            lower_bound=rxn.lower_bound,
-            upper_bound=rxn.upper_bound,
-            gene_reaction_rule=gene_rule,
-            gpr_tree=gpr_tree,
-            genes=genes,
-            reactants=reactants,
-            products=products,
-            annotation=annotation,
-        )
-
-    def _convert_metabolite(self, met: cobra.Metabolite) -> Metabolite:
-        return Metabolite(
-            id=met.id,
-            name=met.name or met.id,
-            formula=met.formula or None,
-            compartment=met.compartment or None,
-            charge=met.charge if hasattr(met, "charge") else None,
-            annotation=self._normalize_annotation(met.annotation),
-        )
-
-    def _convert_gene(self, gene: cobra.Gene) -> Gene:
-        return Gene(
-            id=gene.id,
-            name=gene.name or None,
-            annotation=self._normalize_annotation(gene.annotation),
-        )
-
-    def _normalize_annotation(self, annotation: dict) -> dict[str, list[str]]:
-        """Normalize COBRApy annotation dict to {db: [ids]}."""
-        result: dict[str, list[str]] = {}
-        if not annotation:
-            return result
-
-        for key, value in annotation.items():
-            if isinstance(value, str):
-                result[key] = [value]
-            elif isinstance(value, list):
-                result[key] = [str(v) for v in value]
-            else:
-                result[key] = [str(value)]
-        return result
 
     def _detect_organism(self, model: ModelData) -> None:
         """Auto-detect organism from model ID."""

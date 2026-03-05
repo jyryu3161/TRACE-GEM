@@ -22,12 +22,34 @@ _COLOR_FAIL_PASS = "#3498db"   # blue: fixed (fail -> pass)
 _COLOR_FAIL_FAIL = "#e74c3c"   # red: still failing
 _COLOR_PASS_FAIL = "#e67e22"   # orange: regressed (pass -> fail)
 
+# Detail table column indices
+_COL_TASK_ID = 0
+_COL_TYPE = 1
+_COL_DESC = 2
+_COL_CATEGORY = 3
+_COL_EXPECTED = 4
+_COL_BEFORE = 5
+_COL_AFTER = 6
+
+
+def _format_value(value: float) -> str:
+    """Format simulation value for display."""
+    if value == 0.0:
+        return "0"
+    if abs(value) < 0.01:
+        return f"{value:.2e}"
+    if abs(value) >= 1000:
+        return f"{value:.1f}"
+    return f"{value:.4f}"
+
 
 class TaskPanelWidget(QWidget):
     """Panel displaying metabolic task results before and after gap-filling."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self._before_map: dict[str, TaskResult] = {}
+        self._after_map: dict[str, TaskResult] = {}
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -59,25 +81,34 @@ class TaskPanelWidget(QWidget):
         self._category_table.setMaximumHeight(200)
         layout.addWidget(self._category_table)
 
+        # Hint label
+        hint_label = QLabel("Double-click a row to view task details")
+        hint_label.setStyleSheet(f"color: {THEME.muted_text}; font-style: italic;")
+        layout.addWidget(hint_label)
+
         # Detail table
         detail_label = QLabel("Task Details")
         detail_label.setStyleSheet(f"font-weight: bold; color: {THEME.text};")
         layout.addWidget(detail_label)
 
         self._detail_table = QTableWidget()
-        self._detail_table.setColumnCount(5)
+        self._detail_table.setColumnCount(7)
         self._detail_table.setHorizontalHeaderLabels(
-            ["Task ID", "Description", "Category", "Before", "After"]
+            ["Task ID", "Type", "Description", "Category", "Expected", "Before", "After"]
         )
-        self._detail_table.horizontalHeader().setStretchLastSection(True)
-        self._detail_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._detail_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch
-        )
+        header = self._detail_table.horizontalHeader()
+        header.setSectionResizeMode(_COL_TASK_ID, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(_COL_TYPE, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(_COL_DESC, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(_COL_CATEGORY, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(_COL_EXPECTED, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(_COL_BEFORE, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(_COL_AFTER, QHeaderView.ResizeMode.ResizeToContents)
         self._detail_table.verticalHeader().setVisible(False)
         self._detail_table.setAlternatingRowColors(True)
+        self._detail_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._detail_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._detail_table.cellDoubleClicked.connect(self._on_detail_double_clicked)
         layout.addWidget(self._detail_table)
 
     def set_results(
@@ -85,14 +116,9 @@ class TaskPanelWidget(QWidget):
         before: list[TaskResult],
         after: list[TaskResult] | None = None,
     ) -> None:
-        """Populate the panel with task results.
-
-        Args:
-            before: Task results from before gap-filling.
-            after: Task results from after gap-filling (None if not yet run).
-        """
-        before_map: dict[str, TaskResult] = {r.task.task_id: r for r in before}
-        after_map: dict[str, TaskResult] = (
+        """Populate the panel with task results."""
+        self._before_map = {r.task.task_id: r for r in before}
+        self._after_map = (
             {r.task.task_id: r for r in after} if after else {}
         )
 
@@ -102,8 +128,8 @@ class TaskPanelWidget(QWidget):
         after_pass = sum(1 for r in after if r.passed) if after else 0
         fixed = 0
         if after:
-            for task_id, br in before_map.items():
-                ar = after_map.get(task_id)
+            for task_id, br in self._before_map.items():
+                ar = self._after_map.get(task_id)
                 if ar and not br.passed and ar.passed:
                     fixed += 1
 
@@ -116,10 +142,10 @@ class TaskPanelWidget(QWidget):
             self._summary_label.setText(f"{before_pass}/{total} tasks passed")
 
         # Build category summary
-        self._build_category_table(before, after, before_map, after_map)
+        self._build_category_table(before, after, self._before_map, self._after_map)
 
         # Build detail table
-        self._build_detail_table(before, before_map, after_map)
+        self._build_detail_table(before, self._before_map, self._after_map)
 
     def _build_category_table(
         self,
@@ -187,34 +213,63 @@ class TaskPanelWidget(QWidget):
             ar = after_map.get(task.task_id)
 
             # Task ID
-            self._detail_table.setItem(row, 0, QTableWidgetItem(task.task_id))
+            self._detail_table.setItem(row, _COL_TASK_ID, QTableWidgetItem(task.task_id))
+
+            # Type
+            self._detail_table.setItem(row, _COL_TYPE, QTableWidgetItem(task.task_type))
 
             # Description
             desc = task.description or f"{task.task_type}: {task.target_id}"
-            self._detail_table.setItem(row, 1, QTableWidgetItem(desc))
+            self._detail_table.setItem(row, _COL_DESC, QTableWidgetItem(desc))
 
             # Category
             self._detail_table.setItem(
-                row, 2, QTableWidgetItem(task.category or "Uncategorized")
+                row, _COL_CATEGORY, QTableWidgetItem(task.category or "Uncategorized")
             )
 
-            # Before status
-            before_item = QTableWidgetItem("\u2705" if br.passed else "\u274c")
-            before_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._detail_table.setItem(row, 3, before_item)
+            # Expected condition
+            expected_text = f"{task.expected_operator}{task.expected_value:g}"
+            expected_item = QTableWidgetItem(expected_text)
+            expected_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._detail_table.setItem(row, _COL_EXPECTED, expected_item)
 
-            # After status
+            # Before status with actual value
+            icon = "\u2705" if br.passed else "\u274c"
+            val = _format_value(br.actual_value)
+            before_item = QTableWidgetItem(f"{icon} {val}")
+            before_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._detail_table.setItem(row, _COL_BEFORE, before_item)
+
+            # After status with actual value
             if ar is not None:
-                after_item = QTableWidgetItem("\u2705" if ar.passed else "\u274c")
+                icon = "\u2705" if ar.passed else "\u274c"
+                val = _format_value(ar.actual_value)
+                after_item = QTableWidgetItem(f"{icon} {val}")
                 after_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
                 # Color coding based on transition
                 color = self._transition_color(br.passed, ar.passed)
                 after_item.setForeground(QColor(color))
                 before_item.setForeground(QColor(color))
-                self._detail_table.setItem(row, 4, after_item)
+                self._detail_table.setItem(row, _COL_AFTER, after_item)
             else:
-                self._detail_table.setItem(row, 4, QTableWidgetItem("-"))
+                self._detail_table.setItem(row, _COL_AFTER, QTableWidgetItem("-"))
+
+    def _on_detail_double_clicked(self, row: int, _col: int) -> None:
+        """Open task detail dialog on row double-click."""
+        task_id_item = self._detail_table.item(row, _COL_TASK_ID)
+        if not task_id_item:
+            return
+        task_id = task_id_item.text()
+        before_result = self._before_map.get(task_id)
+        if not before_result:
+            return
+        after_result = self._after_map.get(task_id)
+
+        from src.gui.task_detail_dialog import TaskDetailDialog
+
+        dialog = TaskDetailDialog(before_result, after_result, parent=self)
+        dialog.exec()
 
     @staticmethod
     def _transition_color(before_passed: bool, after_passed: bool) -> str:
@@ -231,3 +286,5 @@ class TaskPanelWidget(QWidget):
         self._summary_label.setText("No task results available")
         self._category_table.setRowCount(0)
         self._detail_table.setRowCount(0)
+        self._before_map.clear()
+        self._after_map.clear()

@@ -1,3 +1,53 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:193b60071b4d6007ef1458cc20df858c3e13b6e3841c42f36f18feb6720b9153
-size 7413
+Task ID,Type,ID,Medium,Constraints,Expected value,Description,Category
+U001,Metabolite,atp_c,glc__D_e(-10.0);o2_e(-1000.0);pi_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,ATP production from glucose (energy metabolism),Energy
+U002,Metabolite,nadh_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,NADH production (electron carrier),Energy
+U003,Metabolite,nadph_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,NADPH production (biosynthesis cofactor),Energy
+U004,Metabolite,g6p_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Glucose-6-phosphate (glycolysis entry),Central Carbon
+U005,Metabolite,pyr_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Pyruvate production (central hub),Central Carbon
+U006,Metabolite,accoa_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Acetyl-CoA production (TCA entry),Central Carbon
+U007,Metabolite,oaa_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Oxaloacetate production (TCA cycle),Central Carbon
+U008,Metabolite,akg_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Alpha-ketoglutarate production (amino acid precursor),Central Carbon
+U009,Metabolite,succoa_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Succinyl-CoA production (TCA cycle),Central Carbon
+U010,Metabolite,r5p_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Ribose-5-phosphate (nucleotide precursor),PPP
+U011,Metabolite,e4p_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Erythrose-4-phosphate (aromatic AA precursor),PPP
+U012,Metabolite,prpp_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,PRPP (nucleotide and histidine biosynthesis),PPP
+U013,Metabolite,glu__L_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,L-Glutamate biosynthesis,Amino Acid
+U014,Metabolite,gln__L_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,L-Glutamine biosynthesis,Amino Acid
+U015,Metabolite,asp__L_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,L-Aspartate biosynthesis,Amino Acid
+U016,Metabolite,ala__L_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,L-Alanine biosynthesis,Amino Acid
+U017,Metabolite,gly_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Glycine biosynthesis,Amino Acid
+U018,Metabolite,ser__L_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,L-Serine biosynthesis,Amino Acid
+U019,Metabolite,pro__L_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,L-Proline biosynthesis,Amino Acid
+U020,Metabolite,amp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,AMP biosynthesis (purine),Nucleotide
+U021,Metabolite,gmp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,GMP biosynthesis (purine),Nucleotide
+U022,Metabolite,ump_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,UMP biosynthesis (pyrimidine),Nucleotide
+U023,Metabolite,cmp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,CMP biosynthesis (pyrimidine),Nucleotide
+U024,Metabolite,datp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,dATP biosynthesis (DNA),Nucleotide
+U025,Metabolite,dgtp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,dGTP biosynthesis (DNA),Nucleotide
+U026,Metabolite,dctp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,dCTP biosynthesis (DNA),Nucleotide
+U027,Metabolite,dttp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,dTTP biosynthesis (DNA),Nucleotide
+U028,Metabolite,nad_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,NAD+ production (redox cofactor),Cofactor
+U029,Metabolite,nadp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,NADP+ production (biosynthesis cofactor),Cofactor
+U030,Metabolite,coa_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Coenzyme A production,Cofactor
+U031,Metabolite,fad_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,FAD production,Cofactor
+U032,Metabolite,thf_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Tetrahydrofolate production,Cofactor
+U033,Metabolite,amet_c,glc__D_e(-10.0);nh4_e(-1000.0);so4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,S-Adenosylmethionine (methyl donor),Cofactor
+U034,Metabolite,malcoa_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Malonyl-CoA (fatty acid synthesis),Lipid
+U035,Metabolite,glyc3p_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Glycerol-3-phosphate (lipid backbone),Lipid
+U036,Reaction,ATPM,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,Maintenance ATP requirement,Maintenance
+U037,Metabolite,atp_c,glc__D_e(-1.0);o2_e(-1000.0);pi_e(-1000.0),EX_o2_e(-1000.0#1000.0),<50.0,ATP/glucose ratio should be realistic (P/O ratio constraint),Constraint
+U038,Metabolite,gtp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,GTP production (protein synthesis),Energy
+U039,Metabolite,ctp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,CTP production (lipid biosynthesis),Energy
+U040,Metabolite,utp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,UTP production (polysaccharide biosynthesis),Energy
+U041,Metabolite,atp_c,o2_e(-1000.0);nh4_e(-1000.0);pi_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No ATP production without carbon source (glucose required),Negative Constraint
+U042,Metabolite,glu__L_c,glc__D_e(-10.0);nh4_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No glutamate synthesis without nitrogen source (NH4 required),Negative Constraint
+U043,Metabolite,ala__L_c,glc__D_e(-10.0);nh4_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No alanine synthesis without nitrogen source,Negative Constraint
+U044,Metabolite,cys__L_c,glc__D_e(-10.0);nh4_e(-1000.0);so4_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No cysteine synthesis without sulfur source (SO4 required),Negative Constraint
+U045,Metabolite,met__L_c,glc__D_e(-10.0);nh4_e(-1000.0);so4_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No methionine synthesis without sulfur source,Negative Constraint
+U046,Metabolite,pheme_c,glc__D_e(-10.0);nh4_e(-1000.0);fe2_e(0.0);fe3_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No heme production without iron (Fe2+ required),Negative Constraint
+U047,Metabolite,amp_c,glc__D_e(-10.0);nh4_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No nucleotide synthesis without nitrogen (purine ring requires N),Negative Constraint
+U048,Metabolite,datp_c,glc__D_e(-10.0);nh4_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No DNA precursors without nitrogen source,Negative Constraint
+U049,Reaction,CYTBO3_4pp,glc__D_e(-10.0);o2_e(0.0),EX_o2_e(0.0#0.0),=0.0,No cytochrome oxidase without oxygen (aerobic respiration),Negative Constraint
+U050,Metabolite,glyc3p_c,o2_e(-1000.0);nh4_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No glycerol-3P without carbon source (lipid backbone requires glucose),Negative Constraint
+U051,Metabolite,r5p_c,o2_e(-1000.0);nh4_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No ribose-5P without carbon source (PPP requires glucose),Negative Constraint
+U052,Metabolite,prpp_c,o2_e(-1000.0);nh4_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No PRPP without carbon source (nucleotide precursor requires glucose),Negative Constraint

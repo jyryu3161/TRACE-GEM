@@ -1,0 +1,34 @@
+{
+  "gui-refactoring": {
+    "phase": "archived",
+    "matchRate": 100,
+    "iterationCount": 1,
+    "startedAt": "2026-02-28T00:00:00Z",
+    "archivedAt": "2026-02-28T23:59:00Z",
+    "archivedTo": "docs/archive/2026-02/gui-refactoring/"
+  },
+  "project-save-load": {
+    "phase": "archived",
+    "matchRate": 100,
+    "iterationCount": 1,
+    "startedAt": "2026-03-05T00:00:00Z",
+    "archivedAt": "2026-03-05T23:59:00Z",
+    "archivedTo": "docs/archive/2026-03/project-save-load/"
+  },
+  "version-history-upgrade": {
+    "phase": "archived",
+    "matchRate": 100,
+    "iterationCount": 1,
+    "startedAt": "2026-03-03T00:00:00Z",
+    "archivedAt": "2026-03-05T23:59:00Z",
+    "archivedTo": "docs/archive/2026-03/version-history-upgrade/"
+  },
+  "reaction-removal-preview": {
+    "phase": "archived",
+    "matchRate": 100,
+    "iterationCount": 1,
+    "startedAt": "2026-03-03T00:00:00Z",
+    "archivedAt": "2026-03-03T23:59:00Z",
+    "archivedTo": "docs/archive/2026-03/reaction-removal-preview/"
+  }
+}

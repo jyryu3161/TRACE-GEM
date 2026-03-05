@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QPushButton,
     QSlider,
     QTableView,
     QVBoxLayout,
@@ -75,6 +76,10 @@ class CandidateTableModel(QAbstractTableModel):
     def get_selected_candidates(self) -> list[CandidateReaction]:
         return [c for c in self._candidates if c.selected]
 
+    def get_evidence(self, reaction_id: str) -> ReactionEvidence | None:
+        """Get evidence for a specific reaction."""
+        return self._evidence.get(reaction_id)
+
     def rowCount(self, parent: QModelIndex | None = None) -> int:  # type: ignore[override]
         return len(self._candidates)
 
@@ -111,7 +116,7 @@ class CandidateTableModel(QAbstractTableModel):
             elif col == self.COL_NAME:
                 return rxn.name
             elif col == self.COL_EQUATION:
-                eq = rxn.equation
+                eq = rxn.equation_id or rxn.equation
                 return eq if len(eq) <= 60 else eq[:57] + "..."
             elif col == self.COL_SUBSYSTEM:
                 return rxn.subsystem or ""
@@ -160,7 +165,7 @@ class CandidateTableModel(QAbstractTableModel):
             if col == self.COL_GPR:
                 return candidate.assigned_gpr
             elif col == self.COL_EQUATION:
-                return rxn.equation
+                return rxn.equation_id or rxn.equation
 
         return None
 
@@ -270,7 +275,7 @@ class CandidateFilterProxy(QSortFilterProxyModel):
 
         # Score filter
         if self._min_score > 0:
-            ev = model._evidence.get(rxn.id)
+            ev = model.get_evidence(rxn.id)
             score = ev.confidence_score if ev else 0.0
             if score < self._min_score:
                 return False
@@ -282,17 +287,41 @@ class CandidateTableWidget(QWidget):
     """Complete candidate reaction table widget with filters."""
 
     candidate_selected = Signal(str)  # reaction_id
+    evaluate_requested = Signal(list)  # list[CandidateReaction]
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self._mode = "default"  # "default" | "browse"
         self._model = CandidateTableModel()
         self._proxy = CandidateFilterProxy()
         self._proxy.setSourceModel(self._model)
+        self._overview_label: QLabel | None = None
+        self._evaluate_btn: QPushButton | None = None
         self._setup_ui()
+
+    def set_mode(self, mode: str) -> None:
+        """Set widget mode: 'default' (gap-fill candidates) or 'browse' (universal)."""
+        self._mode = mode
+        if self._overview_label:
+            self._overview_label.setVisible(mode == "browse")
+        if self._evaluate_btn:
+            self._evaluate_btn.setVisible(mode == "browse")
+
+    def set_overview(self, text: str) -> None:
+        """Set overview header text (browse mode)."""
+        if self._overview_label:
+            self._overview_label.setText(text)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        # Overview header (browse mode only, hidden by default)
+        self._overview_label = QLabel()
+        self._overview_label.setObjectName("sectionTitle")
+        self._overview_label.setWordWrap(True)
+        self._overview_label.setVisible(False)
+        layout.addWidget(self._overview_label)
 
         # Filter bar
         filter_layout = QHBoxLayout()
@@ -331,6 +360,15 @@ class CandidateTableWidget(QWidget):
         filter_layout.addWidget(self._score_label)
 
         layout.addLayout(filter_layout)
+
+        # Evaluate button (browse mode only, hidden by default)
+        eval_layout = QHBoxLayout()
+        eval_layout.addStretch()
+        self._evaluate_btn = QPushButton("Evaluate Selected")
+        self._evaluate_btn.setVisible(False)
+        self._evaluate_btn.clicked.connect(self._on_evaluate_clicked)
+        eval_layout.addWidget(self._evaluate_btn)
+        layout.addLayout(eval_layout)
 
         # Table view
         self._table = QTableView()
@@ -388,6 +426,10 @@ class CandidateTableWidget(QWidget):
     def set_score_delegate(self, delegate: Any) -> None:
         self._table.setItemDelegateForColumn(CandidateTableModel.COL_SCORE, delegate)
 
+    def get_candidates(self) -> list[CandidateReaction]:
+        """Return all loaded candidates, or empty list if none."""
+        return list(self._model._candidates)
+
     def get_selected_candidates(self) -> list[CandidateReaction]:
         return self._model.get_selected_candidates()
 
@@ -410,3 +452,8 @@ class CandidateTableWidget(QWidget):
             candidate = self._model.get_candidate(source_index.row())
             if candidate:
                 self.candidate_selected.emit(candidate.reaction.id)
+
+    def _on_evaluate_clicked(self) -> None:
+        selected = self._model.get_selected_candidates()
+        if selected:
+            self.evaluate_requested.emit(selected)

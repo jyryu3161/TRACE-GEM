@@ -57,12 +57,11 @@ class EvidencePanelWidget(QWidget):
         # KEGG Verification summary card (special — includes match ratios)
         html_parts.append(self._render_kegg_card(evidence))
 
-        # Database source cards (BiGG, UniProt, PubMed, MetaCyc)
+        # Database source cards (BiGG, UniProt, PubMed)
         for source in (
             EvidenceSource.BIGG,
             EvidenceSource.UNIPROT,
             EvidenceSource.PUBMED,
-            EvidenceSource.METACYC,
         ):
             items = [i for i in evidence.items if i.source == source]
             if items:

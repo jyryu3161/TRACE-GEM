@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 
+from src.api.llm_utils import extract_json_from_response
 from src.api.rate_limiter import RateLimiter
 from src.core.models import (
     EvidenceItem,
@@ -129,12 +128,16 @@ class GeminiClient:
         await self._rate_limiter.acquire()
 
         try:
-            response = self._client.models.generate_content(
+            import asyncio
+
+            # Run sync Gemini SDK call in thread to avoid blocking the event loop
+            response = await asyncio.to_thread(
+                self._client.models.generate_content,
                 model="gemini-2.5-flash",
                 contents=prompt,
             )
             text = response.text or ""
-            parsed = self._extract_json(text)
+            parsed = extract_json_from_response(text)
 
             # Cache result
             if parsed and self._cache:
@@ -154,35 +157,6 @@ class GeminiClient:
                 description=f"Gemini verification error: {e}",
                 raw_data={"error": str(e)},
             )
-
-    def _extract_json(self, text: str) -> dict | None:
-        """Extract JSON object from response text."""
-        # Try direct parse
-        try:
-            result = json.loads(text.strip())
-            return result if isinstance(result, dict) else None
-        except json.JSONDecodeError:
-            pass
-
-        # Try to find JSON in markdown code block
-        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if match:
-            try:
-                result = json.loads(match.group(1))
-                return result if isinstance(result, dict) else None
-            except json.JSONDecodeError:
-                pass
-
-        # Try to find any JSON object
-        match = re.search(r"\{[^{}]*\}", text, re.DOTALL)
-        if match:
-            try:
-                result = json.loads(match.group(0))
-                return result if isinstance(result, dict) else None
-            except json.JSONDecodeError:
-                pass
-
-        return None
 
     def _parse_response(self, data: dict, kegg_id: str) -> EvidenceItem:
         """Parse structured response into EvidenceItem."""

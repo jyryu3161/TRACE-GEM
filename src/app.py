@@ -6,6 +6,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from src.gui.evidence_colors import apply_theme_colors
 from src.gui.main_window import MainWindow
 from src.gui.theme import apply_theme
 from src.utils.config import Config
@@ -22,6 +23,7 @@ def main() -> None:
     app.setApplicationVersion(APP_VERSION)
 
     apply_theme(app)
+    apply_theme_colors()
 
     window = MainWindow(config)
     window.show()

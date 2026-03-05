@@ -61,7 +61,7 @@ class TestMappingData:
                 )
 
     def test_strip_compartment(self):
-        assert MappingData._strip_compartment("atp_c") == "atp"
-        assert MappingData._strip_compartment("glc__D_e") == "glc__D"
-        assert MappingData._strip_compartment("h2o") == "h2o"
-        assert MappingData._strip_compartment("") == ""
+        assert MappingData.strip_compartment("atp_c") == "atp"
+        assert MappingData.strip_compartment("glc__D_e") == "glc__D"
+        assert MappingData.strip_compartment("h2o") == "h2o"
+        assert MappingData.strip_compartment("") == ""

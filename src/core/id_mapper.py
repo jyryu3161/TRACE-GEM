@@ -19,13 +19,25 @@ class IdentifierMapper:
     def __init__(self, mapping_data: MappingData) -> None:
         self._mapping = mapping_data
 
-    async def resolve(self, reaction: Reaction) -> ExternalIDs:
-        """Resolve a reaction's external IDs via offline mapping."""
+    async def resolve(
+        self, reaction: Reaction, *, universal: bool = False
+    ) -> ExternalIDs:
+        """Resolve a reaction's external IDs via offline mapping.
+
+        Args:
+            reaction: The reaction to resolve IDs for.
+            universal: If True, use universal model annotation keys
+                (e.g., "KEGG Reaction" vs "kegg.reaction") and skip
+                metabolite mapping (universal reactions have no compartments).
+        """
         bigg_id = self._normalize_bigg_id(reaction.id)
         ext = ExternalIDs(reaction_id=reaction.id, bigg_id=bigg_id)
 
-        # 1. Extract from SBML annotation (direct KEGG/EC annotations)
-        self._extract_from_annotation(reaction, ext)
+        # 1. Extract from annotation (format depends on universal flag)
+        if universal:
+            self._extract_from_universal_annotation(reaction, ext)
+        else:
+            self._extract_from_annotation(reaction, ext)
 
         # 2. BiGG reaction ID → KEGG reaction IDs (offline mapping)
         kegg_rxn_ids = self._mapping.rxn_bigg_to_kegg.get(bigg_id, [])
@@ -44,19 +56,19 @@ class IdentifierMapper:
                 if kid not in ext.kegg_reaction_ids:
                     ext.kegg_reaction_ids.append(kid)
 
-        # 5. Map reactant metabolites to KEGG compound IDs
-        for met_id in reaction.reactants:
-            kegg_ids = self._resolve_metabolite_kegg(met_id)
-            for kid in kegg_ids:
-                if kid not in ext.kegg_substrate_ids:
-                    ext.kegg_substrate_ids.append(kid)
+        # 5-6. Map metabolites to KEGG compound IDs (SBML models only)
+        if not universal:
+            for met_id in reaction.reactants:
+                kegg_ids = self._resolve_metabolite_kegg(met_id)
+                for kid in kegg_ids:
+                    if kid not in ext.kegg_substrate_ids:
+                        ext.kegg_substrate_ids.append(kid)
 
-        # 6. Map product metabolites to KEGG compound IDs
-        for met_id in reaction.products:
-            kegg_ids = self._resolve_metabolite_kegg(met_id)
-            for kid in kegg_ids:
-                if kid not in ext.kegg_product_ids:
-                    ext.kegg_product_ids.append(kid)
+            for met_id in reaction.products:
+                kegg_ids = self._resolve_metabolite_kegg(met_id)
+                for kid in kegg_ids:
+                    if kid not in ext.kegg_product_ids:
+                        ext.kegg_product_ids.append(kid)
 
         return ext
 
@@ -70,7 +82,7 @@ class IdentifierMapper:
         name = self._mapping.met_bigg_to_name.get(met_id)
         if name:
             return name
-        base_id = MappingData._strip_compartment(met_id)
+        base_id = MappingData.strip_compartment(met_id)
         return self._mapping.met_bigg_to_name.get(base_id)
 
     def _resolve_metabolite_kegg(self, met_id: str) -> list[str]:
@@ -81,7 +93,7 @@ class IdentifierMapper:
             return kegg_ids
 
         # Try without compartment suffix
-        base_id = MappingData._strip_compartment(met_id)
+        base_id = MappingData.strip_compartment(met_id)
         return self._mapping.met_bigg_to_kegg.get(base_id, [])
 
     def _normalize_bigg_id(self, reaction_id: str) -> str:
@@ -119,33 +131,9 @@ class IdentifierMapper:
     async def resolve_universal(self, reaction: Reaction) -> ExternalIDs:
         """Resolve external IDs for a universal model reaction.
 
-        Universal model annotations use different keys than SBML models
-        (e.g., "KEGG Reaction" vs "kegg.reaction").
+        Convenience wrapper around resolve(universal=True).
         """
-        bigg_id = self._normalize_bigg_id(reaction.id)
-        ext = ExternalIDs(reaction_id=reaction.id, bigg_id=bigg_id)
-
-        # 1. Extract from universal model annotation
-        self._extract_from_universal_annotation(reaction, ext)
-
-        # 2. BiGG reaction ID → KEGG reaction IDs (offline mapping)
-        kegg_rxn_ids = self._mapping.rxn_bigg_to_kegg.get(bigg_id, [])
-        for kid in kegg_rxn_ids:
-            if kid not in ext.kegg_reaction_ids:
-                ext.kegg_reaction_ids.append(kid)
-
-        # 3. MNXR IDs for reference
-        mnxr_ids = self._mapping.rxn_bigg_to_mnxr.get(bigg_id, [])
-        ext.mnxr_ids.extend(mnxr_ids)
-
-        # 4. EC number → KEGG reaction IDs (supplementary)
-        for ec in ext.ec_numbers:
-            ec_kegg_ids = self._mapping.rxn_ec_to_kegg.get(ec, [])
-            for kid in ec_kegg_ids:
-                if kid not in ext.kegg_reaction_ids:
-                    ext.kegg_reaction_ids.append(kid)
-
-        return ext
+        return await self.resolve(reaction, universal=True)
 
     def _extract_from_universal_annotation(
         self, reaction: Reaction, ext: ExternalIDs

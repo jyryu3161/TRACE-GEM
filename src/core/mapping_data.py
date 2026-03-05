@@ -80,7 +80,7 @@ class MappingData:
                 continue
 
             # Strip compartment suffix (e.g., "atp_c" → "atp")
-            base_id = self._strip_compartment(bigg_id)
+            base_id = self.strip_compartment(bigg_id)
 
             if name:
                 self.met_bigg_to_name[bigg_id] = name
@@ -226,7 +226,7 @@ class MappingData:
                 self.rxn_ec_to_kegg[ec] = ec_kegg_ids
 
     @staticmethod
-    def _strip_compartment(met_id: str) -> str:
+    def strip_compartment(met_id: str) -> str:
         """Strip compartment suffix from metabolite ID (e.g., atp_c → atp)."""
         # BiGG convention: metabolite_compartment (e.g., atp_c, atp_m)
         if "_" in met_id:

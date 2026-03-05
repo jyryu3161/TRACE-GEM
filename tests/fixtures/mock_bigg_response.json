@@ -9,9 +9,6 @@
     "KEGG Reaction": [
       {"id": "R00658", "link": "http://identifiers.org/kegg.reaction/R00658"}
     ],
-    "MetaCyc Reaction": [
-      {"id": "ENOLASE-RXN", "link": "http://identifiers.org/metacyc.reaction/ENOLASE-RXN"}
-    ],
     "RHEA": [
       {"id": "10164", "link": "http://identifiers.org/rhea/10164"}
     ],

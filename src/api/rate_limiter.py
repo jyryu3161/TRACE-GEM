@@ -23,15 +23,16 @@ class RateLimiter:
 
     async def acquire(self) -> None:
         """Wait until a token is available, then consume one."""
-        async with self._lock:
-            while True:
+        while True:
+            async with self._lock:
                 self._refill()
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0
                     return
                 # Calculate wait time for next token
                 wait = (1.0 - self._tokens) / self._rate
-                await asyncio.sleep(wait)
+            # Sleep OUTSIDE the lock so other coroutines aren't blocked
+            await asyncio.sleep(wait)
 
     def _refill(self) -> None:
         now = time.monotonic()

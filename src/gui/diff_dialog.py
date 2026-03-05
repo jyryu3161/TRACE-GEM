@@ -17,7 +17,12 @@ from src.gui.theme import THEME
 
 
 class DiffDialog(QDialog):
-    """Dialog showing the diff between two model versions."""
+    """Dialog showing the diff between two model versions.
+
+    Supports two modes:
+    - Two-version comparison (constructor)
+    - Single-version detail view (from_single_version classmethod)
+    """
 
     def __init__(
         self,
@@ -35,6 +40,62 @@ class DiffDialog(QDialog):
         )
         self.setMinimumSize(700, 500)
         self._setup_ui()
+
+    @classmethod
+    def from_single_version(
+        cls, version: ModelVersion, parent=None
+    ) -> DiffDialog:
+        """Show diff details for a single version's recorded changes."""
+        diff = version.diff or ModelDiff()
+        dialog = cls.__new__(cls)
+        QDialog.__init__(dialog, parent)
+        dialog._diff = diff
+        dialog._version_a = version
+        dialog._version_b = None  # type: ignore[assignment]
+        dialog.setWindowTitle(f"Changes in {version.version_id}")
+        dialog.setMinimumSize(700, 500)
+        dialog._setup_single_ui(version)
+        return dialog
+
+    def _setup_single_ui(self, version: ModelVersion) -> None:
+        """Build UI for single-version detail mode."""
+        layout = QVBoxLayout(self)
+
+        # Header with version info
+        header = QLabel(
+            f"<b>{version.version_id}</b> &mdash; {version.change_type}"
+        )
+        header.setStyleSheet(f"font-size: 14px; color: {THEME.text};")
+        layout.addWidget(header)
+
+        # Metadata row
+        meta_parts = [version.timestamp]
+        if version.task_pass_rate:
+            meta_parts.append(f"QC: {version.task_pass_rate}")
+        if version.parent_version_id:
+            meta_parts.append(f"Parent: {version.parent_version_id}")
+        meta_label = QLabel(" | ".join(meta_parts))
+        meta_label.setStyleSheet(f"color: {THEME.muted_text}; margin-bottom: 4px;")
+        layout.addWidget(meta_label)
+
+        if version.description:
+            desc_label = QLabel(version.description)
+            desc_label.setWordWrap(True)
+            desc_label.setStyleSheet(f"color: {THEME.text}; margin-bottom: 8px;")
+            layout.addWidget(desc_label)
+
+        # Summary line
+        summary_label = QLabel(f"<b>Summary:</b> {self._diff.compact_summary}")
+        summary_label.setStyleSheet("margin-bottom: 4px;")
+        layout.addWidget(summary_label)
+
+        # Reuse the common diff sections
+        self._add_diff_sections(layout)
+
+        layout.addStretch()
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -58,6 +119,17 @@ class DiffDialog(QDialog):
             qc_label.setStyleSheet(f"color: {THEME.muted_text}; margin-bottom: 8px;")
             layout.addWidget(qc_label)
 
+        self._add_diff_sections(layout)
+
+        layout.addStretch()
+
+        # Close button
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _add_diff_sections(self, layout: QVBoxLayout) -> None:
+        """Add the common diff detail sections (reactions, genes, metabolites)."""
         # Reactions Added
         added = self._diff.reactions_added
         layout.addWidget(self._section_label(f"Reactions Added ({len(added)})"))
@@ -127,13 +199,6 @@ class DiffDialog(QDialog):
             summary = QLabel("Other: " + ", ".join(summary_parts))
             summary.setStyleSheet(f"color: {THEME.muted_text}; margin-top: 8px;")
             layout.addWidget(summary)
-
-        layout.addStretch()
-
-        # Close button
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
 
     @staticmethod
     def _section_label(text: str) -> QLabel:

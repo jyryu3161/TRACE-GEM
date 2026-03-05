@@ -18,7 +18,6 @@ class EvidenceSource(Enum):
     BIGG = "bigg"
     UNIPROT = "uniprot"
     PUBMED = "pubmed"
-    METACYC = "metacyc"
     GEMINI = "gemini"
     PERPLEXITY = "perplexity"
 
@@ -88,6 +87,7 @@ class Reaction:
     id: str
     name: str
     equation: str
+    equation_id: str = ""
     subsystem: str | None = None
     lower_bound: float = -1000.0
     upper_bound: float = 1000.0
@@ -121,6 +121,11 @@ class ModelData:
     organism: str | None = None
     kegg_organism_code: str | None = None
     cobra_model: object | None = field(default=None, repr=False)
+    _reaction_index: dict[str, Reaction] = field(default_factory=dict, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.reactions and not self._reaction_index:
+            self._reaction_index = {r.id: r for r in self.reactions}
 
     @property
     def reaction_count(self) -> int:
@@ -135,14 +140,41 @@ class ModelData:
         return len(self.genes)
 
     def get_reaction(self, reaction_id: str) -> Reaction | None:
-        for r in self.reactions:
-            if r.id == reaction_id:
-                return r
-        return None
+        """O(1) reaction lookup by ID."""
+        if not self._reaction_index and self.reactions:
+            self._reaction_index = {r.id: r for r in self.reactions}
+        return self._reaction_index.get(reaction_id)
 
     def get_subsystems(self) -> list[str]:
         subs = sorted({r.subsystem for r in self.reactions if r.subsystem})
         return subs
+
+    def remove_reaction(self, reaction_id: str) -> Reaction | None:
+        """Remove a reaction and clean up orphaned metabolites/genes.
+
+        Returns the removed Reaction, or None if not found.
+        Does NOT modify the cobra_model — caller is responsible.
+        """
+        for i, rxn in enumerate(self.reactions):
+            if rxn.id == reaction_id:
+                removed = self.reactions.pop(i)
+                # Invalidate index
+                self._reaction_index = {}
+                # Clean up orphaned metabolites
+                remaining_met_ids: set[str] = set()
+                for r in self.reactions:
+                    remaining_met_ids.update(r.reactants.keys())
+                    remaining_met_ids.update(r.products.keys())
+                self.metabolites = [
+                    m for m in self.metabolites if m.id in remaining_met_ids
+                ]
+                # Clean up orphaned genes
+                remaining_gene_ids: set[str] = set()
+                for r in self.reactions:
+                    remaining_gene_ids.update(r.genes)  # genes is list[str]
+                self.genes = [g for g in self.genes if g.id in remaining_gene_ids]
+                return removed
+        return None
 
 
 # --- Evidence data ---
@@ -155,6 +187,25 @@ class EvidenceItem:
     description: str
     url: str | None = None
     raw_data: dict | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "source": self.source.value,
+            "strength": self.strength.value,
+            "description": self.description,
+            "url": self.url,
+            "raw_data": self.raw_data,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> EvidenceItem:
+        return cls(
+            source=EvidenceSource(data["source"]),
+            strength=EvidenceStrength(data["strength"]),
+            description=data["description"],
+            url=data.get("url"),
+            raw_data=data.get("raw_data"),
+        )
 
 
 @dataclass
@@ -170,7 +221,6 @@ class ReactionEvidence:
     bigg_score: float = 0.0
     uniprot_score: float = 0.0
     pubmed_score: float = 0.0
-    metacyc_score: float = 0.0
     gemini_score: float = 0.0
     perplexity_score: float = 0.0
 
@@ -181,6 +231,46 @@ class ReactionEvidence:
     # Reaction verification results
     substrate_match_ratio: float = 0.0
     product_match_ratio: float = 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "reaction_id": self.reaction_id,
+            "confidence_score": self.confidence_score,
+            "status": self.status.value,
+            "error_message": self.error_message,
+            "kegg_score": self.kegg_score,
+            "bigg_score": self.bigg_score,
+            "uniprot_score": self.uniprot_score,
+            "pubmed_score": self.pubmed_score,
+            "gemini_score": self.gemini_score,
+            "perplexity_score": self.perplexity_score,
+            "ec_numbers": self.ec_numbers,
+            "kegg_reaction_ids": self.kegg_reaction_ids,
+            "substrate_match_ratio": self.substrate_match_ratio,
+            "product_match_ratio": self.product_match_ratio,
+            "items": [item.to_dict() for item in self.items],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ReactionEvidence:
+        items = [EvidenceItem.from_dict(d) for d in data.get("items", [])]
+        return cls(
+            reaction_id=data["reaction_id"],
+            confidence_score=data.get("confidence_score", 0.0),
+            status=EvaluationStatus(data.get("status", "not_evaluated")),
+            error_message=data.get("error_message"),
+            kegg_score=data.get("kegg_score", 0.0),
+            bigg_score=data.get("bigg_score", 0.0),
+            uniprot_score=data.get("uniprot_score", 0.0),
+            pubmed_score=data.get("pubmed_score", 0.0),
+            gemini_score=data.get("gemini_score", 0.0),
+            perplexity_score=data.get("perplexity_score", 0.0),
+            ec_numbers=data.get("ec_numbers", []),
+            kegg_reaction_ids=data.get("kegg_reaction_ids", []),
+            substrate_match_ratio=data.get("substrate_match_ratio", 0.0),
+            product_match_ratio=data.get("product_match_ratio", 0.0),
+            items=items,
+        )
 
 
 @dataclass
@@ -226,6 +316,34 @@ class MetabolicTask:
     description: str = ""
     category: str = ""
 
+    def to_dict(self) -> dict:
+        return {
+            "task_id": self.task_id,
+            "task_type": self.task_type,
+            "target_id": self.target_id,
+            "medium": self.medium,
+            "constraints": {k: list(v) for k, v in self.constraints.items()},
+            "expected_operator": self.expected_operator,
+            "expected_value": self.expected_value,
+            "description": self.description,
+            "category": self.category,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> MetabolicTask:
+        constraints = {k: tuple(v) for k, v in data.get("constraints", {}).items()}
+        return cls(
+            task_id=data["task_id"],
+            task_type=data["task_type"],
+            target_id=data["target_id"],
+            medium=data.get("medium", {}),
+            constraints=constraints,
+            expected_operator=data.get("expected_operator", ">"),
+            expected_value=data.get("expected_value", 0.0),
+            description=data.get("description", ""),
+            category=data.get("category", ""),
+        )
+
 
 @dataclass
 class TaskResult:
@@ -236,6 +354,25 @@ class TaskResult:
     actual_value: float
     error_message: str | None = None
     phase: str = "before"  # "before" or "after"
+
+    def to_dict(self) -> dict:
+        return {
+            "task": self.task.to_dict(),
+            "passed": self.passed,
+            "actual_value": self.actual_value,
+            "error_message": self.error_message,
+            "phase": self.phase,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> TaskResult:
+        return cls(
+            task=MetabolicTask.from_dict(data["task"]),
+            passed=data["passed"],
+            actual_value=data["actual_value"],
+            error_message=data.get("error_message"),
+            phase=data.get("phase", "before"),
+        )
 
 
 @dataclass
@@ -249,6 +386,23 @@ class GapFillResult:
     total_tasks: int = 0
     iterations: int = 0
     infeasible_tasks: list[str] = field(default_factory=list)
+
+    # Cancel recovery fields
+    completed_phase: int = 0  # 0~5, completed phase number
+    all_candidates: list[CandidateReaction] = field(default_factory=list)
+    is_partial: bool = False  # True if result is from a cancelled workflow
+
+
+@dataclass
+class WorkflowCheckpoint:
+    """Gap-fill workflow checkpoint for resume support."""
+
+    completed_phase: int  # completed phase (0~5)
+    result: GapFillResult  # partial result
+    universal_path: str  # universal model path
+    task_path: str | None  # task file path
+    options: dict = field(default_factory=dict)  # WorkflowWizard settings
+    timestamp: str = ""  # ISO 8601
 
 
 # --- Version control data ---
@@ -298,6 +452,26 @@ class ModelDiff:
         if self.genes_removed:
             parts.append(f"-{len(self.genes_removed)} genes")
         return ", ".join(parts) if parts else "No changes"
+
+    @property
+    def compact_summary(self) -> str:
+        """Git-style compact change summary, e.g. '+23 rxn, ~5 mod, +15 gene'."""
+        parts: list[str] = []
+        if self.reactions_added:
+            parts.append(f"+{len(self.reactions_added)} rxn")
+        if self.reactions_removed:
+            parts.append(f"-{len(self.reactions_removed)} rxn")
+        if self.reactions_modified:
+            parts.append(f"~{len(self.reactions_modified)} mod")
+        if self.genes_added:
+            parts.append(f"+{len(self.genes_added)} gene")
+        if self.genes_removed:
+            parts.append(f"-{len(self.genes_removed)} gene")
+        if self.metabolites_added:
+            parts.append(f"+{len(self.metabolites_added)} met")
+        if self.metabolites_removed:
+            parts.append(f"-{len(self.metabolites_removed)} met")
+        return ", ".join(parts) if parts else "\u2014"
 
 
 @dataclass

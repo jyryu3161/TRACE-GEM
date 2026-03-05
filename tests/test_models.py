@@ -41,7 +41,7 @@ class TestEvidenceSource:
         assert EvidenceSource.PERPLEXITY.value == "perplexity"
 
     def test_all_sources(self):
-        assert len(EvidenceSource) == 7
+        assert len(EvidenceSource) == 6
 
 
 class TestEvaluationStatus:

@@ -62,6 +62,10 @@ class TestReactionDetailWidget:
         assert widget._id_label.text() == "ENO"
         assert widget._name_edit.text() == "enolase"
         assert widget._eval_btn.isEnabled() is True
+        # equation_id display should show the ID-based equation
+        assert "2pg_c" in widget._equation_id_display.toPlainText()
+        # equation (Name) display should show name-based equation
+        assert "D-Glycerate" in widget._equation_edit.toPlainText()
 
     def test_clear(self, sample_reaction):
         from src.gui.reaction_detail import ReactionDetailWidget
@@ -81,7 +85,6 @@ class TestReactionDetailWidget:
         ev.kegg_reaction_ids = ["R00658"]
         ev.substrate_match_ratio = 1.0
         ev.product_match_ratio = 1.0
-        ev.directionality_match = True
         widget.update_evidence(ev)
         # Should contain the EC number in the xref browser
         html = widget._xref_browser.toHtml()
@@ -216,9 +219,297 @@ class TestSettingsDialog:
         assert dialog._batch_size.value() == 20
 
 
+class TestReactionRemovalDialog:
+    def test_dialog_creation(self, sample_reaction, sample_model):
+        from src.core.models import MetabolicTask, TaskResult
+        from src.gui.reaction_removal_dialog import ReactionRemovalDialog
+
+        task = MetabolicTask(
+            task_id="T1", task_type="Reaction", target_id="ENO",
+        )
+        current_result = TaskResult(task=task, passed=True, actual_value=1.0)
+        # Without cobra_model, we test instantiation only (no simulation)
+        dialog = ReactionRemovalDialog(
+            reaction=sample_reaction,
+            cobra_model=None,
+            tasks=[task],
+            current_results=[current_result],
+        )
+        assert dialog is not None
+        assert dialog.windowTitle() == f"Remove Reaction: {sample_reaction.id}"
+
+    def test_remove_button_disabled_initially(self, sample_reaction):
+        from src.core.models import MetabolicTask, TaskResult
+        from src.gui.reaction_removal_dialog import ReactionRemovalDialog
+
+        task = MetabolicTask(
+            task_id="T1", task_type="Reaction", target_id="ENO",
+        )
+        current_result = TaskResult(task=task, passed=True, actual_value=1.0)
+        dialog = ReactionRemovalDialog(
+            reaction=sample_reaction,
+            cobra_model=None,
+            tasks=[task],
+            current_results=[current_result],
+        )
+        assert dialog._remove_btn.isEnabled() is False
+
+
+class TestMainWindowProjectState:
+    def test_dirty_flag_initial(self):
+        from src.gui.main_window import MainWindow
+        from src.utils.config import Config
+
+        config = Config()
+        window = MainWindow(config)
+        assert window._project_dirty is False
+        assert window._project_path is None
+        window.close()
+
+
 class TestScoreVisualizationWidget:
     def test_instantiation(self):
         from src.gui.score_visualization import ScoreVisualizationWidget
 
         widget = ScoreVisualizationWidget()
         assert widget is not None
+
+
+class TestVersionPanelWidget:
+    def _make_versions(self):
+        from src.core.models import ModelDiff, ModelVersion
+
+        return [
+            ModelVersion(
+                version_id="v001",
+                timestamp="2026-02-21T09:30:00Z",
+                model_id="test",
+                change_type="initial_load",
+                description="Initial model load with 100 reactions",
+                diff=ModelDiff(
+                    reactions_added=["R1", "R2", "R3"],
+                    genes_added=["g1", "g2"],
+                ),
+                task_pass_rate="35/52",
+            ),
+            ModelVersion(
+                version_id="v002",
+                timestamp="2026-02-21T10:15:00Z",
+                parent_version_id="v001",
+                model_id="test",
+                change_type="gap_fill",
+                description="Gap-fill: 2 reactions added",
+                diff=ModelDiff(
+                    reactions_added=["R4", "R5"],
+                    genes_added=["g3"],
+                ),
+                task_pass_rate="48/52",
+            ),
+            ModelVersion(
+                version_id="v003",
+                timestamp="2026-02-21T10:30:00Z",
+                parent_version_id="v002",
+                model_id="test",
+                change_type="manual_edit",
+                description="Manual edit: PFK bounds adjusted",
+                diff=ModelDiff(
+                    reactions_modified=[],
+                ),
+                task_pass_rate="48/52",
+            ),
+        ]
+
+    def test_instantiation(self):
+        from src.gui.version_panel import VersionPanelWidget
+
+        widget = VersionPanelWidget()
+        assert widget is not None
+
+    def test_set_history(self):
+        from src.gui.version_panel import VersionPanelWidget
+
+        widget = VersionPanelWidget()
+        versions = self._make_versions()
+        widget.set_history(versions, current_version_id="v003")
+
+        # Should have 3 items (newest first)
+        assert widget._tree.topLevelItemCount() == 3
+        first_item = widget._tree.topLevelItem(0)
+        vid = first_item.data(0, 256)  # Qt.UserRole = 256
+        assert vid == "v003"
+
+    def test_current_version_highlighted(self):
+        from src.gui.version_panel import VersionPanelWidget
+
+        widget = VersionPanelWidget()
+        versions = self._make_versions()
+        widget.set_history(versions, current_version_id="v003")
+
+        first_item = widget._tree.topLevelItem(0)
+        # Current version should have star prefix
+        assert "\u2605" in first_item.text(0)
+
+    def test_clear(self):
+        from src.gui.version_panel import VersionPanelWidget
+
+        widget = VersionPanelWidget()
+        versions = self._make_versions()
+        widget.set_history(versions)
+        widget.clear()
+        assert widget._tree.topLevelItemCount() == 0
+
+    def test_filter_by_type(self):
+        from src.gui.version_panel import VersionPanelWidget
+
+        widget = VersionPanelWidget()
+        versions = self._make_versions()
+        widget.set_history(versions, current_version_id="v003")
+
+        # Filter to gap_fill only
+        for i in range(widget._type_filter.count()):
+            if widget._type_filter.itemData(i) == "gap_fill":
+                widget._type_filter.setCurrentIndex(i)
+                break
+
+        assert widget._tree.topLevelItemCount() == 1
+        item = widget._tree.topLevelItem(0)
+        assert item.data(0, 256) == "v002"
+
+    def test_changes_column_shows_diff(self):
+        from src.gui.version_panel import VersionPanelWidget
+
+        widget = VersionPanelWidget()
+        versions = self._make_versions()
+        widget.set_history(versions, current_version_id="v003")
+
+        # v002 item (index 1, newest first) should show "+2 rxn"
+        v002_item = widget._tree.topLevelItem(1)
+        changes_text = v002_item.text(3)  # COL_CHANGES = 3
+        assert "+2 rxn" in changes_text
+
+    def test_signals_exist(self):
+        from src.gui.version_panel import VersionPanelWidget
+
+        widget = VersionPanelWidget()
+        # Verify all expected signals exist
+        assert hasattr(widget, "restore_requested")
+        assert hasattr(widget, "compare_requested")
+        assert hasattr(widget, "export_requested")
+        assert hasattr(widget, "detail_requested")
+
+    def test_splitter_exists(self):
+        from PySide6.QtWidgets import QSplitter
+
+        from src.gui.version_panel import VersionPanelWidget
+
+        widget = VersionPanelWidget()
+        assert hasattr(widget, "_splitter")
+        assert isinstance(widget._splitter, QSplitter)
+        assert widget._splitter.count() == 2  # tree + graph
+
+    def test_toggle_graph(self):
+        from src.gui.version_panel import VersionPanelWidget
+
+        widget = VersionPanelWidget()
+        widget.show()
+
+        # Initially visible (checked=True)
+        assert widget._graph_btn.isChecked()
+
+        # Toggle off
+        widget._graph_btn.setChecked(False)
+        widget._toggle_graph()
+        assert not widget._graph.isVisible()
+        assert "\u25bc" in widget._graph_btn.text()
+
+        # Toggle on
+        widget._graph_btn.setChecked(True)
+        widget._toggle_graph()
+        assert widget._graph.isVisible()
+        assert "\u25b2" in widget._graph_btn.text()
+
+        widget.hide()
+
+    def test_table_graph_sync(self):
+        from src.gui.version_panel import VersionPanelWidget
+
+        widget = VersionPanelWidget()
+        versions = self._make_versions()
+        widget.set_history(versions, current_version_id="v003")
+
+        # Graph should have positions for all 3 versions
+        assert len(widget._graph._positions) == 3
+
+
+class TestVersionGraphWidget:
+    def _make_versions(self):
+        from src.core.models import ModelDiff, ModelVersion
+
+        return [
+            ModelVersion(
+                version_id="v001",
+                timestamp="2026-02-21T09:30:00Z",
+                model_id="test",
+                change_type="initial_load",
+                description="Initial load",
+            ),
+            ModelVersion(
+                version_id="v002",
+                timestamp="2026-02-21T10:00:00Z",
+                parent_version_id="v001",
+                model_id="test",
+                change_type="gap_fill",
+                description="Gap-fill",
+                diff=ModelDiff(reactions_added=["R1"]),
+            ),
+            ModelVersion(
+                version_id="v003",
+                timestamp="2026-02-21T10:30:00Z",
+                parent_version_id="v002",
+                model_id="test",
+                change_type="manual_edit",
+                description="Edit",
+            ),
+        ]
+
+    def test_graph_instantiation(self):
+        from src.gui.version_graph import VersionGraphWidget
+
+        widget = VersionGraphWidget()
+        assert widget is not None
+
+    def test_graph_set_versions(self):
+        from src.gui.version_graph import VersionGraphWidget
+
+        widget = VersionGraphWidget()
+        versions = self._make_versions()
+        widget.set_versions(versions, current_version_id="v003")
+
+        assert len(widget._positions) == 3
+        assert "v001" in widget._positions
+        assert "v003" in widget._positions
+
+    def test_graph_set_versions_empty(self):
+        from src.gui.version_graph import VersionGraphWidget
+
+        widget = VersionGraphWidget()
+        widget.set_versions([])
+        assert len(widget._positions) == 0
+
+    def test_graph_highlight(self):
+        from src.gui.version_graph import VersionGraphWidget
+
+        widget = VersionGraphWidget()
+        versions = self._make_versions()
+        widget.set_versions(versions, current_version_id="v003")
+        # Should not raise
+        widget.highlight_version("v001")
+
+    def test_graph_clear(self):
+        from src.gui.version_graph import VersionGraphWidget
+
+        widget = VersionGraphWidget()
+        versions = self._make_versions()
+        widget.set_versions(versions)
+        widget.clear()
+        assert len(widget._positions) == 0

@@ -391,8 +391,8 @@ async def async_gapfill_main(
         assert model_data.cobra_model is not None, "COBRA model not available"
 
         gapfill_engine = GapFillEngine(config)
-        cache_mgr = evidence_engine._cache  # Reuse existing cache
-        mapping_data = evidence_engine._mapping_data
+        cache_mgr = evidence_engine.cache_manager
+        mapping_data = evidence_engine.mapping_data
 
         try:
             await gapfill_engine.initialize(

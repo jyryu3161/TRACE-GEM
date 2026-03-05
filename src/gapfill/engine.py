@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 
@@ -80,6 +81,9 @@ class GapFillEngine:
         tasks: list[MetabolicTask],
         evidence_results: dict[str, ReactionEvidence],
         progress_callback: Callable[[str, int, int, str], None] | None = None,
+        cancel_event: asyncio.Event | object | None = None,
+        start_phase: int = 1,
+        preloaded_before: list[TaskResult] | None = None,
     ) -> GapFillResult:
         """Execute the full gap-filling pipeline.
 
@@ -90,24 +94,40 @@ class GapFillEngine:
             tasks: Metabolic tasks for testing.
             evidence_results: Evidence scores for candidates.
             progress_callback: Optional (phase, current, total, detail) callback.
+            cancel_event: Optional event to signal cancellation.
+            start_phase: Phase to start from (1-5), for resume support.
+            preloaded_before: Preloaded Phase 1 results for resume.
 
         Returns:
             GapFillResult with before/after task results and added reactions.
         """
         result = GapFillResult(total_tasks=len(tasks))
+        result.all_candidates = list(candidates)
 
         def _progress(phase: str, current: int, total: int, detail: str) -> None:
             if progress_callback:
                 progress_callback(phase, current, total, detail)
 
+        def _is_cancelled() -> bool:
+            return cancel_event is not None and cancel_event.is_set()
+
         # Phase 1: Initial task testing
-        _progress("testing_before", 0, len(tasks), "Running initial tests...")
-        result.task_results_before = self._run_tasks(
-            user_model,
-            tasks,
-            phase="before",
-            progress_callback=lambda c, t, d: _progress("testing_before", c, t, d),
-        )
+        if start_phase <= 1:
+            _progress("testing_before", 0, len(tasks), "Running initial tests...")
+            result.task_results_before = self._run_tasks(
+                user_model,
+                tasks,
+                phase="before",
+                progress_callback=lambda c, t, d: _progress("testing_before", c, t, d),
+            )
+            result.completed_phase = 1
+
+            if _is_cancelled():
+                result.is_partial = True
+                return result
+        elif preloaded_before:
+            result.task_results_before = preloaded_before
+            result.completed_phase = 1
 
         failed_tasks = [r.task for r in result.task_results_before if not r.passed]
         logger.info(
@@ -127,64 +147,94 @@ class GapFillEngine:
                 phase="after",
                 progress_callback=lambda c, t, d: _progress("testing_after", c, t, d),
             )
+            result.completed_phase = 5
             return result
 
         # Phase 2: Organism filtering
-        if self._organism_filter:
-            _progress("filtering", 0, len(candidates), "Filtering by organism...")
-            await self._organism_filter.filter_candidates(
-                candidates,
-                progress_callback=lambda c, t, d: _progress("filtering", c, t, d),
-            )
-            logger.info("Phase 2 complete: organism filtering done")
+        if start_phase <= 2:
+            if self._organism_filter:
+                _progress("filtering", 0, len(candidates), "Filtering by organism...")
+                await self._organism_filter.filter_candidates(
+                    candidates,
+                    progress_callback=lambda c, t, d: _progress("filtering", c, t, d),
+                )
+                logger.info("Phase 2 complete: organism filtering done")
 
-        # Calculate penalties
-        penalties = self._penalty_calc.calculate_batch(candidates, evidence_results)
-        # Update candidate penalties
-        for candidate in candidates:
-            if candidate.reaction.id in penalties:
-                candidate.penalty = penalties[candidate.reaction.id]
+            # Calculate penalties
+            penalties = self._penalty_calc.calculate_batch(candidates, evidence_results)
+            # Update candidate penalties
+            for candidate in candidates:
+                if candidate.reaction.id in penalties:
+                    candidate.penalty = penalties[candidate.reaction.id]
+
+            result.all_candidates = list(candidates)
+            result.completed_phase = 2
+
+            if _is_cancelled():
+                result.is_partial = True
+                return result
+        else:
+            # Still need penalties for Phase 3
+            penalties = self._penalty_calc.calculate_batch(candidates, evidence_results)
+            for candidate in candidates:
+                if candidate.reaction.id in penalties:
+                    candidate.penalty = penalties[candidate.reaction.id]
 
         # Phase 3: Gap-filling
-        _progress("gap_filling", 0, len(failed_tasks), "Running gap-fill...")
-        added_reactions = await self._run_gapfill(
-            user_model,
-            universal_model,
-            failed_tasks,
-            penalties,
-            result,
-            progress_callback=lambda c, t, d: _progress("gap_filling", c, t, d),
-        )
+        if start_phase <= 3:
+            _progress("gap_filling", 0, len(failed_tasks), "Running gap-fill...")
+            added_reactions = await self._run_gapfill(
+                user_model,
+                universal_model,
+                failed_tasks,
+                penalties,
+                result,
+                progress_callback=lambda c, t, d: _progress("gap_filling", c, t, d),
+                cancel_event=cancel_event,
+            )
 
-        # Apply gap-fill results to the model
-        if added_reactions:
-            result.added_reactions = self._apply_gapfill_results(
-                user_model, added_reactions, candidates
-            )
-            # Sort added reactions by evidence score descending
-            result.added_reactions.sort(
-                key=lambda c: (
-                    evidence_results[c.reaction.id].confidence_score
-                    if c.reaction.id in evidence_results
-                    else 0.0
-                ),
-                reverse=True,
-            )
-            logger.info(
-                "Phase 3 complete: %d reactions added to model",
-                len(result.added_reactions),
-            )
-        else:
-            logger.info("Phase 3 complete: no reactions added")
+            # Apply gap-fill results to the model
+            if added_reactions:
+                result.added_reactions = self._apply_gapfill_results(
+                    user_model, added_reactions, candidates
+                )
+                # Sort added reactions by evidence score descending
+                result.added_reactions.sort(
+                    key=lambda c: (
+                        evidence_results[c.reaction.id].confidence_score
+                        if c.reaction.id in evidence_results
+                        else 0.0
+                    ),
+                    reverse=True,
+                )
+                logger.info(
+                    "Phase 3 complete: %d reactions added to model",
+                    len(result.added_reactions),
+                )
+            else:
+                logger.info("Phase 3 complete: no reactions added")
+
+            result.completed_phase = 3
+
+            if _is_cancelled():
+                result.is_partial = True
+                return result
 
         # Phase 4: GPR assignment
-        if self._gpr_assigner and result.added_reactions:
-            _progress("assigning_gpr", 0, len(result.added_reactions), "Assigning GPR...")
-            await self._gpr_assigner.assign_batch(
-                result.added_reactions,
-                progress_callback=lambda c, t, d: _progress("assigning_gpr", c, t, d),
-            )
-            logger.info("Phase 4 complete: GPR assignment done")
+        if start_phase <= 4:
+            if self._gpr_assigner and result.added_reactions:
+                _progress("assigning_gpr", 0, len(result.added_reactions), "Assigning GPR...")
+                await self._gpr_assigner.assign_batch(
+                    result.added_reactions,
+                    progress_callback=lambda c, t, d: _progress("assigning_gpr", c, t, d),
+                )
+                logger.info("Phase 4 complete: GPR assignment done")
+
+            result.completed_phase = 4
+
+            if _is_cancelled():
+                result.is_partial = True
+                return result
 
         # Phase 5: Final task testing
         _progress("testing_after", 0, len(tasks), "Running final tests...")
@@ -199,6 +249,7 @@ class GapFillEngine:
         before_failed = {r.task.task_id for r in result.task_results_before if not r.passed}
         after_passed = {r.task.task_id for r in result.task_results_after if r.passed}
         result.tasks_fixed = len(before_failed & after_passed)
+        result.completed_phase = 5
 
         logger.info(
             "Phase 5 complete: %d/%d tasks now pass (%d fixed)",
@@ -232,6 +283,7 @@ class GapFillEngine:
         penalties: dict[str, float],
         result: GapFillResult,
         progress_callback: Callable[[int, int, str], None] | None = None,
+        cancel_event: asyncio.Event | object | None = None,
     ) -> list[cobra.Reaction]:
         """Run task-driven gap-filling for each failed task.
 
@@ -248,8 +300,13 @@ class GapFillEngine:
         lower_bound = self._config.gapfill_lower_bound
 
         for i, task in enumerate(failed_tasks):
+            # Check cancel between tasks
+            if cancel_event is not None and cancel_event.is_set():
+                logger.info("Gap-fill cancelled at task %d/%d", i, len(failed_tasks))
+                break
+
             if progress_callback:
-                progress_callback(i, len(failed_tasks), f"Gap-filling for task {task.task_id}")
+                progress_callback(i + 1, len(failed_tasks), f"Gap-filling for task {task.task_id}")
 
             try:
                 reactions = self._gapfill_for_task(

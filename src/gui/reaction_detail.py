@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QTextBrowser,
     QTextEdit,
     QVBoxLayout,
@@ -30,25 +31,39 @@ class ReactionDetailWidget(QWidget):
 
     evaluate_requested = Signal(str)  # reaction_id
     reaction_modified = Signal(str)  # reaction_id
+    removal_requested = Signal(str)  # reaction_id
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._reaction: Reaction | None = None
         self._model: ModelData | None = None
+        self._read_only = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
 
-        # Title
+        # Title (outside scroll area)
         self._title = QLabel("Select a reaction")
         self._title.setObjectName("sectionTitle")
-        layout.addWidget(self._title)
+        outer.addWidget(self._title)
+
+        # Scroll area wrapping all content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 4, 0)
 
         # Info group
         info_group = QGroupBox("Reaction Info")
         info_form = QFormLayout(info_group)
+        info_form.setVerticalSpacing(10)
+        info_form.setContentsMargins(12, 24, 12, 12)
 
         self._id_label = QLabel("-")
         self._name_edit = QLineEdit()
@@ -76,10 +91,21 @@ class ReactionDetailWidget(QWidget):
 
         layout.addWidget(info_group)
 
-        # Equation
-        eq_group = QGroupBox("Equation")
+        # Equation (ID)
+        eq_id_group = QGroupBox("Equation (ID)")
+        eq_id_layout = QVBoxLayout(eq_id_group)
+        self._equation_id_display = QTextEdit()
+        self._equation_id_display.setMinimumHeight(60)
+        self._equation_id_display.setMaximumHeight(80)
+        self._equation_id_display.setReadOnly(True)
+        eq_id_layout.addWidget(self._equation_id_display)
+        layout.addWidget(eq_id_group)
+
+        # Equation (Name)
+        eq_group = QGroupBox("Equation (Name)")
         eq_layout = QVBoxLayout(eq_group)
         self._equation_edit = QTextEdit()
+        self._equation_edit.setMinimumHeight(60)
         self._equation_edit.setMaximumHeight(80)
         eq_layout.addWidget(self._equation_edit)
         layout.addWidget(eq_group)
@@ -88,7 +114,8 @@ class ReactionDetailWidget(QWidget):
         gpr_group = QGroupBox("Gene-Protein-Reaction Rule")
         gpr_layout = QVBoxLayout(gpr_group)
         self._gpr_edit = QTextEdit()
-        self._gpr_edit.setMaximumHeight(80)
+        self._gpr_edit.setMinimumHeight(60)
+        self._gpr_edit.setMaximumHeight(100)
         gpr_layout.addWidget(self._gpr_edit)
         layout.addWidget(gpr_group)
 
@@ -96,7 +123,8 @@ class ReactionDetailWidget(QWidget):
         xref_group = QGroupBox("Cross-References")
         xref_layout = QVBoxLayout(xref_group)
         self._xref_browser = QTextBrowser()
-        self._xref_browser.setMaximumHeight(120)
+        self._xref_browser.setMinimumHeight(80)
+        self._xref_browser.setMaximumHeight(150)
         self._xref_browser.setOpenExternalLinks(True)
         xref_layout.addWidget(self._xref_browser)
         layout.addWidget(xref_group)
@@ -111,12 +139,37 @@ class ReactionDetailWidget(QWidget):
         self._save_btn.clicked.connect(self._save_changes)
         self._save_btn.setEnabled(False)
 
+        self._remove_btn = QPushButton("Remove")
+        self._remove_btn.setStyleSheet(
+            "QPushButton { background-color: #c0392b; color: white; font-weight: bold; }"
+            "QPushButton:hover { background-color: #e74c3c; }"
+            "QPushButton:disabled { background-color: #555; color: #999; }"
+        )
+        self._remove_btn.clicked.connect(self._on_remove_clicked)
+        self._remove_btn.setEnabled(False)
+
         btn_layout.addStretch()
+        btn_layout.addWidget(self._remove_btn)
         btn_layout.addWidget(self._save_btn)
         btn_layout.addWidget(self._eval_btn)
         layout.addLayout(btn_layout)
 
         layout.addStretch()
+
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
+
+    def set_read_only(self, read_only: bool) -> None:
+        """Toggle read-only mode for universal reactions."""
+        self._read_only = read_only
+        self._name_edit.setReadOnly(read_only)
+        self._subsystem_edit.setReadOnly(read_only)
+        self._lower_bound_spin.setReadOnly(read_only)
+        self._upper_bound_spin.setReadOnly(read_only)
+        self._equation_edit.setReadOnly(read_only)
+        self._gpr_edit.setReadOnly(read_only)
+        self._save_btn.setVisible(not read_only)
+        self._remove_btn.setVisible(not read_only)
 
     def set_model(self, model: ModelData) -> None:
         """Store reference to ModelData (including cobra_model) for sync on save."""
@@ -130,6 +183,7 @@ class ReactionDetailWidget(QWidget):
         self._subsystem_edit.setText(reaction.subsystem or "")
         self._lower_bound_spin.setValue(reaction.lower_bound)
         self._upper_bound_spin.setValue(reaction.upper_bound)
+        self._equation_id_display.setPlainText(reaction.equation_id or reaction.equation)
         self._equation_edit.setPlainText(reaction.equation)
         self._gpr_edit.setPlainText(reaction.gene_reaction_rule or "")
 
@@ -146,6 +200,7 @@ class ReactionDetailWidget(QWidget):
 
         self._eval_btn.setEnabled(True)
         self._save_btn.setEnabled(True)
+        self._remove_btn.setEnabled(not self._read_only)
 
     def update_evidence(self, evidence: ReactionEvidence) -> None:
         if not evidence:
@@ -179,11 +234,17 @@ class ReactionDetailWidget(QWidget):
         self._subsystem_edit.clear()
         self._lower_bound_spin.setValue(-1000.0)
         self._upper_bound_spin.setValue(1000.0)
+        self._equation_id_display.clear()
         self._equation_edit.clear()
         self._gpr_edit.clear()
         self._xref_browser.setHtml("")
         self._eval_btn.setEnabled(False)
         self._save_btn.setEnabled(False)
+        self._remove_btn.setEnabled(False)
+
+    def _on_remove_clicked(self) -> None:
+        if self._reaction:
+            self.removal_requested.emit(self._reaction.id)
 
     def _on_evaluate_clicked(self) -> None:
         if self._reaction:
@@ -198,8 +259,12 @@ class ReactionDetailWidget(QWidget):
         # Update Reaction dataclass fields
         reaction.name = self._name_edit.text()
         reaction.subsystem = self._subsystem_edit.text() or None
-        reaction.lower_bound = self._lower_bound_spin.value()
-        reaction.upper_bound = self._upper_bound_spin.value()
+        lb = self._lower_bound_spin.value()
+        ub = self._upper_bound_spin.value()
+        if lb > ub:
+            lb, ub = ub, lb
+        reaction.lower_bound = lb
+        reaction.upper_bound = ub
         reaction.gene_reaction_rule = self._gpr_edit.toPlainText()
 
         # Sync with cobra model if available

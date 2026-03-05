@@ -1,19 +1,24 @@
 # GEM Evaluator
 
-Genome-Scale Metabolic Model Evidence Evaluator — SBML 모델의 반응(reaction)을 7개 생물학적 데이터베이스 및 LLM 소스(KEGG, BiGG, UniProt, PubMed, MetaCyc, Gemini, Perplexity)를 사용하여 검증하고 confidence score를 산출하는 도구.
+Genome-Scale Metabolic Model Evidence Evaluator — SBML 모델의 반응(reaction)을 6개 생물학적 데이터베이스 및 LLM 소스(KEGG, BiGG, UniProt, PubMed, Gemini, Perplexity)를 사용하여 검증하고 confidence score를 산출하는 도구.
 
 ## 주요 기능
 
 - **SBML 모델 로딩**: COBRApy 기반 SBML 파싱 (반응, 유전자, 대사물질 추출)
-- **다중 소스 검증**: 7개 evidence 소스를 통한 반응 검증
+- **다중 소스 검증**: 6개 evidence 소스를 통한 반응 검증
   - **KEGG**: BiGG ID → KEGG 매핑을 통한 반응 존재 여부 및 기질/산물 일치도 확인
   - **BiGG Models**: 범용 반응 데이터베이스 검증
   - **UniProt**: 단백질/유전자 기반 evidence
   - **PubMed**: 문헌 기반 evidence
-  - **MetaCyc**: MetaCyc/BioCyc 경로 데이터베이스
   - **Gemini**: LLM 기반 반응 정합성 검증
   - **Perplexity**: LLM 기반 organism 특이성 검증
-- **Confidence Scoring**: 7-source 가중 점수 산출
+- **Confidence Scoring**: 6-source 가중 점수 산출
+- **Gap-Filling**: BiGG universal model 기반 자동 gap-filling (MILP 최적화)
+  - Metabolic task 기반 모델 검증 (before/after 비교)
+  - Organism-specific 유전자 필터링 (KEGG API)
+  - GPR 규칙 자동 할당
+- **반응 관리**: 반응 편집, 제거 (task impact preview 포함)
+- **버전 관리**: 모델 변경 이력 추적 및 복원
 - **GUI**: PySide6(Qt6) 기반 데스크톱 UI (반응 테이블, evidence 패널, 점수 시각화)
 - **CLI 배치 평가**: 서버/자동화 환경에서 전체 반응 평가 및 결과 파일 내보내기
 - **Export**: CSV / JSON 형식으로 평가 결과 내보내기
@@ -24,12 +29,58 @@ Genome-Scale Metabolic Model Evidence Evaluator — SBML 모델의 반응(reacti
 | 항목 | 요구사항 |
 |------|----------|
 | Python | 3.10 이상 |
-| OS | macOS, Linux, Windows |
-| GUI | 디스플레이 환경 (headless 시 `QT_QPA_PLATFORM=offscreen`) |
+| OS | macOS, Linux |
+| GUI | 디스플레이 환경 필요 (headless 시 `QT_QPA_PLATFORM=offscreen`) |
+
+### 시스템 의존성
+
+#### macOS
+
+```bash
+# Xcode Command Line Tools (libxml2 등 C 라이브러리 필요)
+xcode-select --install
+
+# Git LFS (데이터 파일 관리)
+brew install git-lfs
+```
+
+#### Ubuntu / Debian
+
+```bash
+# 빌드 도구 및 Qt 의존성
+sudo apt update
+sudo apt install -y \
+    python3.10-venv \
+    build-essential \
+    libgl1-mesa-glx \
+    libegl1 \
+    libxcb-xinerama0 \
+    libxcb-cursor0 \
+    libxkbcommon0 \
+    libdbus-1-3 \
+    git-lfs
+
+# Wayland 환경의 경우 추가
+sudo apt install -y libwayland-client0
+```
+
+#### Fedora / RHEL
+
+```bash
+sudo dnf install -y \
+    python3-devel \
+    gcc gcc-c++ \
+    mesa-libGL \
+    mesa-libEGL \
+    libxcb \
+    libxkbcommon \
+    dbus-libs \
+    git-lfs
+```
 
 ### API 키 (선택)
 
-LLM 검증 기능을 사용하려면 아래 API 키가 필요합니다. 없어도 KEGG/BiGG/UniProt/PubMed/MetaCyc 기반 평가는 동작합니다.
+LLM 검증 기능을 사용하려면 아래 API 키가 필요합니다. 없어도 KEGG/BiGG/UniProt/PubMed 기반 평가는 동작합니다.
 
 | 서비스 | 용도 | 발급처 |
 |--------|------|--------|
@@ -43,15 +94,6 @@ LLM 검증 기능을 사용하려면 아래 API 키가 필요합니다. 없어�
 `data/` 폴더의 매핑 데이터 파일(최대 77MB)은 Git LFS로 관리됩니다. 클론 전에 Git LFS가 설치되어 있어야 합니다.
 
 ```bash
-# macOS
-brew install git-lfs
-
-# Ubuntu / Debian
-sudo apt install git-lfs
-
-# Windows (Git for Windows에 포함)
-# 별도 설치 불필요
-
 git lfs install
 ```
 
@@ -68,13 +110,8 @@ cd model_evaluator
 ### 3. 가상환경 생성 및 활성화
 
 ```bash
-python -m venv .venv
-
-# macOS / Linux
+python3 -m venv .venv
 source .venv/bin/activate
-
-# Windows
-.venv\Scripts\activate
 ```
 
 ### 4. 의존성 설치
@@ -93,7 +130,20 @@ pip install -r requirements-dev.txt
 pip install -e ".[dev]"
 ```
 
-### 5. Pre-commit 훅 설치 (개발 시)
+### 5. 설치 확인
+
+```bash
+# Python 버전 확인
+python --version  # 3.10 이상
+
+# Qt 플러그인 정상 여부 확인
+python -c "from PySide6.QtWidgets import QApplication; print('PySide6 OK')"
+
+# COBRApy 확인
+python -c "import cobra; print(f'COBRApy {cobra.__version__}')"
+```
+
+### 6. Pre-commit 훅 설치 (개발 시)
 
 ```bash
 pre-commit install
@@ -116,16 +166,14 @@ pre-commit install
   "enable_bigg": true,
   "enable_uniprot": true,
   "enable_pubmed": true,
-  "enable_metacyc": false,
   "enable_gemini": true,
   "enable_perplexity": true,
   "weight_kegg": 0.30,
   "weight_bigg": 0.15,
   "weight_uniprot": 0.15,
-  "weight_pubmed": 0.10,
-  "weight_metacyc": 0.10,
-  "weight_gemini": 0.10,
-  "weight_perplexity": 0.10,
+  "weight_pubmed": 0.15,
+  "weight_gemini": 0.125,
+  "weight_perplexity": 0.125,
   "batch_size": 10,
   "max_concurrent": 5
 }
@@ -140,10 +188,9 @@ pre-commit install
 | `weight_kegg` | `0.30` | KEGG 검증 가중치 |
 | `weight_bigg` | `0.15` | BiGG 검증 가중치 |
 | `weight_uniprot` | `0.15` | UniProt 검증 가중치 |
-| `weight_pubmed` | `0.10` | PubMed 검증 가중치 |
-| `weight_metacyc` | `0.10` | MetaCyc 검증 가중치 |
-| `weight_gemini` | `0.10` | Gemini 검증 가중치 |
-| `weight_perplexity` | `0.10` | Perplexity 검증 가중치 |
+| `weight_pubmed` | `0.15` | PubMed 검증 가중치 |
+| `weight_gemini` | `0.125` | Gemini 검증 가중치 |
+| `weight_perplexity` | `0.125` | Perplexity 검증 가중치 |
 | `batch_size` | `10` | 배치 평가 크기 |
 | `max_concurrent` | `5` | 최대 동시 평가 수 |
 
@@ -160,6 +207,7 @@ export QT_QPA_PLATFORM=offscreen
 ### GUI 애플리케이션
 
 ```bash
+source .venv/bin/activate
 python -m src.app
 ```
 
@@ -205,7 +253,71 @@ gem-evaluator-cli input/iJO1366.xml -o output.csv
    - 개별 반응: 반응 선택 후 "Evaluate" 버튼
    - 전체 평가: "Evaluate All" 버튼
 4. **결과 확인**: 반응 테이블에서 confidence score 확인, 반응 클릭 시 evidence 패널에서 상세 내용 확인
-5. **내보내기**: File > Export에서 CSV 또는 JSON으로 결과 저장
+5. **Gap-Filling**: Gap-Fill 탭에서 universal model 로드 → 워크플로우 실행
+6. **반응 제거**: 반응 우클릭 > "Remove Reaction..." 또는 상세 패널의 Remove 버튼
+7. **버전 관리**: Version History 패널에서 변경 이력 확인 및 복원
+8. **내보내기**: File > Export에서 CSV 또는 JSON으로 결과 저장
+
+## 트러블슈팅
+
+### Qt platform plugin 오류
+
+```
+qt.qpa.plugin: Could not find the Qt platform plugin "cocoa" in ""
+```
+
+PySide6 설치가 손상된 경우 발생합니다. 재설치로 해결:
+
+```bash
+source .venv/bin/activate
+pip install --force-reinstall PySide6
+```
+
+위 명령이 `Cannot uninstall` 오류를 내면:
+
+```bash
+SITE_PKGS="$(python -c 'import site; print(site.getsitepackages()[0])')"
+rm -rf "$SITE_PKGS/PySide6" "$SITE_PKGS/shiboken6" "$SITE_PKGS"/PySide6*.dist-info "$SITE_PKGS"/shiboken6*.dist-info
+pip install PySide6
+```
+
+### Linux에서 `libGL.so.1` 오류
+
+```bash
+# Ubuntu/Debian
+sudo apt install libgl1-mesa-glx libegl1
+
+# Fedora/RHEL
+sudo dnf install mesa-libGL mesa-libEGL
+```
+
+### Linux에서 `xcb` 관련 오류
+
+```bash
+# Ubuntu/Debian
+sudo apt install libxcb-xinerama0 libxcb-cursor0 libxkbcommon0
+
+# 또는 XCB 대신 Wayland 사용
+export QT_QPA_PLATFORM=wayland
+```
+
+### `ModuleNotFoundError: No module named 'PySide6'`
+
+가상환경이 활성화되지 않은 경우:
+
+```bash
+source .venv/bin/activate
+python -m src.app
+```
+
+### Git LFS 데이터 파일 누락
+
+`data/` 파일이 텍스트 포인터(~130 bytes)로 보이는 경우:
+
+```bash
+git lfs install
+git lfs pull
+```
 
 ## 테스트
 
@@ -217,7 +329,7 @@ pytest tests/ -v
 pytest tests/ --cov=src --cov-report=term-missing
 
 # 특정 모듈만
-pytest tests/test_gemini_client.py -v
+pytest tests/test_reaction_removal.py -v
 ```
 
 ## 개발 도구
@@ -245,7 +357,10 @@ src/
 │   ├── sbml_parser.py     # COBRApy 기반 SBML 로더
 │   ├── gpr_parser.py      # Gene-Protein-Reaction 규칙 파서
 │   ├── id_mapper.py       # BiGG → KEGG/EC 외부 DB ID 변환
-│   └── mapping_data.py    # 오프라인 매핑 데이터 로더
+│   ├── mapping_data.py    # 오프라인 매핑 데이터 로더
+│   ├── cobra_utils.py     # COBRApy 모델 ↔ ModelData 변환
+│   ├── task_parser.py     # Metabolic task 파서 및 FBA 실행기
+│   └── universal_loader.py # BiGG universal model 로더
 ├── api/               # 외부 API 클라이언트 (비동기)
 │   ├── base_client.py     # ABC: 속도 제한, 재시도, 서킷 브레이커
 │   ├── rate_limiter.py    # 토큰 버킷 속도 제한기
@@ -253,28 +368,38 @@ src/
 │   ├── bigg_client.py     # BiGG Models API 클라이언트
 │   ├── uniprot_client.py  # UniProt REST API 클라이언트
 │   ├── pubmed_client.py   # PubMed/NCBI API 클라이언트
-│   ├── metacyc_client.py  # MetaCyc/BioCyc API 클라이언트
 │   ├── gemini_client.py   # Gemini 2.5 Flash 검증 클라이언트
 │   └── perplexity_client.py # Perplexity Sonar 검증 클라이언트
 ├── evidence/          # Evidence 수집 및 스코어링
-│   ├── engine.py          # 오케스트레이터: 7개 소스별 반응 검증 실행
+│   ├── engine.py          # 오케스트레이터: 6개 소스별 반응 검증 실행
 │   ├── scoring.py         # 가중 다중 소스 confidence 점수 산출
 │   └── evidence_types.py  # 임계값 및 표시 상수
+├── gapfill/           # Gap-filling 엔진
+│   ├── engine.py          # MILP 기반 gap-fill 워크플로우
+│   ├── organism_filter.py # KEGG API 기반 organism 유전자 필터
+│   ├── penalty_calculator.py # 반응 페널티 계산
+│   └── gpr_assigner.py   # GPR 규칙 자동 할당
 ├── gui/               # PySide6 (Qt6) GUI
 │   ├── main_window.py     # 메인 앱 윈도우, 메뉴, 내보내기
 │   ├── workers.py         # QRunnable 워커 (워커 스레드에서 비동기 실행)
 │   ├── reaction_table.py  # 반응 테이블 모델 + 필터 프록시 + 위젯
+│   ├── reaction_detail.py # 반응 상세 위젯 (편집, 제거)
+│   ├── reaction_removal_dialog.py # 반응 제거 다이얼로그 (task impact preview)
 │   ├── delegates.py       # 점수 바 및 상태 셀 렌더러
 │   ├── model_overview.py  # 모델 개요 위젯
-│   ├── reaction_detail.py # 반응 상세 위젯
 │   ├── evidence_panel.py  # Evidence 패널
 │   ├── gene_panel.py      # 유전자 정보 패널
 │   ├── metabolite_panel.py # 대사물질 정보 패널
+│   ├── gapfill_panel.py   # Gap-filling 패널
+│   ├── task_panel.py      # Metabolic task 패널
+│   ├── workflow_wizard.py # Gap-fill 워크플로우 마법사
+│   ├── version_panel.py   # 버전 이력 패널
+│   ├── diff_dialog.py     # 버전 비교 다이얼로그
 │   ├── score_visualization.py # PyQtGraph 차트
 │   ├── progress_dialog.py # 진행률 대화상자
 │   ├── settings_dialog.py # 설정 대화상자
 │   ├── theme.py           # 테마 시스템
-│   └── styles.py          # 스타일시트
+│   └── evidence_colors.py # Evidence 색상 상수
 ├── cache/             # SQLite 캐싱 레이어
 │   ├── cache_manager.py
 │   └── schema.py
@@ -290,8 +415,9 @@ src/
 
 - **SBML 파싱**: COBRApy (libsbml 래핑)
 - **GUI**: PySide6 (Qt6) + PyQtGraph
-- **DB APIs**: Biopython (KEGG, PubMed), aiohttp (BiGG, UniProt, MetaCyc REST)
+- **DB APIs**: Biopython (KEGG, PubMed), aiohttp (BiGG, UniProt REST)
 - **LLM APIs**: google-genai (Gemini), openai SDK (Perplexity)
+- **Gap-Filling**: COBRApy MILP solver (GLPK/Gurobi)
 - **캐싱**: SQLite (aiosqlite)
 - **비동기**: QRunnable 워커 + asyncio 이벤트 루프 (워커 스레드, GUI) / asyncio.run (CLI)
 

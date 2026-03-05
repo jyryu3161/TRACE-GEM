@@ -81,13 +81,28 @@ class ThemeColors:
     source_bigg: str = "#2ecc71"  # Green
     source_uniprot: str = "#9b59b6"  # Purple
     source_pubmed: str = "#e74c3c"  # Red
-    source_metacyc: str = "#f39c12"  # Orange
     source_gemini: str = "#1abc9c"  # Teal
     source_perplexity: str = "#34495e"  # Dark Gray
 
     # --- HTML evidence ---
     evidence_item_bg: str = "#f9f9f9"
     muted_text: str = "#7f8c8d"
+
+    # --- Version tracking ---
+    version_current_bg: str = "#eaf4fc"
+    version_type_initial: str = "#95a5a6"
+    version_type_gap_fill: str = "#27ae60"
+    version_type_manual_edit: str = "#3498db"
+    version_type_restore: str = "#f39c12"
+    diff_addition: str = "#27ae60"
+    diff_removal: str = "#e74c3c"
+    diff_modification: str = "#f39c12"
+
+    # --- Version graph ---
+    graph_edge: str = "#bdc3c7"
+    graph_edge_restore: str = "#f39c12"
+    graph_current_border: str = "#2c3e50"
+    graph_bg: str = "#ffffff"
 
 
 THEME = ThemeColors()
@@ -248,11 +263,23 @@ QProgressBar::chunk {{
 QLineEdit {{
     border: 1px solid {colors.disabled};
     border-radius: 4px;
-    padding: 6px;
+    padding: 8px;
     background-color: {colors.base};
     color: {colors.text};
 }}
 QLineEdit:focus {{
+    border-color: {colors.border_focus};
+}}
+
+/* --- SpinBox --- */
+QDoubleSpinBox, QSpinBox {{
+    border: 1px solid {colors.disabled};
+    border-radius: 4px;
+    padding: 4px 6px;
+    background-color: {colors.base};
+    color: {colors.text};
+}}
+QDoubleSpinBox:focus, QSpinBox:focus {{
     border-color: {colors.border_focus};
 }}
 

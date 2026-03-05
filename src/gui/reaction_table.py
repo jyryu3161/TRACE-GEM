@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QSlider,
     QTableView,
     QVBoxLayout,
@@ -69,6 +70,15 @@ class ReactionTableModel(QAbstractTableModel):
             return self._reactions[row]
         return None
 
+    def get_evidence(self, reaction_id: str) -> ReactionEvidence | None:
+        """Get evidence for a specific reaction."""
+        return self._evidence.get(reaction_id)
+
+    @property
+    def reactions(self) -> list[Reaction]:
+        """Get list of all reactions."""
+        return list(self._reactions)
+
     def rowCount(self, parent: QModelIndex | None = None) -> int:  # type: ignore[override]
         return len(self._reactions)
 
@@ -95,7 +105,7 @@ class ReactionTableModel(QAbstractTableModel):
             elif col == self.COL_NAME:
                 return rxn.name
             elif col == self.COL_EQUATION:
-                eq = rxn.equation
+                eq = rxn.equation_id or rxn.equation
                 return eq if len(eq) <= 60 else eq[:57] + "..."
             elif col == self.COL_SUBSYSTEM:
                 return rxn.subsystem or ""
@@ -125,7 +135,7 @@ class ReactionTableModel(QAbstractTableModel):
             if col == self.COL_GPR:
                 return rxn.gene_reaction_rule
             elif col == self.COL_EQUATION:
-                return rxn.equation
+                return rxn.equation_id or rxn.equation
 
         return None
 
@@ -199,7 +209,7 @@ class ReactionFilterProxy(QSortFilterProxyModel):
 
         # Score filter
         if self._min_score > -1.0:
-            ev = model._evidence.get(rxn.id)
+            ev = model.get_evidence(rxn.id)
             score = ev.confidence_score if ev and ev.status == EvaluationStatus.EVALUATED else -1.0
             if score >= 0 and (score < self._min_score or score > self._max_score):
                 return False
@@ -211,6 +221,7 @@ class ReactionTableWidget(QWidget):
     """Complete reaction table widget with filters."""
 
     reaction_selected = Signal(str)  # reaction_id
+    removal_requested = Signal(str)  # reaction_id
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -271,6 +282,8 @@ class ReactionTableWidget(QWidget):
         header.resizeSection(ReactionTableModel.COL_GPR, 120)
         header.resizeSection(ReactionTableModel.COL_SCORE, 70)
 
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_context_menu)
         self._table.selectionModel().currentRowChanged.connect(self._on_row_changed)
         layout.addWidget(self._table)
 
@@ -291,7 +304,7 @@ class ReactionTableWidget(QWidget):
 
     def update_reaction_row(self, reaction_id: str) -> None:
         """Refresh the display for a modified reaction."""
-        for row, rxn in enumerate(self._model._reactions):
+        for row, rxn in enumerate(self._model.reactions):
             if rxn.id == reaction_id:
                 left = self._model.index(row, 0)
                 right = self._model.index(row, self._model.columnCount() - 1)
@@ -317,3 +330,18 @@ class ReactionTableWidget(QWidget):
             rxn = self._model.get_reaction(source_index.row())
             if rxn:
                 self.reaction_selected.emit(rxn.id)
+
+    def _show_context_menu(self, pos) -> None:
+        index = self._table.indexAt(pos)
+        if not index.isValid():
+            return
+        source_index = self._proxy.mapToSource(index)
+        rxn = self._model.get_reaction(source_index.row())
+        if not rxn:
+            return
+
+        menu = QMenu(self)
+        remove_action = menu.addAction("Remove Reaction...")
+        action = menu.exec(self._table.viewport().mapToGlobal(pos))
+        if action == remove_action:
+            self.removal_requested.emit(rxn.id)

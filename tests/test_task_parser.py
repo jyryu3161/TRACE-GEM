@@ -164,7 +164,7 @@ def _make_mock_model(reactions: dict[str, MagicMock], metabolites: dict[str, Mag
     """Create a mock cobra.Model with specified reactions and metabolites."""
     model = MagicMock(spec=["copy", "reactions", "metabolites", "optimize", "objective", "add_reactions"])
 
-    # Reactions container
+    # Reactions container — must be iterable for _build_id_maps
     rxn_container = MagicMock()
     rxn_list = list(reactions.values())
     rxn_container.__iter__ = lambda self: iter(rxn_list)
@@ -177,8 +177,10 @@ def _make_mock_model(reactions: dict[str, MagicMock], metabolites: dict[str, Mag
     rxn_container.get_by_id = get_rxn_by_id
     model.reactions = rxn_container
 
-    # Metabolites container
+    # Metabolites container — must be iterable for _build_id_maps
     met_container = MagicMock()
+    met_list = list((metabolites or {}).values())
+    met_container.__iter__ = lambda self: iter(met_list)
     if metabolites:
         def get_met_by_id(met_id):
             if met_id in metabolites:
@@ -210,6 +212,8 @@ def _make_mock_reaction(rxn_id: str, is_exchange: bool = False):
     rxn.id = rxn_id
     rxn.lower_bound = -1000.0 if not is_exchange else -10.0
     rxn.upper_bound = 1000.0
+    # Empty metabolites dict for _build_id_maps boundary detection
+    rxn.metabolites = {}
     # Make startswith work for exchange detection
     rxn.id_startswith = rxn_id.startswith
     return rxn
@@ -446,13 +450,15 @@ class TestCheckExpected:
         assert self.runner._check_expected(6.0, "<=", 5.0) is False
 
     def test_tolerance_boundary(self):
-        """Values within tolerance of the boundary should pass."""
-        # 0.0 > 0.0 with tolerance: 0.0 > -1e-6 → True
-        assert self.runner._check_expected(0.0, ">", 0.0) is True
-        # Very slightly negative but within tolerance
-        assert self.runner._check_expected(-1e-7, ">", 0.0) is True
-        # Outside tolerance
-        assert self.runner._check_expected(-1e-5, ">", 0.0) is False
+        """Strict inequalities require values clearly beyond the boundary."""
+        # 0.0 > 0.0: not clearly above → False
+        assert self.runner._check_expected(0.0, ">", 0.0) is False
+        # Slightly above tolerance → True
+        assert self.runner._check_expected(1e-5, ">", 0.0) is True
+        # Within tolerance (not clearly above) → False
+        assert self.runner._check_expected(1e-7, ">", 0.0) is False
+        # >= allows tolerance: 0.0 >= 0.0 with tolerance → True
+        assert self.runner._check_expected(0.0, ">=", 0.0) is True
 
 
 class TestRunAll:

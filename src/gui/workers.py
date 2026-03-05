@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import traceback
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
-from src.core.models import CandidateReaction, ModelData, Reaction
+from src.core.models import CandidateReaction, GapFillResult, ModelData, Reaction
 from src.evidence.engine import EvidenceEngine
 from src.utils.config import Config
 
@@ -44,6 +45,7 @@ class GapFillWorkerSignals(QObject):
     started = Signal()
     progress = Signal(str, int, int, str)  # phase, current, total, detail
     result = Signal(object)  # GapFillResult
+    cancelled = Signal(object, int)  # (GapFillResult, completed_phase)
     error = Signal(str)
     finished = Signal()
 
@@ -63,7 +65,7 @@ class EvaluateReactionWorker(QRunnable):
         _safe_emit(self.signals.started)
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # asyncio.set_event_loop removed (deprecated in Python 3.12+)
             try:
                 result = loop.run_until_complete(self.engine.evaluate_reaction(self.reaction))
                 _safe_emit(self.signals.result, result)
@@ -88,20 +90,17 @@ class EvaluateBatchWorker(QRunnable):
         self.engine = engine
         self.reactions = reactions
         self.signals = WorkerSignals()
-        self._cancel_event: asyncio.Event | None = None
+        self._cancel_event = threading.Event()
         self.setAutoDelete(True)
 
     def cancel(self) -> None:
-        if self._cancel_event:
-            self._cancel_event.set()
+        self._cancel_event.set()
 
     @Slot()
     def run(self) -> None:
         _safe_emit(self.signals.started)
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            self._cancel_event = asyncio.Event()
 
             def on_progress(current: int, total: int, rxn_id: str) -> None:
                 _safe_emit(self.signals.progress, current, total, rxn_id)
@@ -138,7 +137,7 @@ class InitEngineWorker(QRunnable):
         _safe_emit(self.signals.started)
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # asyncio.set_event_loop removed (deprecated in Python 3.12+)
             try:
                 engine = EvidenceEngine(self.config)
                 loop.run_until_complete(engine.initialize())
@@ -166,7 +165,7 @@ class CloseEngineWorker(QRunnable):
         _safe_emit(self.signals.started)
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # asyncio.set_event_loop removed (deprecated in Python 3.12+)
             try:
                 loop.run_until_complete(self.engine.close())
                 _safe_emit(self.signals.result, True)
@@ -223,6 +222,9 @@ class GapFillWorkflowWorker(QRunnable):
         task_path: str | None,
         evidence_engine: EvidenceEngine | None,
         options: dict,
+        start_phase: int = 1,
+        preloaded_before: list | None = None,
+        preloaded_candidates: list[CandidateReaction] | None = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -231,18 +233,28 @@ class GapFillWorkflowWorker(QRunnable):
         self.task_path = task_path
         self.evidence_engine = evidence_engine
         self.options = options
+        self._start_phase = start_phase
+        self._preloaded_before = preloaded_before
+        self._preloaded_candidates = preloaded_candidates
+        self._cancel_event = threading.Event()
         self.signals = GapFillWorkerSignals()
-        self.setAutoDelete(True)
+        self.setAutoDelete(False)
+
+    def cancel(self) -> None:
+        """Request pipeline cancellation."""
+        self._cancel_event.set()
 
     @Slot()
     def run(self) -> None:
         _safe_emit(self.signals.started)
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             try:
                 result = loop.run_until_complete(self._run_pipeline())
-                _safe_emit(self.signals.result, result)
+                if isinstance(result, GapFillResult) and result.is_partial:
+                    _safe_emit(self.signals.cancelled, result, result.completed_phase)
+                else:
+                    _safe_emit(self.signals.result, result)
             finally:
                 loop.close()
         except Exception as e:
@@ -250,6 +262,9 @@ class GapFillWorkflowWorker(QRunnable):
             _safe_emit(self.signals.error, str(e))
         finally:
             _safe_emit(self.signals.finished)
+
+    def _is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
 
     async def _run_pipeline(self) -> object:
         from src.core.task_parser import TaskParser
@@ -265,10 +280,20 @@ class GapFillWorkflowWorker(QRunnable):
         universal_model = loader.load(self.universal_path)
         on_progress("loading", 1, 1, "Universal model loaded")
 
-        # Step 2: Extract candidates
-        on_progress("extracting", 0, 1, "Extracting candidates...")
-        candidates = loader.extract_candidates(universal_model, self.model_data)
-        on_progress("extracting", 1, 1, f"{len(candidates)} candidates extracted")
+        if self._is_cancelled():
+            return GapFillResult(total_tasks=0, is_partial=True, completed_phase=0)
+
+        # Step 2: Extract candidates (or use preloaded)
+        if self._preloaded_candidates:
+            candidates = self._preloaded_candidates
+            on_progress("extracting", 1, 1, f"{len(candidates)} candidates (resumed)")
+        else:
+            on_progress("extracting", 0, 1, "Extracting candidates...")
+            candidates = loader.extract_candidates(universal_model, self.model_data)
+            on_progress("extracting", 1, 1, f"{len(candidates)} candidates extracted")
+
+        if self._is_cancelled():
+            return GapFillResult(total_tasks=0, is_partial=True, completed_phase=0)
 
         # Step 3: Parse tasks
         tasks = []
@@ -278,9 +303,16 @@ class GapFillWorkflowWorker(QRunnable):
             tasks = parser.parse(self.task_path)
             on_progress("parsing_tasks", 1, 1, f"{len(tasks)} tasks parsed")
 
-        # Step 4: Evaluate candidates (optional)
+        if self._is_cancelled():
+            return GapFillResult(total_tasks=len(tasks), is_partial=True, completed_phase=0)
+
+        # Step 4: Evaluate candidates (optional, skip on resume)
         evidence_results: dict = {}
-        if self.options.get("evaluate_candidates") and self.evidence_engine:
+        if (
+            self._start_phase <= 1
+            and self.options.get("evaluate_candidates")
+            and self.evidence_engine
+        ):
             on_progress("evaluating", 0, len(candidates), "Evaluating candidates...")
 
             def eval_progress(current: int, total: int, rxn_id: str) -> None:
@@ -289,6 +321,9 @@ class GapFillWorkflowWorker(QRunnable):
             evidence_results = await self.evidence_engine.evaluate_candidates_batch(
                 candidates, progress_callback=eval_progress
             )
+
+        if self._is_cancelled():
+            return GapFillResult(total_tasks=len(tasks), is_partial=True, completed_phase=0)
 
         # Step 5: Run gap-fill engine
         cobra_model = self.model_data.cobra_model
@@ -306,6 +341,9 @@ class GapFillWorkflowWorker(QRunnable):
                 tasks=tasks,
                 evidence_results=evidence_results,
                 progress_callback=on_progress,
+                cancel_event=self._cancel_event,
+                start_phase=self._start_phase,
+                preloaded_before=self._preloaded_before,
             )
         finally:
             await engine.close()
@@ -325,20 +363,17 @@ class EvaluateCandidatesWorker(QRunnable):
         self.engine = engine
         self.candidates = candidates
         self.signals = WorkerSignals()
-        self._cancel_event: asyncio.Event | None = None
+        self._cancel_event = threading.Event()
         self.setAutoDelete(True)
 
     def cancel(self) -> None:
-        if self._cancel_event:
-            self._cancel_event.set()
+        self._cancel_event.set()
 
     @Slot()
     def run(self) -> None:
         _safe_emit(self.signals.started)
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            self._cancel_event = asyncio.Event()
 
             def on_progress(current: int, total: int, rxn_id: str) -> None:
                 _safe_emit(self.signals.progress, current, total, rxn_id)
@@ -356,6 +391,36 @@ class EvaluateCandidatesWorker(QRunnable):
                 loop.close()
         except Exception as e:
             logger.error("Evaluate candidates error: %s\n%s", e, traceback.format_exc())
+            _safe_emit(self.signals.error, str(e))
+        finally:
+            _safe_emit(self.signals.finished)
+
+
+class TaskRunWorker(QRunnable):
+    """Worker to run metabolic tasks in background with progress reporting."""
+
+    def __init__(self, cobra_model: object, tasks: list) -> None:
+        super().__init__()
+        self.cobra_model = cobra_model
+        self.tasks = tasks
+        self.signals = WorkerSignals()
+        self.setAutoDelete(True)
+
+    @Slot()
+    def run(self) -> None:
+        _safe_emit(self.signals.started)
+        try:
+            from src.core.task_parser import TaskRunner
+
+            runner = TaskRunner()
+
+            def on_progress(current: int, total: int, detail: str) -> None:
+                _safe_emit(self.signals.progress, current, total, detail)
+
+            results = runner.run_all(self.cobra_model, self.tasks, on_progress)
+            _safe_emit(self.signals.result, results)
+        except Exception as e:
+            logger.error("Task run error: %s\n%s", e, traceback.format_exc())
             _safe_emit(self.signals.error, str(e))
         finally:
             _safe_emit(self.signals.finished)
@@ -384,7 +449,7 @@ class OrganismFilterWorker(QRunnable):
         _safe_emit(self.signals.started)
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # asyncio.set_event_loop removed (deprecated in Python 3.12+)
             try:
                 result = loop.run_until_complete(self._run_filter())
                 _safe_emit(self.signals.result, result)

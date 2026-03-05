@@ -42,15 +42,28 @@ class WorkflowWizard(QDialog):
         config: Config,
         model: ModelData | None = None,
         parent=None,
+        universal_path: str | None = None,
+        loaded_tasks: list | None = None,
     ) -> None:
         super().__init__(parent)
         self._config = config
         self._model = model
+        self._preloaded_universal_path = universal_path
+        self._preloaded_tasks = loaded_tasks
 
-        self.setWindowTitle("Gap-Fill Workflow Setup")
+        self.setWindowTitle("Task-Based Gap-Filling Setup")
         self.setMinimumWidth(520)
 
         self._setup_ui()
+
+        # Pre-populate with already-loaded universal model path
+        if self._preloaded_universal_path:
+            self._universal_custom.setChecked(True)
+            self._universal_path.setText(self._preloaded_universal_path)
+
+        # Pre-select loaded tasks if available
+        if self._preloaded_tasks:
+            self._task_preloaded.setChecked(True)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -69,7 +82,7 @@ class WorkflowWizard(QDialog):
 
         # Buttons
         buttons = QDialogButtonBox()
-        self._start_btn = buttons.addButton("Start Workflow", QDialogButtonBox.ButtonRole.AcceptRole)
+        self._start_btn = buttons.addButton("Start Gap-Filling", QDialogButtonBox.ButtonRole.AcceptRole)
         buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -138,8 +151,16 @@ class WorkflowWizard(QDialog):
 
         self._task_group = QButtonGroup(self)
 
+        # Pre-loaded option (only visible when tasks were loaded via File menu)
+        task_count = len(self._preloaded_tasks) if self._preloaded_tasks else 0
+        self._task_preloaded = QRadioButton(f"Pre-loaded ({task_count} tasks)")
+        self._task_preloaded.setEnabled(bool(self._preloaded_tasks))
+        self._task_group.addButton(self._task_preloaded, 3)
+        if self._preloaded_tasks:
+            vlayout.addWidget(self._task_preloaded)
+
         self._task_default = QRadioButton("Default (Universal Essential Tasks)")
-        self._task_default.setChecked(True)
+        self._task_default.setChecked(not self._preloaded_tasks)
         self._task_group.addButton(self._task_default, 0)
         vlayout.addWidget(self._task_default)
 
@@ -254,8 +275,11 @@ class WorkflowWizard(QDialog):
             )
 
         # Task file path
+        use_preloaded = self._task_preloaded.isChecked() and self._preloaded_tasks
         if self._task_skip.isChecked():
             task_path = None
+        elif use_preloaded:
+            task_path = "__preloaded__"
         elif self._task_custom.isChecked() and self._task_path.text().strip():
             task_path = self._task_path.text().strip()
         else:
@@ -265,7 +289,7 @@ class WorkflowWizard(QDialog):
                 else DEFAULT_TASK_FILE
             )
 
-        return {
+        result = {
             "organism_code": self._organism_code.text().strip().lower(),
             "organism_name": self._organism_name.text().strip(),
             "universal_model_path": universal_path,
@@ -276,3 +300,8 @@ class WorkflowWizard(QDialog):
             "gap_fill": self._opt_gap_fill.isChecked(),
             "assign_gpr": self._opt_assign_gpr.isChecked(),
         }
+
+        if use_preloaded:
+            result["preloaded_tasks"] = self._preloaded_tasks
+
+        return result

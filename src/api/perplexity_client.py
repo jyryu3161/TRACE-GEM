@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 
+from src.api.llm_utils import extract_json_from_response
 from src.api.rate_limiter import RateLimiter
 from src.core.models import (
     EvidenceItem,
@@ -33,7 +32,7 @@ Metabolites involved:
 Search for evidence that this specific biochemical reaction occurs in \
 {organism}. Consider:
 1. Is this enzyme/reaction documented in {organism} metabolic pathways \
-(KEGG, MetaCyc, BRENDA)?
+(KEGG, BRENDA)?
 2. Are the associated genes known to encode enzymes catalyzing this \
 reaction in {organism}?
 3. Is there experimental evidence from published literature?
@@ -106,8 +105,14 @@ class PerplexityClient:
                     {"role": "user", "content": prompt},
                 ],
             )
+            if not response.choices:
+                return EvidenceItem(
+                    source=EvidenceSource.PERPLEXITY,
+                    strength=EvidenceStrength.WEAK,
+                    description="Perplexity returned empty response",
+                )
             text = response.choices[0].message.content or ""
-            parsed = self._extract_json(text)
+            parsed = extract_json_from_response(text)
 
             # Cache result
             if parsed and self._cache:
@@ -127,35 +132,6 @@ class PerplexityClient:
                 description=f"Species verification error: {e}",
                 raw_data={"error": str(e)},
             )
-
-    def _extract_json(self, text: str) -> dict | None:
-        """Extract JSON object from response text."""
-        # Try direct parse
-        try:
-            result = json.loads(text.strip())
-            return result if isinstance(result, dict) else None
-        except json.JSONDecodeError:
-            pass
-
-        # Try to find JSON in markdown code block
-        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if match:
-            try:
-                result = json.loads(match.group(1))
-                return result if isinstance(result, dict) else None
-            except json.JSONDecodeError:
-                pass
-
-        # Try to find any JSON object
-        match = re.search(r"\{[^{}]*\}", text, re.DOTALL)
-        if match:
-            try:
-                result = json.loads(match.group(0))
-                return result if isinstance(result, dict) else None
-            except json.JSONDecodeError:
-                pass
-
-        return None
 
     def _parse_response(self, data: dict, organism: str) -> EvidenceItem:
         """Parse structured response into EvidenceItem."""

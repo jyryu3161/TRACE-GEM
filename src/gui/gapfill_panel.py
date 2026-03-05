@@ -142,8 +142,45 @@ class GapFillPanelWidget(QWidget):
         self._export_sbml_btn.setEnabled(has_results)
         self._export_report_btn.setEnabled(True)
 
+    def set_partial_result(self, result: GapFillResult) -> None:
+        """Display partial results from a cancelled workflow."""
+        phase = result.completed_phase
+        added = len(result.added_reactions)
+
+        self._summary_label.setText(
+            f"Partial result (Phase {phase}/5): {added} reactions added \u2014 "
+            f"Resume available"
+        )
+        self._summary_label.setStyleSheet("color: #f0ad4e; font-weight: bold;")
+
+        if result.added_reactions:
+            self._reaction_table.setSortingEnabled(False)
+            self._reaction_table.setRowCount(added)
+            for row, candidate in enumerate(result.added_reactions):
+                rxn = candidate.reaction
+                self._reaction_table.setItem(row, 0, QTableWidgetItem(rxn.id))
+                self._reaction_table.setItem(row, 1, QTableWidgetItem(rxn.name))
+
+                score_item = QTableWidgetItem()
+                score_item.setData(Qt.ItemDataRole.DisplayRole, f"{candidate.penalty:.1f}")
+                score_item.setData(Qt.ItemDataRole.UserRole, candidate.penalty)
+                score_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._reaction_table.setItem(row, 2, score_item)
+
+                gpr = candidate.assigned_gpr or "-"
+                self._reaction_table.setItem(row, 3, QTableWidgetItem(gpr))
+                self._reaction_table.setItem(row, 4, QTableWidgetItem(""))
+
+            self._reaction_table.setSortingEnabled(True)
+            self._reaction_table.sortByColumn(2, Qt.SortOrder.DescendingOrder)
+
+        self._apply_btn.setEnabled(False)
+        self._export_sbml_btn.setEnabled(False)
+        self._export_report_btn.setEnabled(added > 0)
+
     def clear(self) -> None:
         self._summary_label.setText("No gap-filling results")
+        self._summary_label.setStyleSheet("")
         self._reaction_table.setRowCount(0)
         self._infeasible_browser.setPlainText("None")
         self._apply_btn.setEnabled(False)

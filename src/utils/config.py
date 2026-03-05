@@ -32,20 +32,18 @@ class Config:
     # UniProt taxonomy ID (83333 = E. coli K12)
     uniprot_taxonomy_id: str = "83333"
 
-    # Scoring weights (7 sources — Option A)
+    # Scoring weights (6 sources)
     weight_kegg: float = 0.30
     weight_bigg: float = 0.15
     weight_uniprot: float = 0.15
-    weight_pubmed: float = 0.10
-    weight_metacyc: float = 0.10
-    weight_gemini: float = 0.10
-    weight_perplexity: float = 0.10
+    weight_pubmed: float = 0.15
+    weight_gemini: float = 0.125
+    weight_perplexity: float = 0.125
 
     # Source enable flags
     enable_bigg: bool = True
     enable_uniprot: bool = True
     enable_pubmed: bool = True
-    enable_metacyc: bool = False
     enable_gemini: bool = True
     enable_perplexity: bool = True
 
@@ -67,6 +65,7 @@ class Config:
 
     # UI settings
     recent_files: list[str] = field(default_factory=list)
+    recent_projects: list[str] = field(default_factory=list)
     window_geometry: str | None = None
 
     @classmethod
@@ -79,20 +78,43 @@ class Config:
                 for key in ("gemini_api_key", "perplexity_api_key", "pubmed_api_key"):
                     if key in filtered and isinstance(filtered[key], str):
                         filtered[key] = filtered[key].strip() or None
-                return cls(**filtered)
+                config = cls(**filtered)
             except (json.JSONDecodeError, TypeError):
-                pass
-        return cls()
+                config = cls()
+        else:
+            config = cls()
+
+        # Environment variable overrides for API keys
+        import os
+
+        env_map = {
+            "GEM_GEMINI_API_KEY": "gemini_api_key",
+            "GEM_PERPLEXITY_API_KEY": "perplexity_api_key",
+            "GEM_PUBMED_API_KEY": "pubmed_api_key",
+        }
+        for env_var, attr in env_map.items():
+            val = os.environ.get(env_var)
+            if val:
+                setattr(config, attr, val.strip())
+
+        return config
 
     def save(self) -> None:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE_PATH.write_text(json.dumps(asdict(self), indent=2, default=str))
+        CONFIG_FILE_PATH.chmod(0o600)
 
     def add_recent_file(self, filepath: str) -> None:
         if filepath in self.recent_files:
             self.recent_files.remove(filepath)
         self.recent_files.insert(0, filepath)
         self.recent_files = self.recent_files[:10]
+
+    def add_recent_project(self, filepath: str) -> None:
+        if filepath in self.recent_projects:
+            self.recent_projects.remove(filepath)
+        self.recent_projects.insert(0, filepath)
+        self.recent_projects = self.recent_projects[:10]
 
     @property
     def weights(self) -> dict[str, float]:
@@ -101,7 +123,6 @@ class Config:
             "bigg": self.weight_bigg,
             "uniprot": self.weight_uniprot,
             "pubmed": self.weight_pubmed,
-            "metacyc": self.weight_metacyc,
             "gemini": self.weight_gemini,
             "perplexity": self.weight_perplexity,
         }

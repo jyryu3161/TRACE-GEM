@@ -58,6 +58,7 @@ def sample_reaction() -> Reaction:
         id="ENO",
         name="enolase",
         equation="D-Glycerate 2-phosphate <=> H2O + Phosphoenolpyruvate",
+        equation_id="2pg_c <=> h2o_c + pep_c",
         subsystem="Glycolysis/Gluconeogenesis",
         lower_bound=-1000.0,
         upper_bound=1000.0,

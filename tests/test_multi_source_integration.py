@@ -146,12 +146,11 @@ class TestMultiSourceScoring:
         assert ev.bigg_score == pytest.approx(0.6)
         assert ev.uniprot_score == pytest.approx(0.3)
         assert ev.pubmed_score == 0.0
-        assert ev.metacyc_score == 0.0
         assert ev.gemini_score == 0.0
         assert ev.perplexity_score == 0.0
 
     def test_score_breakdown_all_sources(self, scorer: ConfidenceScorer) -> None:
-        """Score breakdown should include all 7 sources."""
+        """Score breakdown should include all 6 sources."""
         ev = ReactionEvidence(reaction_id="TEST")
         ev.items.append(
             EvidenceItem(
