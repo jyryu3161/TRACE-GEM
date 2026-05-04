@@ -58,15 +58,20 @@ class EvidenceEngine:
         )
         self._mapper = IdentifierMapper(self._mapping_data)
 
-        # Initialize BiGG client
+        # Initialize BiGG local lookup (replaces REST API)
         if self._config.enable_bigg:
             try:
-                from src.api.bigg_client import BiGGClient
+                from src.api.bigg_lookup import BiGGLookup
 
-                self._bigg = BiGGClient(cache_manager=self._cache)
-                logger.info("BiGG client initialized")
+                self._bigg = BiGGLookup()
+                self._bigg.load()
+                logger.info(
+                    "BiGG local lookup initialized: %d reactions, %d metabolites",
+                    self._bigg.reaction_count,
+                    self._bigg.metabolite_count,
+                )
             except Exception as e:
-                logger.warning("Failed to initialize BiGG client: %s", e)
+                logger.warning("Failed to initialize BiGG lookup: %s", e)
 
         # Initialize UniProt client
         if self._config.enable_uniprot:

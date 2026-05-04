@@ -16,6 +16,27 @@ except ImportError:
     HAS_PYQTGRAPH = False
 
 
+def _add_value_labels(
+    plot_widget: "pg.PlotWidget",
+    x_vals: list[float],
+    y_vals: list[float],
+    fmt: str = "{:.2f}",
+    color: str = "#FFFFFF",
+    offset_y: float = 0.0,
+) -> None:
+    """Add text labels above each bar showing the numeric value."""
+    for xv, yv in zip(x_vals, y_vals):
+        if yv == 0:
+            continue
+        label = pg.TextItem(
+            text=fmt.format(yv),
+            color=color,
+            anchor=(0.5, 1.0),
+        )
+        label.setPos(xv, yv + offset_y)
+        plot_widget.addItem(label)
+
+
 class ScoreVisualizationWidget(QWidget):
     """Charts showing score distribution, match ratios, by-source, and subsystem breakdown."""
 
@@ -99,14 +120,26 @@ class ScoreVisualizationWidget(QWidget):
             else:
                 colors.append(pg.mkBrush(THEME.score_low))
 
+        x_centers = list(edges[:-1] + 0.025)
         bar = pg.BarGraphItem(
-            x=edges[:-1] + 0.025,
+            x=x_centers,
             height=counts,
             width=0.045,
             brushes=colors,
             pen=pg.mkPen(THEME.chart_pen, width=1),
         )
         self._hist_widget.addItem(bar)
+
+        # Value labels on bars
+        max_count = max(counts) if len(counts) else 1
+        _add_value_labels(
+            self._hist_widget,
+            x_centers,
+            [int(c) for c in counts],
+            fmt="{:.0f}",
+            color=THEME.chart_fg,
+            offset_y=max_count * 0.02,
+        )
 
     def _update_match_chart(self, evidence: dict[str, ReactionEvidence]) -> None:
         """Show distribution of substrate/product match ratios."""
@@ -121,8 +154,9 @@ class ScoreVisualizationWidget(QWidget):
 
         # Substrate match histogram
         sub_counts, _ = np.histogram(sub_ratios, bins=bins)
+        x_sub = list(bins[:-1] + 0.03)
         bar1 = pg.BarGraphItem(
-            x=bins[:-1] + 0.03,
+            x=x_sub,
             height=sub_counts,
             width=0.04,
             brush=pg.mkBrush(THEME.chart_primary),
@@ -133,8 +167,9 @@ class ScoreVisualizationWidget(QWidget):
 
         # Product match histogram (offset)
         prod_counts, _ = np.histogram(prod_ratios, bins=bins)
+        x_prod = list(bins[:-1] + 0.07)
         bar2 = pg.BarGraphItem(
-            x=bins[:-1] + 0.07,
+            x=x_prod,
             height=prod_counts,
             width=0.04,
             brush=pg.mkBrush(THEME.chart_secondary),
@@ -142,6 +177,17 @@ class ScoreVisualizationWidget(QWidget):
             name="Products",
         )
         self._match_widget.addItem(bar2)
+
+        # Value labels
+        max_count = max(max(sub_counts), max(prod_counts)) if len(sub_counts) else 1
+        _add_value_labels(
+            self._match_widget, x_sub, [int(c) for c in sub_counts],
+            fmt="{:.0f}", color=THEME.chart_fg, offset_y=max_count * 0.02,
+        )
+        _add_value_labels(
+            self._match_widget, x_prod, [int(c) for c in prod_counts],
+            fmt="{:.0f}", color=THEME.chart_fg, offset_y=max_count * 0.02,
+        )
 
         # Add legend
         self._match_widget.addLegend()
@@ -173,8 +219,18 @@ class ScoreVisualizationWidget(QWidget):
         )
         self._source_widget.addItem(bar)
 
+        # Value labels on bars
+        _add_value_labels(
+            self._source_widget,
+            [float(v) for v in x],
+            averages,
+            fmt="{:.3f}",
+            color=THEME.chart_fg,
+            offset_y=0.01,
+        )
+
         ax = self._source_widget.getAxis("bottom")
-        ax.setTicks([list(zip(x, names, strict=False))])
+        ax.setTicks([list(zip(x, names))])
 
     def _update_subsystem_chart(
         self,
@@ -210,5 +266,15 @@ class ScoreVisualizationWidget(QWidget):
         )
         self._subsystem_widget.addItem(bar)
 
+        # Value labels on bars
+        _add_value_labels(
+            self._subsystem_widget,
+            [float(v) for v in x],
+            averages,
+            fmt="{:.2f}",
+            color=THEME.chart_fg,
+            offset_y=0.01,
+        )
+
         ax = self._subsystem_widget.getAxis("bottom")
-        ax.setTicks([list(zip(x, names, strict=False))])
+        ax.setTicks([list(zip(x, names))])

@@ -117,20 +117,32 @@ class EvidencePanelWidget(QWidget):
 
             sub_detail = f"{evidence.substrate_match_ratio:.0%}"
             prod_detail = f"{evidence.product_match_ratio:.0%}"
+            sub_breakdown = ""
+            prod_breakdown = ""
             if kegg_items and kegg_items[0].raw_data:
                 rd = kegg_items[0].raw_data
                 model_subs = rd.get("model_substrates", [])
                 kegg_subs = rd.get("kegg_substrates", [])
                 if model_subs or kegg_subs:
-                    s_overlap = len(set(model_subs) & set(kegg_subs))
-                    s_total = len(set(model_subs) | set(kegg_subs))
+                    s_model_set = set(model_subs)
+                    s_kegg_set = set(kegg_subs)
+                    s_overlap = len(s_model_set & s_kegg_set)
+                    s_total = len(s_model_set | s_kegg_set)
                     sub_detail = f"{s_overlap}/{s_total} ({evidence.substrate_match_ratio:.0%})"
+                    sub_breakdown = self._format_compound_breakdown(
+                        s_model_set, s_kegg_set, "Substrate",
+                    )
                 model_prods = rd.get("model_products", [])
                 kegg_prods = rd.get("kegg_products", [])
                 if model_prods or kegg_prods:
-                    p_overlap = len(set(model_prods) & set(kegg_prods))
-                    p_total = len(set(model_prods) | set(kegg_prods))
+                    p_model_set = set(model_prods)
+                    p_kegg_set = set(kegg_prods)
+                    p_overlap = len(p_model_set & p_kegg_set)
+                    p_total = len(p_model_set | p_kegg_set)
                     prod_detail = f"{p_overlap}/{p_total} ({evidence.product_match_ratio:.0%})"
+                    prod_breakdown = self._format_compound_breakdown(
+                        p_model_set, p_kegg_set, "Product",
+                    )
 
             parts.append(
                 f'<b>Substrates matched:</b> <span style="color: {sub_color};">'
@@ -138,6 +150,15 @@ class EvidencePanelWidget(QWidget):
                 f'<b>Products matched:</b> <span style="color: {prod_color};">'
                 f"{prod_detail}</span><br>"
             )
+            if sub_breakdown or prod_breakdown:
+                parts.append(
+                    f'<div style="font-size: 12px; margin-top: 6px; '
+                    f"padding: 6px; background: {THEME.chart_bg}; "
+                    f'border-radius: 3px; color: {THEME.text};">'
+                    f'<b style="color: {THEME.muted_text};">Compound ID Details:</b><br>'
+                    f"{sub_breakdown}{prod_breakdown}"
+                    f"</div>"
+                )
 
         if evidence.kegg_reaction_ids:
             links = []
@@ -179,6 +200,36 @@ class EvidencePanelWidget(QWidget):
         self._score_label.setText("-")
         self._score_label.setStyleSheet(f"color: {THEME.neutral};")
         self._browser.setPlainText("Select a reaction and evaluate")
+
+    @staticmethod
+    def _format_compound_breakdown(
+        model_set: set[str], kegg_set: set[str], label: str,
+    ) -> str:
+        """Format matched/unmatched compound IDs for display."""
+        matched = sorted(model_set & kegg_set)
+        model_only = sorted(model_set - kegg_set)
+        kegg_only = sorted(kegg_set - model_set)
+
+        lines = [f"<b>{label}s:</b><br>"]
+        for cid in matched:
+            url = f"https://www.kegg.jp/entry/{cid}"
+            lines.append(
+                f'&nbsp;&nbsp;<span style="color: {THEME.strength_strong};">\u2713</span> '
+                f'<a href="{url}">{cid}</a> (both)<br>'
+            )
+        for cid in model_only:
+            url = f"https://www.kegg.jp/entry/{cid}"
+            lines.append(
+                f'&nbsp;&nbsp;<span style="color: {THEME.strength_weak};">\u2717</span> '
+                f'<a href="{url}">{cid}</a> (model only)<br>'
+            )
+        for cid in kegg_only:
+            url = f"https://www.kegg.jp/entry/{cid}"
+            lines.append(
+                f'&nbsp;&nbsp;<span style="color: {THEME.strength_weak};">\u2717</span> '
+                f'<a href="{url}">{cid}</a> (KEGG only)<br>'
+            )
+        return "".join(lines)
 
     @staticmethod
     def _ratio_color(ratio: float) -> str:

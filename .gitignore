@@ -27,3 +27,6 @@ docs/.bkit*
 docs/.pdca*
 .bkit/
 data/reaction_analysis_result.tsv
+
+# Local prompts (not for distribution)
+prompt/

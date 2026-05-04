@@ -396,6 +396,18 @@ class GapFillController:
             if candidate.reaction.id == reaction_id:
                 self._w._reaction_detail.set_read_only(True)
                 self._w._reaction_detail.set_reaction(candidate.reaction)
+
+                # Show evaluation results if available
+                ev = (
+                    self._w._engine.get_result(reaction_id)
+                    if self._w._engine
+                    else None
+                )
+                if ev:
+                    self._w._reaction_detail.update_evidence(ev)
+                    self._w._evidence_panel.set_evidence(ev)
+                else:
+                    self._w._evidence_panel.clear()
                 break
 
     def evaluate_universal_candidates(self, candidates: list) -> None:
@@ -404,5 +416,4 @@ class GapFillController:
             QMessageBox.warning(self._w, "No Engine", "Evidence engine not initialized.")
             return
 
-        reactions = [c.reaction for c in candidates]
-        self._w._eval_ctrl.evaluate_batch(reactions)
+        self._w._eval_ctrl.run_candidate_evaluation(candidates)

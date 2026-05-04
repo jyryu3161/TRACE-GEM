@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -22,6 +23,7 @@ class CacheManager:
     def __init__(self, db_path: Path | None = None) -> None:
         self._db_path = db_path or CACHE_DB_PATH
         self._db: aiosqlite.Connection | None = None
+        self._bound_loop: asyncio.AbstractEventLoop | None = None
 
     async def initialize(self) -> None:
         """Create database and tables if they don't exist."""
@@ -29,17 +31,29 @@ class CacheManager:
         self._db = await aiosqlite.connect(str(self._db_path))
         await self._db.executescript(SCHEMA_SQL)
         await self._db.commit()
+        self._bound_loop = asyncio.get_running_loop()
         logger.info("Cache initialized at %s", self._db_path)
+
+    async def _ensure_connection(self) -> None:
+        """Reconnect if the event loop has changed since initialization."""
+        current_loop = asyncio.get_running_loop()
+        if self._bound_loop is not current_loop:
+            logger.info("Event loop changed, reconnecting cache DB")
+            # Old connection is unusable on this loop; don't await close
+            self._db = await aiosqlite.connect(str(self._db_path))
+            self._bound_loop = current_loop
 
     async def close(self) -> None:
         if self._db:
             await self._db.close()
             self._db = None
+        self._bound_loop = None
 
     async def get(self, key: str) -> Any | None:
         """Get a cached value if it exists and is not expired."""
         if not self._db:
             return None
+        await self._ensure_connection()
 
         async with self._db.execute(
             "SELECT value, created_at, ttl FROM api_cache WHERE key = ?",
@@ -71,6 +85,7 @@ class CacheManager:
         """Store a value in the cache."""
         if not self._db:
             return
+        await self._ensure_connection()
 
         ttl = ttl or API_CACHE_TTL
         if isinstance(value, (dict, list)):
@@ -89,6 +104,7 @@ class CacheManager:
         """Delete a specific cache entry."""
         if not self._db:
             return
+        await self._ensure_connection()
         await self._db.execute("DELETE FROM api_cache WHERE key = ?", (key,))
         await self._db.commit()
 
@@ -96,6 +112,7 @@ class CacheManager:
         """Clear cache entries. If source given, only clear that source."""
         if not self._db:
             return 0
+        await self._ensure_connection()
 
         if source:
             cursor = await self._db.execute("DELETE FROM api_cache WHERE source = ?", (source,))
@@ -113,6 +130,7 @@ class CacheManager:
         """Remove all expired entries."""
         if not self._db:
             return 0
+        await self._ensure_connection()
 
         cursor = await self._db.execute(
             "DELETE FROM api_cache WHERE (? - created_at) > ttl",
@@ -128,6 +146,7 @@ class CacheManager:
         """Get cache statistics."""
         if not self._db:
             return {"total": 0, "expired": 0}
+        await self._ensure_connection()
 
         now = time.time()
         async with self._db.execute("SELECT COUNT(*) FROM api_cache") as cursor:

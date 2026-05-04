@@ -9,7 +9,9 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -57,6 +59,9 @@ class VersionPanelWidget(QWidget):
     compare_requested = Signal(str, str)  # version_a, version_b
     export_requested = Signal(str)        # version_id
     detail_requested = Signal(str)        # version_id (double-click)
+    rename_requested = Signal(str, str)   # old_version_id, new_version_id
+    description_updated = Signal(str, str)  # version_id, new_description
+    delete_requested = Signal(str)        # version_id
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -126,6 +131,10 @@ class VersionPanelWidget(QWidget):
 
         # Double-click to view diff details
         self._tree.itemDoubleClicked.connect(self._on_double_click)
+
+        # Right-click context menu
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._show_context_menu)
 
         # Table ↔ Graph selection sync
         self._tree.itemSelectionChanged.connect(self._on_table_selection_changed)
@@ -477,6 +486,68 @@ class VersionPanelWidget(QWidget):
             )
             return
         self.export_requested.emit(selected[0])
+
+    def _show_context_menu(self, pos) -> None:
+        """Show right-click context menu for rename/delete."""
+        item = self._tree.itemAt(pos)
+        if not item:
+            return
+
+        vid = item.data(COL_VERSION, Qt.ItemDataRole.UserRole)
+        if not vid:
+            return
+
+        is_current = vid == self._current_version_id
+
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename ID...")
+        edit_desc_action = menu.addAction("Edit Description...")
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete")
+        if is_current:
+            delete_action.setEnabled(False)
+            delete_action.setText("Delete (current version)")
+
+        action = menu.exec(self._tree.viewport().mapToGlobal(pos))
+        if action == rename_action:
+            self._on_rename(vid, item)
+        elif action == edit_desc_action:
+            self._on_edit_description(vid, item)
+        elif action == delete_action:
+            self._on_delete(vid)
+
+    def _on_rename(self, version_id: str, item: QTreeWidgetItem) -> None:
+        """Prompt user for new version ID and emit rename signal."""
+        new_id, ok = QInputDialog.getText(
+            self, "Rename Version ID",
+            f"New ID for version {version_id}:",
+            text=version_id,
+        )
+        if ok and new_id and new_id != version_id:
+            self.rename_requested.emit(version_id, new_id)
+
+    def _on_edit_description(self, version_id: str, item: QTreeWidgetItem) -> None:
+        """Prompt user for new description and emit description_updated signal."""
+        current_desc = item.text(COL_DESC)
+        new_desc, ok = QInputDialog.getText(
+            self, "Edit Description",
+            f"New description for {version_id}:",
+            text=current_desc,
+        )
+        if ok and new_desc != current_desc:
+            self.description_updated.emit(version_id, new_desc)
+
+    def _on_delete(self, version_id: str) -> None:
+        """Confirm and emit delete signal."""
+        reply = QMessageBox.question(
+            self,
+            "Delete Version",
+            f"Delete version {version_id}?\n"
+            "This will permanently remove the saved SBML file.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.delete_requested.emit(version_id)
 
     def _on_double_click(self, item: QTreeWidgetItem, column: int) -> None:
         """Emit detail_requested on double-click to show version diff."""

@@ -177,6 +177,23 @@ class VersionManager:
         model_b, _ = self._storage.load_version(self._model_id, version_b)
         return self._diff_engine.compute_diff(model_a, model_b)
 
+    def update_description(self, version_id: str, new_description: str) -> None:
+        """Update the description of a version."""
+        self._storage.update_description(self._model_id, version_id, new_description)
+
+    def rename_version(self, version_id: str, new_id: str) -> None:
+        """Rename a version ID."""
+        self._storage.rename_version(self._model_id, version_id, new_id)
+        # Update current version reference if renamed
+        if self._current_version and self._current_version.version_id == version_id:
+            self._current_version.version_id = new_id
+
+    def delete_version(self, version_id: str) -> None:
+        """Delete a version. Cannot delete the current version."""
+        if self._current_version and self._current_version.version_id == version_id:
+            raise ValueError("Cannot delete the current version")
+        self._storage.delete_version(self._model_id, version_id)
+
     @property
     def current_version(self) -> ModelVersion | None:
         """The most recently saved version."""

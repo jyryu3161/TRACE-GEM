@@ -35,14 +35,26 @@ class BaseAPIClient(ABC):
         self._cache = cache_manager
         self._max_retries = max_retries
         self._session: aiohttp.ClientSession | None = None
+        self._session_loop: asyncio.AbstractEventLoop | None = None
         self._failure_count = 0
         self._circuit_open = False
         self._circuit_open_until = 0.0
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
+        current_loop = asyncio.get_running_loop()
+        if (
+            self._session is None
+            or self._session.closed
+            or self._session_loop is not current_loop
+        ):
+            if self._session and not self._session.closed:
+                try:
+                    await self._session.close()
+                except Exception:
+                    pass
             timeout = aiohttp.ClientTimeout(total=30, connect=10)
             self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session_loop = current_loop
         return self._session
 
     async def close(self) -> None:

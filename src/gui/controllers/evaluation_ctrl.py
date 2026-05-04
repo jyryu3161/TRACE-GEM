@@ -38,11 +38,18 @@ class EvaluationController:
             self.evaluate_reaction(rxn)
 
     def evaluate_reaction_by_id(self, reaction_id: str) -> None:
-        if not self._w._model:
-            return
-        rxn = self._w._model.get_reaction(reaction_id)
-        if rxn:
-            self.evaluate_reaction(rxn)
+        # Try model reactions first
+        if self._w._model:
+            rxn = self._w._model.get_reaction(reaction_id)
+            if rxn:
+                self.evaluate_reaction(rxn)
+                return
+
+        # Try universal candidates
+        for candidate in self._w._universal_table.get_candidates():
+            if candidate.reaction.id == reaction_id:
+                self.evaluate_reaction(candidate.reaction)
+                return
 
     def evaluate_reaction(self, reaction: Reaction) -> None:
         if not self._w._engine:
@@ -78,6 +85,12 @@ class EvaluationController:
         self._w._reaction_table.update_evidence(evidence.reaction_id, evidence)
         self._w._reaction_detail.update_evidence(evidence)
         self._w._evidence_panel.set_evidence(evidence)
+
+        # Also update universal candidate table if it has this reaction
+        if self._w._engine:
+            self._w._universal_table._model.set_evidence(
+                self._w._engine.get_all_results()
+            )
 
         self._w._update_eval_count()
         self._w._statusbar.showMessage(
@@ -164,18 +177,41 @@ class EvaluationController:
         self._w._batch_worker = worker
 
         worker.signals.progress.connect(dialog.update_progress)
-        worker.signals.result.connect(lambda r: self.on_batch_complete(r, dialog))
+        worker.signals.result.connect(
+            lambda r: self.on_candidate_batch_complete(r, dialog)
+        )
         worker.signals.error.connect(lambda e: self.on_batch_error(e, dialog))
         dialog.cancelled.connect(worker.cancel)
 
         self._w._thread_pool.start(worker)
         dialog.exec()
 
+    def on_candidate_batch_complete(
+        self, results: object, dialog: ProgressDialog
+    ) -> None:
+        dialog.set_complete()
+        if isinstance(results, dict):
+            # Update both model table and universal candidate table
+            self._w._reaction_table.update_all_evidence(results)
+            self._w._universal_table._model.set_evidence(results)
+            self._w._update_charts()
+
+            # Update right panel if a candidate reaction is currently selected
+            detail_rxn = self._w._reaction_detail._reaction
+            current_rxn = detail_rxn.id if detail_rxn else None
+            if current_rxn and current_rxn in results:
+                ev = results[current_rxn]
+                self._w._reaction_detail.update_evidence(ev)
+                self._w._evidence_panel.set_evidence(ev)
+        self._w._update_eval_count()
+        self._w._statusbar.showMessage("Candidate evaluation complete")
+        self._w._batch_worker = None
+
     def on_batch_complete(self, results: object, dialog: ProgressDialog) -> None:
+        dialog.set_complete()
         if isinstance(results, dict):
             self._w._reaction_table.update_all_evidence(results)
             self._w._update_charts()
-        dialog.set_complete()
         self._w._update_eval_count()
         self._w._statusbar.showMessage("Batch evaluation complete")
         self._w._batch_worker = None

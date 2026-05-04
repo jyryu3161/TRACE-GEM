@@ -1,0 +1,5 @@
+Reaction ID,Name,Subsystem,Genes,GPR,Confidence Score,KEGG Score,BiGG Models Score,UniProt Score,PubMed Score,Gemini Score,Perplexity Score,Substrate Match,Product Match,EC Numbers,KEGG IDs,Status
+EX_glc_DASH_D_e,EX_glc_DASH_D_e,,,,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,,,evaluated
+HEX1,Hexokinase,Glycolysis/Gluconeogenesis,b2388,b2388,0.7000,0.6000,0.0000,0.6000,1.0000,0.0000,0.0000,0.5000,0.6667,,R00299,evaluated
+ENO,enolase,Glycolysis/Gluconeogenesis,b2779,b2779,0.9000,1.0000,0.0000,0.6000,1.0000,0.0000,0.0000,1.0000,0.6667,,R00658,evaluated
+EX_glc_LPAREN_e_RPAREN_,D-Glucose exchange,Exchange,,,1.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,,,evaluated

@@ -3,9 +3,28 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _sanitize_for_json(obj: object) -> object:
+    """Make objects JSON-safe: replace nan/inf, convert non-serializable objects."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, (str, int, bool, type(None))):
+        return obj
+    # Convert non-serializable objects (e.g., KEGGReactionData) to dict or str
+    if hasattr(obj, "__dict__"):
+        return _sanitize_for_json(vars(obj))
+    return str(obj)
 
 
 @dataclass
@@ -32,6 +51,9 @@ class ProjectData:
     task_results_before: list[dict] | None = None
     task_results_after: list[dict] | None = None
 
+    # Universal candidates (serialized CandidateReaction list)
+    universal_candidates: list[dict] | None = None
+
     # Version reference
     current_version_id: str | None = None
     version_dir: str | None = None
@@ -44,14 +66,14 @@ class ProjectData:
 
 
 class ProjectManager:
-    """Save/load project state as .gemp JSON files."""
+    """Save/load project state as JSON files."""
 
-    GEMP_EXTENSION = ".gemp"
+    GEMP_EXTENSION = ".json"
     FORMAT_VERSION = "1.0"
 
     @staticmethod
     def save(path: str, project: ProjectData) -> None:
-        """Save project to .gemp file."""
+        """Save project to JSON file."""
         project.last_modified = datetime.now(timezone.utc).isoformat()
         if not project.created_at:
             project.created_at = project.last_modified
@@ -75,6 +97,7 @@ class ProjectManager:
                 "tasks_path": project.tasks_path,
                 "task_results_before": project.task_results_before,
                 "task_results_after": project.task_results_after,
+                "universal_candidates": project.universal_candidates,
             },
             "version_info": {
                 "current_version_id": project.current_version_id,
@@ -84,11 +107,12 @@ class ProjectManager:
                 "scoring_weights": project.scoring_weights,
             },
         }
+        data = _sanitize_for_json(data)
         Path(path).write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
     @staticmethod
     def load(path: str) -> ProjectData:
-        """Load project from .gemp file."""
+        """Load project from JSON file."""
         raw = json.loads(Path(path).read_text())
 
         model = raw.get("model", {})
@@ -111,6 +135,7 @@ class ProjectManager:
             tasks_path=gapfill.get("tasks_path"),
             task_results_before=gapfill.get("task_results_before"),
             task_results_after=gapfill.get("task_results_after"),
+            universal_candidates=gapfill.get("universal_candidates"),
             current_version_id=version_info.get("current_version_id"),
             version_dir=version_info.get("version_dir"),
             scoring_weights=settings.get("scoring_weights", {}),
@@ -140,8 +165,16 @@ class ProjectManager:
         if hasattr(task_panel, "_after_map") and task_panel._after_map:
             task_after = [tr.to_dict() for tr in task_panel._after_map.values()]
 
+        # Universal candidates
+        universal_candidates_data = None
+        universal_table = window._universal_table
+        candidates = universal_table.get_candidates()
+        if candidates:
+            from src.core.models import CandidateReaction
+            universal_candidates_data = [c.to_dict() for c in candidates]
+
         return ProjectData(
-            sbml_path=getattr(window, "_loading_filepath", "") or "",
+            sbml_path=getattr(window, "_sbml_filepath", "") or getattr(window, "_loading_filepath", "") or "",
             model_id=model.id if model else "",
             model_name=model.name if model else "",
             organism_code=config.kegg_organism_code,
@@ -151,6 +184,7 @@ class ProjectManager:
             tasks_path=getattr(window, "_loaded_tasks_path", None),
             task_results_before=task_before,
             task_results_after=task_after,
+            universal_candidates=universal_candidates_data,
             current_version_id=(
                 vm.current_version.version_id if vm and vm.current_version else None
             ),
