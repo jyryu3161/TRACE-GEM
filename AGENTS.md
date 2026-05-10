@@ -31,6 +31,50 @@ The design is intentionally minimal. Of the original 6 evidence sources, only **
 
 ---
 
+## Harness engineering principles
+
+This project applies *harness engineering* — the deliberate design of input/output structures that keep AI agents behaving as intended. Every section in this document is part of the harness.
+
+### Why harness matters here
+
+Auto-research lets the agent run many experiments with limited supervision. Without a clear harness, the agent may:
+
+- Implement algorithms instead of using existing `src/` code
+- Cite "industry standard" to bypass project rules
+- Discard inconvenient results to make metrics look better
+- Drift from the original research question over time
+- Answer code-dependent questions from filenames or function signatures alone
+
+### Harness components in this repo
+
+| Component | Purpose | Location |
+|---|---|---|
+| `AGENTS.md` (this file) | Behavioral contract | repo root |
+| `experiments/<type>/design.md` | Per-type hypothesis lock-in | each type dir |
+| `experiments/<type>/<exp>/notes.md` | Per-experiment observation log | each experiment dir |
+| Code constraints | Enforce src/-only algorithm logic | this file, §Code constraints |
+| Operating rules (3-tier) | Always do / Ask first / Never do | this file, §Operating rules |
+| Self-check checklist | Pre-commit verification | this file, §Code constraints |
+
+### Read code before answering
+
+When asked about tool behavior, scoring logic, gap-filling, version tracking, or any code-dependent question, the agent MUST inspect the actual source code (in `src/`) before answering. Do not guess based on filenames, function signatures, or this document alone. Quote the relevant code (≤15 lines) when making claims about behavior.
+
+If a behavior cannot be verified from the code, say "not verified from code" — do not infer.
+
+### When the harness is incomplete
+
+If the agent encounters a situation this document does not cover:
+
+1. Stop. Do not improvise.
+2. Record the gap in the active experiment's `notes.md`.
+3. Report to the user with a proposed harness addition.
+4. Wait for explicit decision before proceeding.
+
+The harness evolves over time. Gaps are not failures — unrecorded gaps are.
+
+---
+
 ## Autoresearch pattern (adapted)
 
 This work adapts the workflow pattern from [karpathy/autoresearch](https://github.com/karpathy/autoresearch). The original is for LLM training and is not directly applicable; we borrow the *pattern*, not the code.
