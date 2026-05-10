@@ -45,9 +45,18 @@ class ProgressDialog(QDialog):
 
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
+
+        self._ok_btn = QPushButton("OK")
+        self._ok_btn.setMinimumWidth(80)
+        self._ok_btn.clicked.connect(self.accept)
+        self._ok_btn.hide()
+        btn_layout.addWidget(self._ok_btn)
+
         self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setMinimumWidth(80)
         self._cancel_btn.clicked.connect(self._on_cancel)
         btn_layout.addWidget(self._cancel_btn)
+
         layout.addLayout(btn_layout)
 
     def update_progress(self, current: int, total: int, reaction_id: str = "") -> None:
@@ -60,9 +69,10 @@ class ProgressDialog(QDialog):
     def set_complete(self) -> None:
         self._progress_bar.setValue(100)
         self._status_label.setText("Evaluation complete!")
-        self._cancel_btn.setText("Close")
-        self._cancel_btn.clicked.disconnect(self._on_cancel)
-        self._cancel_btn.clicked.connect(self.accept)
+        self._detail_label.setText("")
+        self._cancel_btn.hide()
+        self._ok_btn.show()
+        self._ok_btn.setFocus()
 
     def _on_cancel(self) -> None:
         self._status_label.setText("Cancelling...")

@@ -194,6 +194,60 @@ class VersionController:
             logger.warning("Failed to compare versions: %s", e)
             QMessageBox.critical(self._w, "Compare Error", str(e))
 
+    def rename_version(self, version_id: str, new_id: str) -> None:
+        """Rename a version ID."""
+        if not self._w._version_manager:
+            return
+        try:
+            self._w._version_manager.rename_version(version_id, new_id)
+            self._w._version_panel.set_history(
+                self._w._version_manager.get_history(),
+                self._w._version_manager.current_version.version_id
+                if self._w._version_manager.current_version
+                else None,
+            )
+            self._w._statusbar.showMessage(
+                f"Renamed version {version_id} → {new_id}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self._w, "Rename Error", str(e))
+
+    def update_description(self, version_id: str, new_description: str) -> None:
+        """Update description of a version."""
+        if not self._w._version_manager:
+            return
+        try:
+            self._w._version_manager.update_description(version_id, new_description)
+            self._w._version_panel.set_history(
+                self._w._version_manager.get_history(),
+                self._w._version_manager.current_version.version_id
+                if self._w._version_manager.current_version
+                else None,
+            )
+            self._w._statusbar.showMessage(
+                f"Updated description for {version_id}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self._w, "Description Error", str(e))
+
+    def delete_version(self, version_id: str) -> None:
+        """Delete a version."""
+        if not self._w._version_manager:
+            return
+        try:
+            self._w._version_manager.delete_version(version_id)
+            self._w._version_panel.set_history(
+                self._w._version_manager.get_history(),
+                self._w._version_manager.current_version.version_id
+                if self._w._version_manager.current_version
+                else None,
+            )
+            self._w._statusbar.showMessage(
+                f"Deleted version {version_id}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self._w, "Delete Error", str(e))
+
     def export_version_sbml(self, version_id: str) -> None:
         """Export a specific version as SBML."""
         if not self._w._version_manager:

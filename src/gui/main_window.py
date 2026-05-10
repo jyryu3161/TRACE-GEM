@@ -89,6 +89,7 @@ class MainWindow(QMainWindow):
         self._project_path: str | None = None
         self._project_dirty: bool = False
         self._pending_project = None
+        self._pending_restore = None  # Deferred project restore (wait for engine)
         self._skip_organism_dialog: bool = False
 
         # Controllers
@@ -195,6 +196,7 @@ class MainWindow(QMainWindow):
         self._universal_table.evaluate_requested.connect(self._gapfill_ctrl.evaluate_universal_candidates)
         self._left_tabs.addTab(self._universal_table, "Universal")
 
+        self._left_tabs.currentChanged.connect(lambda _: self._update_charts())
         left_layout.addWidget(self._left_tabs)
 
         splitter.addWidget(left_widget)
@@ -202,25 +204,16 @@ class MainWindow(QMainWindow):
         # Right side — tabs for detail views
         right_tabs = QTabWidget()
 
-        # Detail + Evidence tab
-        detail_evidence = QWidget()
-        de_layout = QVBoxLayout(detail_evidence)
-        de_layout.setContentsMargins(0, 0, 0, 0)
-
-        detail_splitter = QSplitter(Qt.Orientation.Vertical)
-
+        # Detail tab
         self._reaction_detail = ReactionDetailWidget()
         self._reaction_detail.evaluate_requested.connect(self._eval_ctrl.evaluate_reaction_by_id)
         self._reaction_detail.reaction_modified.connect(self._version_ctrl.on_reaction_modified)
         self._reaction_detail.removal_requested.connect(self._on_removal_requested)
-        detail_splitter.addWidget(self._reaction_detail)
+        right_tabs.addTab(self._reaction_detail, "Detail")
 
+        # Evidence tab
         self._evidence_panel = EvidencePanelWidget()
-        detail_splitter.addWidget(self._evidence_panel)
-
-        detail_splitter.setSizes([550, 200])
-        de_layout.addWidget(detail_splitter)
-        right_tabs.addTab(detail_evidence, "Detail & Evidence")
+        right_tabs.addTab(self._evidence_panel, "Evidence")
 
         # Gene panel tab
         self._gene_panel = GenePanelWidget()
@@ -251,6 +244,9 @@ class MainWindow(QMainWindow):
         self._version_panel.compare_requested.connect(self._version_ctrl.compare_versions)
         self._version_panel.export_requested.connect(self._version_ctrl.export_version_sbml)
         self._version_panel.detail_requested.connect(self._version_ctrl.show_version_detail)
+        self._version_panel.rename_requested.connect(self._version_ctrl.rename_version)
+        self._version_panel.description_updated.connect(self._version_ctrl.update_description)
+        self._version_panel.delete_requested.connect(self._version_ctrl.delete_version)
         right_tabs.addTab(self._version_panel, "Versions")
 
         self._right_tabs = right_tabs
@@ -356,6 +352,13 @@ class MainWindow(QMainWindow):
         self._update_source_status()
         self._statusbar.showMessage("Evidence engine ready")
         logger.info("Evidence engine initialized")
+
+        # Apply deferred project restore now that engine is ready
+        # But only if no further engine reinit is pending
+        if self._pending_restore is not None and not self._pending_engine_init:
+            project = self._pending_restore
+            self._pending_restore = None
+            self._apply_deferred_restore(project)
 
     def _on_engine_init_error(self, token: int, error: str) -> None:
         if token != self._engine_init_token:
@@ -548,6 +551,7 @@ class MainWindow(QMainWindow):
             self._config.add_recent_file(filepath)
             self._config.save()
             self._update_recent_menu()
+            self._sbml_filepath = filepath
             self._loading_filepath = ""
 
         # Initialize version control
@@ -705,13 +709,36 @@ class MainWindow(QMainWindow):
                     break
 
     def _update_charts(self) -> None:
-        if not self._engine or not self._model:
-            return
-        results = self._engine.get_all_results()
-        if not results:
+        if not self._engine:
             return
 
-        subsystem_map = {r.id: r.subsystem or "Unknown" for r in self._model.reactions}
+        all_results = self._engine.get_all_results()
+        if not all_results:
+            return
+
+        # Determine which results to show based on active left tab
+        is_universal = self._left_tabs.currentWidget() is self._universal_table
+        if is_universal:
+            candidate_ids = {
+                c.reaction.id for c in self._universal_table.get_candidates()
+            }
+            results = {
+                rid: ev for rid, ev in all_results.items() if rid in candidate_ids
+            }
+            subsystem_map = {}
+        else:
+            if not self._model:
+                return
+            model_ids = {r.id for r in self._model.reactions}
+            results = {
+                rid: ev for rid, ev in all_results.items() if rid in model_ids
+            }
+            subsystem_map = {
+                r.id: r.subsystem or "Unknown" for r in self._model.reactions
+            }
+
+        if not results:
+            return
         self._chart_widget.update_charts(results, subsystem_map)
 
     # --- Help ---
@@ -821,31 +848,40 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Project",
-            f"{self._model.id}.gemp",
-            "GEM Project (*.gemp)",
+            f"{self._model.id}.json",
+            "GEM Project (*.json)",
         )
         if path:
+            if not path.endswith(".json"):
+                path += ".json"
             self._do_save_project(path)
 
     def _do_save_project(self, path: str) -> None:
         """Actual save logic."""
         from src.core.project_manager import ProjectManager
 
-        project = ProjectManager.from_app_state(self)
-        project.project_path = path
-        ProjectManager.save(path, project)
-        self._project_path = path
-        self._project_dirty = False
-        self._update_title()
-        self._config.add_recent_project(path)
-        self._config.save()
-        self._update_recent_projects_menu()
-        self._statusbar.showMessage(f"Project saved: {path}", 5000)
+        try:
+            project = ProjectManager.from_app_state(self)
+            project.project_path = path
+            ProjectManager.save(path, project)
+            self._project_path = path
+            self._project_dirty = False
+            self._update_title()
+            self._config.add_recent_project(path)
+            self._config.save()
+            self._update_recent_projects_menu()
+            self._statusbar.showMessage(f"Project saved: {path}", 5000)
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Save Error", f"Failed to save project:\n{e}"
+            )
+            import traceback
+            traceback.print_exc()
 
     def _open_project(self) -> None:
-        """Open a .gemp project file."""
+        """Open a project file."""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open Project", "", "GEM Project (*.gemp)"
+            self, "Open Project", "", "GEM Project (*.json)"
         )
         if path:
             self._load_project(path)
@@ -890,6 +926,7 @@ class MainWindow(QMainWindow):
         # Load model (skip organism dialog since we restored settings)
         self._pending_project = project
         self._loading_filepath = project.sbml_path
+        self._sbml_filepath = project.sbml_path
         self._skip_organism_dialog = True
         self._load_model(project.sbml_path)
 
@@ -899,21 +936,24 @@ class MainWindow(QMainWindow):
         self._update_recent_projects_menu()
 
     def _restore_project_state(self, project: object) -> None:
-        """Restore evaluation results and gap-fill state from project."""
-        from src.core.models import ReactionEvidence, TaskResult
+        """Restore evaluation results, universal candidates, and gap-fill state."""
+        from src.core.models import (
+            CandidateReaction,
+            TaskResult,
+        )
 
-        # Restore evaluation results
-        if self._engine and project.evaluation_results:
-            for rid, ev_dict in project.evaluation_results.items():
-                evidence = ReactionEvidence.from_dict(ev_dict)
-                self._engine._results[rid] = evidence
-            self._reaction_table.update_all_evidence(self._engine.get_all_results())
-            self._overview.update_evaluation_count(
-                len(project.evaluation_results),
-                self._model.reaction_count if self._model else 0,
-            )
+        # Restore universal candidates (does not depend on engine)
+        if project.universal_candidates:
+            candidates = [
+                CandidateReaction.from_dict(d)
+                for d in project.universal_candidates
+            ]
+            self._universal_table.set_candidates(candidates)
+        elif project.universal_path and self._model:
+            # Candidates weren't saved — reload from universal model file
+            self._reload_universal_from_path(project.universal_path)
 
-        # Restore gap-fill task results
+        # Restore gap-fill task results (does not depend on engine)
         if project.task_results_before is not None:
             before = [TaskResult.from_dict(d) for d in project.task_results_before]
             after = (
@@ -929,6 +969,77 @@ class MainWindow(QMainWindow):
         self._project_path = project.project_path
         self._project_dirty = False
         self._update_title()
+
+        # Evaluation results require the engine — defer if engine is initializing
+        if project.evaluation_results:
+            if self._engine and not self._engine_init_in_progress and not self._pending_engine_init:
+                self._apply_deferred_restore(project)
+            else:
+                logger.info("Engine not ready — deferring evaluation result restore")
+                self._pending_restore = project
+
+    def _apply_deferred_restore(self, project: object) -> None:
+        """Apply evaluation results to the current (ready) engine."""
+        from src.core.models import ReactionEvidence
+
+        if not self._engine or not project.evaluation_results:
+            return
+
+        for rid, ev_dict in project.evaluation_results.items():
+            evidence = ReactionEvidence.from_dict(ev_dict)
+            self._engine._results[rid] = evidence
+
+        all_results = self._engine.get_all_results()
+
+        # Update model reaction table
+        self._reaction_table.update_all_evidence(all_results)
+
+        # Update universal candidate table
+        if self._universal_table.get_candidates():
+            self._universal_table._model.set_evidence(all_results)
+
+        # Update overview count (model reactions only)
+        if self._model:
+            model_ids = {r.id for r in self._model.reactions}
+            model_evaluated = sum(
+                1 for rid in all_results if rid in model_ids
+            )
+            self._overview.update_evaluation_count(
+                model_evaluated, self._model.reaction_count,
+            )
+
+        # Update charts
+        self._update_charts()
+        logger.info("Project evaluation results restored: %d reactions", len(project.evaluation_results))
+
+    def _reload_universal_from_path(self, filepath: str) -> None:
+        """Reload universal candidates from file when not saved in project."""
+        from pathlib import Path as _Path
+
+        if not _Path(filepath).exists():
+            logger.warning("Universal model file not found: %s", filepath)
+            return
+        try:
+            from src.core.universal_loader import UniversalLoader
+
+            loader = UniversalLoader()
+            universal_model = loader.load(filepath)
+            candidates = loader.extract_candidates(universal_model, self._model)
+
+            total = len(universal_model.reactions)
+            excluded = total - len(candidates)
+            self._overview.set_universal_info(
+                model_id=universal_model.id,
+                total_reactions=total,
+                excluded=excluded,
+                candidates=len(candidates),
+            )
+            self._universal_table.set_candidates(candidates)
+            logger.info(
+                "Universal model reloaded from %s: %d candidates", filepath, len(candidates),
+            )
+        except Exception as e:
+            logger.warning("Failed to reload universal model: %s", e)
 
     def _mark_dirty(self) -> None:
         """Mark project as having unsaved changes."""
