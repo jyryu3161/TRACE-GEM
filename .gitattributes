@@ -1,1 +1,5 @@
 data/** filter=lfs diff=lfs merge=lfs -text
+
+# Small reference files: keep as plain text (LFS overhead not worth it)
+data/e_coli_core.xml                !filter !diff !merge text
+data/universal_essential_tasks.csv  !filter !diff !merge text

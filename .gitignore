@@ -27,3 +27,18 @@ docs/.bkit*
 docs/.pdca*
 .bkit/
 data/reaction_analysis_result.tsv
+
+# Local prompts (not for distribution)
+prompt/
+
+# Build outputs and run-time results (not for tracking)
+iML1515-task-*.json
+output.csv
+*.task.json
+
+# External data caches (downloaded via scripts/download_external_data.sh)
+data/reac_prop.tsv
+data/reac_xref.tsv
+data/bigg_models_metabolites.txt
+data/bigg_models_reactions.txt
+data/universal_model.json
