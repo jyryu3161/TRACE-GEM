@@ -157,6 +157,84 @@ class VersionStorage:
         self.save_history(model_id, kept)
         return deleted
 
+    def update_description(
+        self, model_id: str, version_id: str, new_description: str
+    ) -> None:
+        """Update the description of an existing version."""
+        history = self.load_history(model_id)
+        for v in history:
+            if v.version_id == version_id:
+                v.description = new_description
+                break
+        else:
+            raise ValueError(f"Version {version_id} not found")
+        self.save_history(model_id, history)
+
+        # Also update meta.json
+        meta_path = self._version_dir(model_id, version_id) / "meta.json"
+        if meta_path.exists():
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["description"] = new_description
+            meta_path.write_text(
+                json.dumps(meta, indent=2), encoding="utf-8"
+            )
+        logger.info("Updated description for %s: %s", version_id, new_description)
+
+    def rename_version(
+        self, model_id: str, old_id: str, new_id: str
+    ) -> None:
+        """Rename a version ID: updates history, parent references, directory, and meta."""
+        history = self.load_history(model_id)
+
+        # Check new_id doesn't already exist
+        if any(v.version_id == new_id for v in history):
+            raise ValueError(f"Version ID '{new_id}' already exists")
+
+        found = False
+        for v in history:
+            if v.version_id == old_id:
+                v.version_id = new_id
+                found = True
+            # Update parent references
+            if v.parent_version_id == old_id:
+                v.parent_version_id = new_id
+        if not found:
+            raise ValueError(f"Version {old_id} not found")
+
+        self.save_history(model_id, history)
+
+        # Rename directory
+        old_dir = self._version_dir(model_id, old_id)
+        new_dir = self._version_dir(model_id, new_id)
+        if old_dir.exists():
+            old_dir.rename(new_dir)
+
+        # Update meta.json inside renamed dir
+        meta_path = new_dir / "meta.json"
+        if meta_path.exists():
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["version_id"] = new_id
+            meta_path.write_text(
+                json.dumps(meta, indent=2), encoding="utf-8"
+            )
+
+        logger.info("Renamed version %s → %s", old_id, new_id)
+
+    def delete_version(self, model_id: str, version_id: str) -> None:
+        """Delete a version and its files."""
+        history = self.load_history(model_id)
+        new_history = [v for v in history if v.version_id != version_id]
+        if len(new_history) == len(history):
+            raise ValueError(f"Version {version_id} not found")
+
+        # Remove files
+        version_dir = self._version_dir(model_id, version_id)
+        if version_dir.exists():
+            shutil.rmtree(version_dir)
+
+        self.save_history(model_id, new_history)
+        logger.info("Deleted version %s for model %s", version_id, model_id)
+
     def get_next_version_id(self, model_id: str) -> str:
         """Generate the next sequential version ID (v001, v002, ...)."""
         history = self.load_history(model_id)

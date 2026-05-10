@@ -110,6 +110,39 @@ class Reaction:
     def has_genes(self) -> bool:
         return len(self.genes) > 0
 
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "equation": self.equation,
+            "equation_id": self.equation_id,
+            "subsystem": self.subsystem,
+            "lower_bound": self.lower_bound,
+            "upper_bound": self.upper_bound,
+            "gene_reaction_rule": self.gene_reaction_rule,
+            "genes": self.genes,
+            "reactants": self.reactants,
+            "products": self.products,
+            "annotation": self.annotation,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Reaction:
+        return cls(
+            id=data["id"],
+            name=data.get("name", ""),
+            equation=data.get("equation", ""),
+            equation_id=data.get("equation_id", ""),
+            subsystem=data.get("subsystem"),
+            lower_bound=data.get("lower_bound", -1000.0),
+            upper_bound=data.get("upper_bound", 1000.0),
+            gene_reaction_rule=data.get("gene_reaction_rule", ""),
+            genes=data.get("genes", []),
+            reactants=data.get("reactants", {}),
+            products=data.get("products", {}),
+            annotation=data.get("annotation", {}),
+        )
+
 
 @dataclass
 class ModelData:
@@ -300,6 +333,29 @@ class CandidateReaction:
     assigned_gpr: str = ""
     penalty: float = 1.0
     selected: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "reaction": self.reaction.to_dict(),
+            "source_model": self.source_model,
+            "organism_exists": self.organism_exists,
+            "kegg_organism_genes": self.kegg_organism_genes,
+            "assigned_gpr": self.assigned_gpr,
+            "penalty": self.penalty,
+            "selected": self.selected,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> CandidateReaction:
+        return cls(
+            reaction=Reaction.from_dict(data["reaction"]),
+            source_model=data.get("source_model", "bigg_universal"),
+            organism_exists=data.get("organism_exists"),
+            kegg_organism_genes=data.get("kegg_organism_genes", []),
+            assigned_gpr=data.get("assigned_gpr", ""),
+            penalty=data.get("penalty", 1.0),
+            selected=data.get("selected", False),
+        )
 
 
 @dataclass
