@@ -1,0 +1,127 @@
+{
+  "baseline_growth": 0.8769972144269406,
+  "depleted_growth": 0.0,
+  "restored_with_original_bounds_growth": 0.8769972144269977,
+  "restored_with_universal_bounds_growth": 0.0,
+  "n_removed": 113,
+  "n_bound_mismatches": 37,
+  "n_stoich_mismatches": 0,
+  "bound_mismatch_classes": {
+    "reversible_to_forward": 37,
+    "forward_to_reversible": 0,
+    "other": 0
+  },
+  "first_10_bound_diffs": [
+    {
+      "id": "CBMKr",
+      "orig": [
+        -1000.0,
+        1000.0
+      ],
+      "uni": [
+        0.0,
+        1000.0
+      ]
+    },
+    {
+      "id": "GLCATr",
+      "orig": [
+        -1000.0,
+        1000.0
+      ],
+      "uni": [
+        0.0,
+        1000.0
+      ]
+    },
+    {
+      "id": "CYNTtex",
+      "orig": [
+        -1000.0,
+        1000.0
+      ],
+      "uni": [
+        0.0,
+        1000.0
+      ]
+    },
+    {
+      "id": "ATHRDHr",
+      "orig": [
+        -1000.0,
+        1000.0
+      ],
+      "uni": [
+        0.0,
+        1000.0
+      ]
+    },
+    {
+      "id": "5DGLCNt2rpp",
+      "orig": [
+        -1000.0,
+        1000.0
+      ],
+      "uni": [
+        0.0,
+        1000.0
+      ]
+    },
+    {
+      "id": "4HOXPACDtex",
+      "orig": [
+        -1000.0,
+        1000.0
+      ],
+      "uni": [
+        0.0,
+        1000.0
+      ]
+    },
+    {
+      "id": "ARGSL",
+      "orig": [
+        -1000.0,
+        1000.0
+      ],
+      "uni": [
+        0.0,
+        1000.0
+      ]
+    },
+    {
+      "id": "FRULYSDG",
+      "orig": [
+        -1000.0,
+        1000.0
+      ],
+      "uni": [
+        0.0,
+        1000.0
+      ]
+    },
+    {
+      "id": "SUCOAS",
+      "orig": [
+        -1000.0,
+        1000.0
+      ],
+      "uni": [
+        0.0,
+        1000.0
+      ]
+    },
+    {
+      "id": "URItex",
+      "orig": [
+        -1000.0,
+        1000.0
+      ],
+      "uni": [
+        0.0,
+        1000.0
+      ]
+    }
+  ],
+  "verdict_short": "CONFIRMED: BiGG universal stores forward-only versions of many reactions that iML1515 holds as reversible. cobrapy gapfill() adds them with universal bounds, so the recovered model is missing essential reverse fluxes."
+}

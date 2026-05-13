@@ -1,0 +1,71 @@
+{
+  "baseline_growth": 0.8769972144269406,
+  "depleted_growth": 0.0,
+  "restored_growth": 0.0,
+  "n_removed": 113,
+  "n_found_in_universal": 113,
+  "metabolites_orphan_removed": 13,
+  "verdict_short": "MANUAL RESTORE DOES NOTHING \u2192 universal definitions disagree on essential reactions, or removed reactions share an orphaned metabolite",
+  "first5_diffs": {
+    "CBMKr": {
+      "bounds_match": false,
+      "stoich_match": true,
+      "orig_bounds": [
+        -1000.0,
+        1000.0
+      ],
+      "uni_bounds": [
+        0.0,
+        1000.0
+      ]
+    },
+    "3OAS120": {
+      "bounds_match": true,
+      "stoich_match": true,
+      "orig_bounds": [
+        0.0,
+        1000.0
+      ],
+      "uni_bounds": [
+        0.0,
+        1000.0
+      ]
+    },
+    "GTPHs": {
+      "bounds_match": true,
+      "stoich_match": true,
+      "orig_bounds": [
+        0.0,
+        1000.0
+      ],
+      "uni_bounds": [
+        0.0,
+        1000.0
+      ]
+    },
+    "GLCATr": {
+      "bounds_match": false,
+      "stoich_match": true,
+      "orig_bounds": [
+        -1000.0,
+        1000.0
+      ],
+      "uni_bounds": [
+        0.0,
+        1000.0
+      ]
+    },
+    "FUSAtpp": {
+      "bounds_match": true,
+      "stoich_match": true,
+      "orig_bounds": [
+        0.0,
+        1000.0
+      ],
+      "uni_bounds": [
+        0.0,
+        1000.0
+      ]
+    }
+  }
+}

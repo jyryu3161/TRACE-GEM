@@ -1,0 +1,31 @@
+=== Step 2: bounds-mismatch confirmation ===
+iML1515 baseline growth: 0.876997
+removed: 113 reactions (seed=42)
+
+bound mismatches: 37 / 113 (32.7%)
+stoichiometry mismatches: 0 / 113
+
+first 10 bound diffs (id, orig_bounds, universal_bounds):
+    CBMKr                [-1000.0, 1000.0]  -> [0.0, 1000.0]     
+    GLCATr               [-1000.0, 1000.0]  -> [0.0, 1000.0]     
+    CYNTtex              [-1000.0, 1000.0]  -> [0.0, 1000.0]     
+    ATHRDHr              [-1000.0, 1000.0]  -> [0.0, 1000.0]     
+    5DGLCNt2rpp          [-1000.0, 1000.0]  -> [0.0, 1000.0]     
+    4HOXPACDtex          [-1000.0, 1000.0]  -> [0.0, 1000.0]     
+    ARGSL                [-1000.0, 1000.0]  -> [0.0, 1000.0]     
+    FRULYSDG             [-1000.0, 1000.0]  -> [0.0, 1000.0]     
+    SUCOAS               [-1000.0, 1000.0]  -> [0.0, 1000.0]     
+    URItex               [-1000.0, 1000.0]  -> [0.0, 1000.0]     
+
+class: reversible->forward = 37, forward->reversible = 0, other = 0
+
+=== restoration with original iML1515 bounds ===
+depleted growth: 0.000000
+restored (orig bounds) growth: 0.876997
+ratio vs baseline: 1.0000
+
+=== restoration with universal bounds (sanity check) ===
+restored (universal bounds) growth: 0.000000
+
+=== verdict ===
+CONFIRMED: BiGG universal stores forward-only versions of many reactions that iML1515 holds as reversible. cobrapy gapfill() adds them with universal bounds, so the recovered model is missing essential reverse fluxes.

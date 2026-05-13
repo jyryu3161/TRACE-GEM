@@ -1,0 +1,50 @@
+=== Step 1: manual restoration probe ===
+[1] loading iML1515...
+    iML1515: 2712 rxns, 1877 mets
+    baseline growth: 0.876997
+[2] sampled removal: 113 reactions (seed=42)
+    first 5 removed: ['CBMKr', '3OAS120', 'GTPHs', 'GLCATr', 'FUSAtpp']
+[3] depleting copy...
+    depleted: 2599 rxns, 1864 mets (was 1877; 13 metabolites orphan-removed)
+    depleted growth: 0.000000
+[4] loading universal model...
+    universal: 28301 rxns, 15638 mets
+[5] restoring 113 reactions directly from universal...
+    found in universal: 113 / 113
+    restored: 2712 rxns, 1877 mets
+    restored growth: 0.000000
+    >>> growth ratio vs baseline: 0.0000
+[6] per-reaction comparison (first 5 removed):
+
+  --- CBMKr ---
+    orig bounds: (-1000.0, 1000.0)    universal bounds: (0.0, 1000.0)    match=False
+    orig reaction: atp_c + co2_c + nh4_c <=> adp_c + cbp_c + 2.0 h_c
+    uni  reaction: atp_c + co2_c + nh4_c --> adp_c + cbp_c + 2.0 h_c
+    metabolite-stoich match: True
+
+  --- 3OAS120 ---
+    orig bounds: (0.0, 1000.0)    universal bounds: (0.0, 1000.0)    match=True
+    orig reaction: dcaACP_c + h_c + malACP_c --> 3oddecACP_c + ACP_c + co2_c
+    uni  reaction: dcaACP_c + h_c + malACP_c --> 3oddecACP_c + ACP_c + co2_c
+    metabolite-stoich match: True
+
+  --- GTPHs ---
+    orig bounds: (0.0, 1000.0)    universal bounds: (0.0, 1000.0)    match=True
+    orig reaction: gtp_c + h2o_c + h_c --> nh4_c + xtp_c
+    uni  reaction: gtp_c + h2o_c + h_c --> nh4_c + xtp_c
+    metabolite-stoich match: True
+
+  --- GLCATr ---
+    orig bounds: (-1000.0, 1000.0)    universal bounds: (0.0, 1000.0)    match=False
+    orig reaction: accoa_c + glc__D_c <=> acglc__D_c + coa_c
+    uni  reaction: accoa_c + glc__D_c --> acglc__D_c + coa_c
+    metabolite-stoich match: True
+
+  --- FUSAtpp ---
+    orig bounds: (0.0, 1000.0)    universal bounds: (0.0, 1000.0)    match=True
+    orig reaction: fusa_p + h_p --> fusa_e + h_c
+    uni  reaction: fusa_p + h_p --> fusa_e + h_c
+    metabolite-stoich match: True
+
+=== verdict ===
+MANUAL RESTORE DOES NOTHING → universal definitions disagree on essential reactions, or removed reactions share an orphaned metabolite
