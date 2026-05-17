@@ -1,0 +1,35 @@
+{
+  "config": {
+    "model_path": "data/e_coli_core.xml",
+    "universal_path": "data/bigg_universal_model_fixed.json",
+    "ratio": 0.05,
+    "seed": 42,
+    "output_dir": "experiments/gapfilling/20260513_smoke_v2_5pct_eco_core",
+    "organism": "eco",
+    "lower_bound": 0.05
+  },
+  "metrics": {
+    "recovery_recall": 0.0,
+    "growth_diff": 0.8739215069684316,
+    "over_addition": 0,
+    "gapfill_time_sec": 0.1849165419999963,
+    "failure_mode": "infeasible: gap filling optimization failed (infeasible).",
+    "baseline_growth": 0.8739215069684305,
+    "depleted_growth": -1.07379973952664e-15,
+    "recovered_growth": -1.07379973952664e-15,
+    "n_gpr_reactions": 69,
+    "n_removed": 3,
+    "n_added": 0,
+    "n_recovered": 0,
+    "n_universal_before_filter": 28301,
+    "n_universal_after_filter": 166,
+    "organism_filter_time_sec": 233.35233475,
+    "removed_reaction_ids": [
+      "ENO",
+      "ACONTa",
+      "ICL"
+    ],
+    "added_reaction_ids": []
+  },
+  "schema": "recovery_runner.v2"
+}
