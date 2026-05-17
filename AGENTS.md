@@ -22,12 +22,37 @@ Skipping step 1 leads to attempting auto-research without understanding the unde
 
 ## Goal
 
-This branch focuses on two capabilities:
+This branch focuses on two capabilities for autonomous model quality
+enhancement of GEMs:
 
-1. **Task quality evaluation** — does the model perform what it should, and refuse what it shouldn't?
-2. **Gap-filling quality** — when reactions are removed, are they restored sensibly?
+1. **Task quality evaluation** — does the model perform what it should,
+and refuse what it shouldn't?
+2. **Gap-filling quality** — when reactions are needed, are they
+selected from the universal DB in a principled way?
 
-The design is intentionally minimal. Of the original 6 evidence sources, only **KEGG and BiGG** are active. UniProt, PubMed, Gemini, and Perplexity are disabled in this branch.
+### Final research target
+
+The end goal is *reference-free* model quality enhancement: given a
+species or target, an AI agent autonomously selects reactions from a
+universal DB to improve the model — without comparing against a
+ground-truth reference model.
+
+The current GPR-removal benchmark (remove n% of reactions, attempt
+recovery) is a *training/validation environment* for measuring
+gap-filling capability. Recovery recall against the original reactions
+is a useful benchmark metric but NOT the production metric.
+
+### Implication for evaluation
+
+Production metric: model functional quality (growth recovery, Q1/Q2
+universal task pass rate, Q3/Q4 species task pass rate, reaction
+overhead).
+
+Benchmark metric: recovery recall, used only when ground-truth exists.
+
+Approaches that "cheat" using ground-truth information (e.g.,
+selectively correcting bounds only on known-removed reactions) are
+not acceptable — they don't transfer to the reference-free setting.
 
 ---
 
@@ -99,8 +124,10 @@ Two orthogonal axes. Every task quality test belongs in exactly one quadrant.
 
 |  | **Feasibility** (yes/no) | **Magnitude** (in-range?) |
 |---|---|---|
-| **Universal** | EGC, free metabolite production, anaerobic OXPHOS block | ATP yield ≤ 38/glucose, mass/charge balance |
-| **Species** | Tasks the organism cannot do (e.g., E. coli ≠ cellulose) | Yields within known organism range (e.g., E. coli lysine ≤ 0.3 g/g) |
+| **Universal** | **Q1** — EGC, free metabolite production, anaerobic OXPHOS block | **Q2** — ATP yield ≤ 38/glucose, mass/charge balance |
+| **Species** | **Q3** — Tasks the organism cannot do (e.g., E. coli ≠ cellulose) | **Q4** — Yields within known organism range (e.g., E. coli lysine ≤ 0.3 g/g) |
+
+Q1/Q2/Q3/Q4 names match the production-metric labels referenced in §Goal §Implication.
 
 A model passes task quality only when:
 
@@ -133,6 +160,19 @@ score = w_kegg * kegg_score + w_bigg * bigg_score   # w_kegg + w_bigg = 1
 
 ## Gap-filling protocol
 
+This is the **benchmark / training-validation protocol** for measuring
+gap-filling capability (see §Goal §Final research target). It is *not*
+the production protocol. `recovery_recall` is a benchmark-only metric,
+valid only when the removed reactions are known. Production quality is
+measured via §Task quality 2×2 (Q1–Q4), growth recovery, and reaction
+overhead.
+
+**Selection logic must be reference-free.** Approaches that exploit
+ground-truth information (e.g., narrowing the candidate pool to the
+known-removed IDs, correcting bounds only on those IDs, scoring against
+the original reaction set) are not acceptable — they don't transfer to
+the production setting.
+
 - **Targets**: reactions with non-empty GPR
 - **Selection**: random sampling
 - **Ratios**: 5%, 10%, 15% (independent — re-sample from original each time)
@@ -140,9 +180,10 @@ score = w_kegg * kegg_score + w_bigg * bigg_score   # w_kegg + w_bigg = 1
 - **Filler**: `cobra.flux_analysis.gapfilling.gapfill()`
 - **Universal DB**: `data/bigg_universal_model_fixed.json`
 
-Five metrics per run:
+Five metrics per run (recall is benchmark-only; the other four are
+production-relevant):
 
-1. **Recovery recall** — fraction of removed reactions restored
+1. **Recovery recall** *(benchmark only)* — fraction of removed reactions restored
 2. **Functional preservation** — Δgrowth, essential-gene Jaccard
 3. **Over-addition** — new reactions added that weren't original (lower is better)
 4. **Quality delta** — ΔMEMOTE, mean score of added reactions
@@ -283,7 +324,7 @@ Rules:
 
 ## Known constraints
 
-- LLM sources (Gemini, Perplexity) are disabled in this branch. If any code path tries to call them, stop immediately.
+- Of the original 6 evidence sources, only **KEGG** and **BiGG** are active in this branch. UniProt, PubMed, Gemini, and Perplexity are all disabled. If any code path tries to call them, stop immediately.
 - KEGG cofactor scope is currently {H⁺, OH⁻, stereoisomers}. Don't expand without user approval.
 - COBRApy `gapfill` cannot restore reactions absent from the universal DB. Such failures are normal — log them with reason.
 - Python 3.9 environment. Some tools (ruff) suggest 3.10+ syntax; do not accept those auto-fixes.
