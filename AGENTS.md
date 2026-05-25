@@ -238,11 +238,13 @@ model_evaluator/
 ├── experiments/         # research runs (domain layer — owned by AGENTS.md)
 │   └── <type>/<run>/{config.json,metrics.json,notes.md}
 ├── docs/                # feature development tracking (process layer — owned by bkit)
-│   ├── 01-plan/         # PDCA Plan documents (created by /pdca plan)
-│   ├── 02-design/       # PDCA Design documents (created by /pdca design)
-│   └── 03-analysis/     # PDCA Gap-analysis reports (created by /pdca analyze)
-└── .bkit/
-    └── state/           # bkit state machine (memory.json, pdca-status.json) — do not hand-edit
+│   ├── 01-plan/features/<feature>.plan.md       # /pdca plan output
+│   ├── 02-design/features/<feature>.design.md   # /pdca design output
+│   ├── 03-analysis/features/<feature>.analysis.md   # /pdca analyze output
+│   ├── 04-report/features/<feature>.report.md   # /pdca report output
+│   └── archive/<YYYY-MM>/<feature>/             # completed features (moved by /pdca archive)
+└── .bkit/                # gitignored — created on first /pdca run, per-developer state
+    └── state/            # memory.json, pdca-status.json — do not hand-edit
 ```
 
 External data (MetaNetX, BiGG caches) are NOT in git. Run `bash scripts/download_external_data.sh` once after cloning.
@@ -250,8 +252,10 @@ External data (MetaNetX, BiGG caches) are NOT in git. Run `bash scripts/download
 **Layer ownership:**
 
 - `experiments/` — research runs. The agent freely creates, edits, and commits here (see §Operating rules). Results of hypothesis tests, ablations, gap-fill runs, and audits all live here.
-- `docs/01-plan/`, `docs/02-design/`, `docs/03-analysis/` — bkit's. Created and updated by `/pdca` skills during feature development (e.g., introducing a new `src/` module). Do not hand-edit; use the `/pdca plan|design|analyze` commands.
-- `.bkit/state/` — bkit runtime state. **Never edit by hand.** Inspect via `/pdca status` if needed.
+- `docs/0[1-4]-*/features/` — bkit's. Created and updated by `/pdca plan|design|analyze|report` skills during feature development (e.g., introducing a new `src/` module). Do not hand-edit; use the `/pdca` commands. Completed features are moved to `docs/archive/<YYYY-MM>/` by `/pdca archive`.
+- `.bkit/state/` — bkit runtime state, gitignored (per-developer). **Never edit by hand.** Inspect via `/pdca status`. Created automatically on first `/pdca` invocation.
+
+Note: pre-existing `.plan.md` / `.design.md` files in this repo predate bkit v2.1.10 and lack the YAML frontmatter that current `/pdca plan` adds. New invocations will produce frontmatter-tagged files in the same path convention.
 
 ---
 
