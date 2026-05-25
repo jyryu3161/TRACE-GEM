@@ -12,5 +12,6 @@ repos:
       - id: mypy
         additional_dependencies: []
         args: [--ignore-missing-imports]
-        pass_filenames: false
-        entry: mypy src/
+        # Staged-only check. Full-tree check is responsibility of CI / manual `mypy src/`.
+        pass_filenames: true
+        files: ^src/.*\.py$

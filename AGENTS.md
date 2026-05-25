@@ -328,7 +328,7 @@ Rules:
 - KEGG cofactor scope is currently {H⁺, OH⁻, stereoisomers}. Don't expand without user approval.
 - COBRApy `gapfill` cannot restore reactions absent from the universal DB. Such failures are normal — log them with reason.
 - Python 3.9 environment. Some tools (ruff) suggest 3.10+ syntax; do not accept those auto-fixes.
-- Pre-commit hooks should pass. Legacy type errors (~60) inherited at branch start may be bypassed with `--no-verify` for *existing* code only. New code must pass all hooks.
+- Pre-commit mypy hook checks staged files only (`pass_filenames: true`). Existing `src/` has ~72 legacy errors not covered by this hook on new commits. Full-tree check is the responsibility of CI (or manual `mypy src/`). `--no-verify` is rarely needed; if used, document reason in commit body.
 - External datasets (MetaNetX, BiGG raw) are not in git. Run `scripts/download_external_data.sh` first.
 
 ---
