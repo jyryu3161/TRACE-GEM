@@ -1,0 +1,12 @@
+{
+  "model_path": "data/e_coli_core.xml",
+  "universal_path": "data/bigg_universal_model_fixed.json",
+  "ratio": 0.05,
+  "seed": 42,
+  "output_dir": "experiments/gapfilling/20260517_smoke_v5_5pct_eco_core",
+  "organism": "eco",
+  "lower_bound": 0.05,
+  "reversible_correction": true,
+  "solver": "gurobi",
+  "integer_threshold": 1e-09
+}
