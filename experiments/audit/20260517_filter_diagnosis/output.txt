@@ -1,0 +1,48 @@
+=== v6 diagnostic: metabolite-compat filter vs removed reactions ===
+[1] loading iML1515 + sampling seed=42 5%...
+    removed: 113 reactions
+[2] depleting with remove_orphans=True...
+    depleted: 2599 rxns, 1864 mets (13 metabolites orphan-removed)
+[3] orphaned metabolites (13):
+    34dhpha_c
+    34dphacoa_c
+    5dglcn_p
+    acglc__D_c
+    dmbzid_c
+    frulys_p
+    g6p_p
+    gam_c
+    h2s_p
+    malt6p_c
+    mchtbs6p_c
+    thcur_c
+    udcpgl_c
+
+[4] loading BiGG universal...
+    universal: 28301 rxns
+
+[5] checking each removed reaction's universal version for metabolite-compatibility against the depleted model...
+    survivors (pass metabolite-compat): 97 / 113
+    dropped (fail metabolite-compat): 16
+    not in universal at all: 0
+
+[6] dropped reactions and their missing metabolites:
+    5DGLCNt2rpp     missing: ['5dglcn_p']
+    5DGLCNtex       missing: ['5dglcn_p']
+    DC6PDA          missing: ['mchtbs6p_c']
+    DHCURR          missing: ['thcur_c']
+    FRULYSt2pp      missing: ['frulys_p']
+    FRULYStex       missing: ['frulys_p']
+    G6Pt6_2pp       missing: ['g6p_p']
+    G6Ptex          missing: ['g6p_p']
+    GLCATr          missing: ['acglc__D_c']
+    H2St1pp         missing: ['h2s_p']
+    H2Stex          missing: ['h2s_p']
+    HPACOAT         missing: ['34dhpha_c', '34dphacoa_c']
+    MALTptspp       missing: ['malt6p_c']
+    MC6PH           missing: ['gam_c', 'mchtbs6p_c']
+    NNDMBRT         missing: ['dmbzid_c']
+    UDPGPT          missing: ['udcpgl_c']
+
+=== verdict ===
+HYPOTHESIS CONFIRMED: 16 of 113 removed reactions (14.2%) are filtered out by metabolite-compat. The MILP cannot see them as candidates → cannot restore them → validate() fails.

@@ -1,0 +1,123 @@
+{
+  "n_removed": 113,
+  "n_survivors": 97,
+  "n_dropped_by_metabolite_filter": 16,
+  "n_not_in_universal": 0,
+  "n_metabolites_orphan_removed": 13,
+  "orphaned_metabolites": [
+    "34dhpha_c",
+    "34dphacoa_c",
+    "5dglcn_p",
+    "acglc__D_c",
+    "dmbzid_c",
+    "frulys_p",
+    "g6p_p",
+    "gam_c",
+    "h2s_p",
+    "malt6p_c",
+    "mchtbs6p_c",
+    "thcur_c",
+    "udcpgl_c"
+  ],
+  "dropped_reactions": [
+    {
+      "id": "5DGLCNt2rpp",
+      "missing_metabolites": [
+        "5dglcn_p"
+      ]
+    },
+    {
+      "id": "5DGLCNtex",
+      "missing_metabolites": [
+        "5dglcn_p"
+      ]
+    },
+    {
+      "id": "DC6PDA",
+      "missing_metabolites": [
+        "mchtbs6p_c"
+      ]
+    },
+    {
+      "id": "DHCURR",
+      "missing_metabolites": [
+        "thcur_c"
+      ]
+    },
+    {
+      "id": "FRULYSt2pp",
+      "missing_metabolites": [
+        "frulys_p"
+      ]
+    },
+    {
+      "id": "FRULYStex",
+      "missing_metabolites": [
+        "frulys_p"
+      ]
+    },
+    {
+      "id": "G6Pt6_2pp",
+      "missing_metabolites": [
+        "g6p_p"
+      ]
+    },
+    {
+      "id": "G6Ptex",
+      "missing_metabolites": [
+        "g6p_p"
+      ]
+    },
+    {
+      "id": "GLCATr",
+      "missing_metabolites": [
+        "acglc__D_c"
+      ]
+    },
+    {
+      "id": "H2St1pp",
+      "missing_metabolites": [
+        "h2s_p"
+      ]
+    },
+    {
+      "id": "H2Stex",
+      "missing_metabolites": [
+        "h2s_p"
+      ]
+    },
+    {
+      "id": "HPACOAT",
+      "missing_metabolites": [
+        "34dhpha_c",
+        "34dphacoa_c"
+      ]
+    },
+    {
+      "id": "MALTptspp",
+      "missing_metabolites": [
+        "malt6p_c"
+      ]
+    },
+    {
+      "id": "MC6PH",
+      "missing_metabolites": [
+        "gam_c",
+        "mchtbs6p_c"
+      ]
+    },
+    {
+      "id": "NNDMBRT",
+      "missing_metabolites": [
+        "dmbzid_c"
+      ]
+    },
+    {
+      "id": "UDPGPT",
+      "missing_metabolites": [
+        "udcpgl_c"
+      ]
+    }
+  ],
+  "verdict_short": "HYPOTHESIS CONFIRMED: 16 of 113 removed reactions (14.2%) are filtered out by metabolite-compat. The MILP cannot see them as candidates \u2192 cannot restore them \u2192 validate() fails."
+}
