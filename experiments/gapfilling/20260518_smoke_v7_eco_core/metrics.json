@@ -1,0 +1,50 @@
+{
+  "config": {
+    "model_path": "data/e_coli_core.xml",
+    "universal_path": "data/bigg_universal_model_fixed.json",
+    "ratio": 0.05,
+    "seed": 42,
+    "output_dir": "experiments/gapfilling/20260518_smoke_v7_eco_core",
+    "organism": "eco",
+    "lower_bound": 0.05,
+    "reversible_correction": true,
+    "solver": "gurobi",
+    "integer_threshold": 1e-09,
+    "use_metabolite_compat_filter": false
+  },
+  "metrics": {
+    "recovery_recall": 0.0,
+    "recovery_precision": 0.0,
+    "reaction_id_jaccard": 0.0,
+    "growth_diff": 3.9403673022172003,
+    "growth_recovery_ratio": 5.508834341296903,
+    "reaction_overhead": -1,
+    "over_addition": 2,
+    "gapfill_time_sec": 245.76529762500002,
+    "elapsed_sec": 381.9934785,
+    "failure_mode": "ok",
+    "baseline_growth": 0.8739215069684305,
+    "depleted_growth": -1.07379973952664e-15,
+    "recovered_growth": 4.814288809185631,
+    "n_gpr_reactions": 69,
+    "n_removed": 3,
+    "n_added": 2,
+    "n_recovered": 0,
+    "n_universal_before_filter": 28301,
+    "n_universal_after_filter": 22754,
+    "n_universal_reversibility_corrected": 28301,
+    "organism_filter_time_sec": 120.5525125,
+    "removed_reaction_ids": [
+      "ENO",
+      "ACONTa",
+      "ICL"
+    ],
+    "added_reaction_ids": [
+      "FPGS_tm",
+      "THFGLUH"
+    ],
+    "solver": "gurobi",
+    "solver_version": "12.0.3"
+  },
+  "schema": "recovery_runner.v2"
+}

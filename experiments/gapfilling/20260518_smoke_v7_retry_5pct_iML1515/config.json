@@ -1,0 +1,13 @@
+{
+  "model_path": "data/iML1515.xml",
+  "universal_path": "data/bigg_universal_model_fixed.json",
+  "ratio": 0.05,
+  "seed": 42,
+  "output_dir": "experiments/gapfilling/20260518_smoke_v7_retry_5pct_iML1515",
+  "organism": "eco",
+  "lower_bound": 0.05,
+  "reversible_correction": true,
+  "solver": "gurobi",
+  "integer_threshold": 1e-09,
+  "use_metabolite_compat_filter": false
+}
