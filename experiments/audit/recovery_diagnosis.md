@@ -239,7 +239,7 @@ ee293f4에 raw로 박혀 있던 3개 파일을 9b26311이 LFS pointer로 바꾸�
 - 내용 미리보기:
   ```
   # agent.md — Model Evaluator (auto-research branch)
-  > 이 문서는 AI 코딩 에이전트(Claude Code, bikit/autoresearch)의 연구 운용 지침서입니다.
+  > 이 문서는 AI 코딩 에이전트(Claude Code, bkit/autoresearch)의 연구 운용 지침서입니다.
   ...
   ```
 - ✅ 정상 보존됨, 복구 시 사용 가능.

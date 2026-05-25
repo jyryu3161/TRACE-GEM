@@ -9,12 +9,30 @@
 
 ---
 
+## Layered framework: bkit + AGENTS.md
+
+This project uses a **two-layer harness**:
+
+- **bkit** (process harness) — Manages PDCA workflow, state machine, quality gates, and feature-development tracking under `docs/01-plan/`, `docs/02-design/`, `docs/03-analysis/`, with runtime state in `.bkit/state/`. Invoked via the `/pdca` skill family. Decides *how* work progresses.
+- **AGENTS.md** (domain harness, this file) — The single source of truth for GEM-evaluation policy: the §Goal (reference-free quality), the §Task quality 2×2 framework, the §Gap-filling protocol, §Code constraints, and what the agent may or may not do. Decides *what is correct*.
+
+The layers do not overlap. bkit owns workflow mechanics; AGENTS.md owns domain truth. **Conflict precedence: domain policy > process.** If a bkit-suggested step contradicts a domain rule here (e.g., a `/pdca` Do step that would violate §Code constraints), the domain rule wins.
+
+Practical mapping:
+
+- Research experiments (hypothesis tests, ablations, gap-fill runs) → `experiments/<type>/<run>/notes.md` (per §Experiment storage vs feature documentation)
+- Feature development (e.g., new `src/` module, refactor) → bkit `/pdca` → `docs/01-plan/` → `docs/02-design/` → implementation → `docs/03-analysis/`
+- Quick scripts and one-off analyses → `experiments/scratch/` (no PDCA needed)
+
+---
+
 ## Read order
 
 Before any work, read in this order:
 
 1. `CLAUDE.md` — what the tool does (install, run, I/O, code structure)
-2. `AGENTS.md` (this file) — how to run research with the tool
+2. `AGENTS.md` (this file) — domain policy for the research workflow
+3. `bkit` `/pdca status` — current PDCA state for any in-flight feature work (skip if no PDCA cycle active)
 
 Skipping step 1 leads to attempting auto-research without understanding the underlying tool. Don't do it.
 
@@ -56,30 +74,32 @@ not acceptable — they don't transfer to the reference-free setting.
 
 ---
 
-## Harness engineering principles
+## Domain harness principles
 
-This project applies *harness engineering* — the deliberate design of input/output structures that keep AI agents behaving as intended. Every section in this document is part of the harness.
+This file is the *domain harness* — the deliberate set of policies that keep AI coding agents focused on GEM-evaluation research that holds up scientifically. (Process harness — PDCA workflow, state machine, automation levels, quality gates — is bkit's job; see §Layered framework.)
 
-### Why harness matters here
+### Why a domain harness is needed
 
-Auto-research lets the agent run many experiments with limited supervision. Without a clear harness, the agent may:
+Auto-research lets the agent run many experiments with limited supervision. Without explicit domain rules, the agent may:
 
-- Implement algorithms instead of using existing `src/` code
+- Implement algorithms instead of using existing `src/` code (see §Code constraints)
 - Cite "industry standard" to bypass project rules
 - Discard inconvenient results to make metrics look better
 - Drift from the original research question over time
 - Answer code-dependent questions from filenames or function signatures alone
 
-### Harness components in this repo
+### Domain harness components in this repo
 
 | Component | Purpose | Location |
 |---|---|---|
-| `AGENTS.md` (this file) | Behavioral contract | repo root |
+| `AGENTS.md` (this file) | Domain behavioral contract | repo root |
 | `experiments/<type>/design.md` | Per-type hypothesis lock-in | each type dir |
 | `experiments/<type>/<exp>/notes.md` | Per-experiment observation log | each experiment dir |
-| Code constraints | Enforce src/-only algorithm logic | this file, §Code constraints |
-| Operating rules (3-tier) | Always do / Ask first / Never do | this file, §Operating rules |
-| Self-check checklist | Pre-commit verification | this file, §Code constraints |
+| §Code constraints (this file) | Enforce `src/`-only algorithm logic | this file |
+| §Operating rules (this file) | Domain Always / Ask / Never | this file |
+| §Tie-breakers (this file) | Conflict resolution priorities | this file |
+
+For PDCA progression, state tracking, automation levels (L0–L4), and quality gates (M1–M10), see bkit — `/pdca status`, `.bkit/state/`, and the bkit `bkit-rules` skill.
 
 ### Read code before answering
 
@@ -89,12 +109,14 @@ If a behavior cannot be verified from the code, say "not verified from code" —
 
 ### When the harness is incomplete
 
-If the agent encounters a situation this document does not cover:
+If the agent encounters a *domain* situation this document does not cover:
 
 1. Stop. Do not improvise.
 2. Record the gap in the active experiment's `notes.md`.
 3. Report to the user with a proposed harness addition.
 4. Wait for explicit decision before proceeding.
+
+(Process gaps — missing workflow steps, unclear PDCA phase transitions, automation-level questions — are bkit's domain. Raise those through bkit channels, not here.)
 
 The harness evolves over time. Gaps are not failures — unrecorded gaps are.
 
@@ -196,7 +218,7 @@ production-relevant):
 ```
 model_evaluator/
 ├── CLAUDE.md            # tool docs (read-only)
-├── AGENTS.md            # this file
+├── AGENTS.md            # this file — domain policy
 ├── run.sh               # entry point
 ├── data/                # ⚠️ read-only inputs (see Operating rules)
 │   ├── iML1515.xml      # primary dev model (LFS)
@@ -213,14 +235,29 @@ model_evaluator/
 │   ├── universal/{feasibility,magnitude}/
 │   ├── species/<organism>/{feasibility,magnitude}/
 │   └── positive/
-└── experiments/         # all experiment outputs
+├── experiments/         # research runs (domain layer — owned by AGENTS.md)
+│   └── <type>/<run>/{config.json,metrics.json,notes.md}
+├── docs/                # feature development tracking (process layer — owned by bkit)
+│   ├── 01-plan/         # PDCA Plan documents (created by /pdca plan)
+│   ├── 02-design/       # PDCA Design documents (created by /pdca design)
+│   └── 03-analysis/     # PDCA Gap-analysis reports (created by /pdca analyze)
+└── .bkit/
+    └── state/           # bkit state machine (memory.json, pdca-status.json) — do not hand-edit
 ```
 
 External data (MetaNetX, BiGG caches) are NOT in git. Run `bash scripts/download_external_data.sh` once after cloning.
 
+**Layer ownership:**
+
+- `experiments/` — research runs. The agent freely creates, edits, and commits here (see §Operating rules). Results of hypothesis tests, ablations, gap-fill runs, and audits all live here.
+- `docs/01-plan/`, `docs/02-design/`, `docs/03-analysis/` — bkit's. Created and updated by `/pdca` skills during feature development (e.g., introducing a new `src/` module). Do not hand-edit; use the `/pdca plan|design|analyze` commands.
+- `.bkit/state/` — bkit runtime state. **Never edit by hand.** Inspect via `/pdca status` if needed.
+
 ---
 
-## Operating rules
+## Operating rules (domain)
+
+These are the *domain* rules. For automation level / trust / guardrail mechanics, see bkit's L0–L4 system (`bkit:control`, `bkit:bkit-rules`). The domain rules below are absolute regardless of bkit automation level.
 
 ### Always do (no confirmation)
 
@@ -236,6 +273,7 @@ External data (MetaNetX, BiGG caches) are NOT in git. Run `bash scripts/download
 - Modify `configs/`, `tests/`, `AGENTS.md`, `CLAUDE.md`
 - Create new git branches
 - Install or upgrade any package
+- Edit anything under `docs/01-plan/`, `docs/02-design/`, `docs/03-analysis/` by hand (prefer `/pdca` skills)
 
 ### Never do
 
@@ -244,10 +282,15 @@ External data (MetaNetX, BiGG caches) are NOT in git. Run `bash scripts/download
 - `git rebase`, `git push --force` (user does this)
 - Call paid external APIs (this branch has no LLM sources — stop immediately if any LLM call is triggered)
 - Discard experiment results
+- Edit `.bkit/state/` files by hand
 
 ---
 
-## Experiment storage
+## Experiment storage vs feature documentation
+
+This project keeps **two parallel records**, each for a different purpose. They are not interchangeable.
+
+### Research experiments → `experiments/`
 
 ```
 experiments/<type>/
@@ -265,6 +308,21 @@ Rules:
 - Write `design.md` before the first experiment of any new type. All later experiments of that type follow it. Update `design.md` with rationale when methodology changes.
 - Never overwrite existing experiment directories. Use `_a`, `_b` suffixes for ties.
 - Commit results under `experiments/` for reproducibility. Files >5 MB go to `.gitignore` with the location noted in `notes.md`.
+
+### Feature development → `docs/01-plan/`, `docs/02-design/`, `docs/03-analysis/`
+
+Managed by bkit `/pdca`. Used when adding or modifying functionality in `src/` (e.g., introducing a new scoring rule, refactoring `recovery_runner.py`). Flow: `/pdca plan <feature>` → `/pdca design <feature>` → implementation → `/pdca analyze <feature>`.
+
+### Why both exist (do not collapse them)
+
+| | `experiments/<type>/<run>/notes.md` | `docs/01-plan/<feature>.md` |
+|---|---|---|
+| Granularity | One hypothesis test or audit | One `src/` feature |
+| Lifecycle | Permanent record of what happened | Lives until feature ships, then summarized in `docs/03-analysis/` |
+| Owned by | AGENTS.md domain policy | bkit process workflow |
+| Reproducible artifact | yes (`config.json` + `metrics.json` + notes) | no (a planning doc) |
+
+Mixing them loses both signals. A gap-fill experiment result is not a feature plan; a refactor design is not a research observation. **Don't put feature plans under `experiments/` and don't put hypothesis test results under `docs/`.**
 
 ---
 
@@ -299,16 +357,21 @@ Rules:
 | "Find tasks this organism can't do" | Species feasibility — read organism metadata, query KEGG/BiGG, add tests |
 | "Is this model overproducing ATP?" | Run `tests/universal/magnitude/atp_yield_ceiling` |
 
+For *feature-development* requests ("add a new scoring rule", "refactor recovery_runner"), the trigger is bkit `/pdca` (e.g., `/pdca plan kegg-substructure-scoring`) — see the bkit skill list. The table above covers *research-run* requests only.
+
 ---
 
-## Working with bikit / autoresearch sessions
+## Session conventions
+
+(See §Layered framework for how bkit and AGENTS.md divide responsibilities.)
 
 - Sessions start at the project root (where this file lives). All paths are relative to it.
 - For a new research goal, write `experiments/<type>/design.md` first.
+- For a new `src/` feature, run `/pdca plan <feature>` first (bkit process layer).
 - Multi-step experiments go into `scripts/` as batch scripts, not interactive runs. Better for reproducibility and resumption.
 - Before asking the user a question, search prior `experiments/<type>/*/notes.md` — the answer may already be there.
 - After ~5 experiments in one session, summarize results to the user and ask whether to continue.
-- Auto-create `experiments/`, `tests/`, `configs/`, `scripts/` on first use. The user does not pre-create them.
+- Auto-create `experiments/`, `tests/`, `configs/`, `scripts/` on first use. The user does not pre-create them. `docs/01-plan/` and siblings are created by bkit when needed.
 
 ---
 
@@ -328,7 +391,7 @@ Rules:
 - KEGG cofactor scope is currently {H⁺, OH⁻, stereoisomers}. Don't expand without user approval.
 - COBRApy `gapfill` cannot restore reactions absent from the universal DB. Such failures are normal — log them with reason.
 - Python 3.9 environment. Some tools (ruff) suggest 3.10+ syntax; do not accept those auto-fixes.
-- Pre-commit mypy hook checks staged files only (`pass_filenames: true`). Existing `src/` has ~72 legacy errors not covered by this hook on new commits. Full-tree check is the responsibility of CI (or manual `mypy src/`). `--no-verify` is rarely needed; if used, document reason in commit body.
+- Pre-commit mypy hook: staged files only. For non-`src/` `.py` files (e.g., scripts under `experiments/audit/`) the hook does not trigger at all. For `src/` `.py` modifications, mypy still follows transitive imports and may surface the ~72 legacy errors in dependent files. `--no-verify` acceptable for existing-code-only commits with reason documented in body. (Future: dedicated cleanup track for the 72 legacy errors.)
 - External datasets (MetaNetX, BiGG raw) are not in git. Run `scripts/download_external_data.sh` first.
 
 ---
