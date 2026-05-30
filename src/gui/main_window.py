@@ -146,7 +146,9 @@ class MainWindow(QMainWindow):
 
         # Analysis menu
         analysis_menu = menubar.addMenu("&Analysis")
-        analysis_menu.addAction("Task-Based &Gap-Filling...", self._gapfill_ctrl.start_workflow, "Ctrl+W")
+        analysis_menu.addAction(
+            "Task-Based &Gap-Filling...", self._gapfill_ctrl.start_workflow, "Ctrl+W"
+        )
 
         # Export menu
         export_menu = menubar.addMenu("E&xport")
@@ -193,7 +195,9 @@ class MainWindow(QMainWindow):
         # Universal tab
         self._universal_table = CandidateTableWidget()
         self._universal_table.candidate_selected.connect(self._gapfill_ctrl.on_universal_selected)
-        self._universal_table.evaluate_requested.connect(self._gapfill_ctrl.evaluate_universal_candidates)
+        self._universal_table.evaluate_requested.connect(
+            self._gapfill_ctrl.evaluate_universal_candidates
+        )
         self._left_tabs.addTab(self._universal_table, "Universal")
 
         self._left_tabs.currentChanged.connect(lambda _: self._update_charts())
@@ -272,6 +276,10 @@ class MainWindow(QMainWindow):
 
     def _update_source_status(self) -> None:
         """Update the permanent source connection indicators in the status bar."""
+        # Disabled: KEGG + BiGG 2-source 단순화 후 인디케이터가 정보 가치 없음.
+        # Source 추가 시 아래 return 한 줄을 제거하면 부활.
+        # Disabled intentionally — see comment above (unreachable code below is by design).
+        return
         from src.evidence.evidence_types import get_ordered_sources
 
         # Remove old labels
@@ -367,7 +375,9 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage(f"Engine init failed: {error}")
 
     def _on_engine_init_finished(self, token: int) -> None:
-        self._active_workers = [w for w in self._active_workers if not isinstance(w, InitEngineWorker)]
+        self._active_workers = [
+            w for w in self._active_workers if not isinstance(w, InitEngineWorker)
+        ]
         if token != self._engine_init_token:
             return
         self._engine_init_in_progress = False
@@ -391,7 +401,9 @@ class MainWindow(QMainWindow):
         self._thread_pool.start(worker)
 
     def _on_engine_closed_for_reinit(self) -> None:
-        self._active_workers = [w for w in self._active_workers if not isinstance(w, CloseEngineWorker)]
+        self._active_workers = [
+            w for w in self._active_workers if not isinstance(w, CloseEngineWorker)
+        ]
         self._engine_close_in_progress = False
         self._start_engine_init()
 
@@ -400,7 +412,8 @@ class MainWindow(QMainWindow):
         worker.setAutoDelete(False)
         worker.signals.error.connect(lambda e: logger.warning("Engine close failed: %s", e))
         worker.signals.finished.connect(
-            lambda: self._active_workers.__contains__(worker) and self._active_workers.remove(worker)
+            lambda: self._active_workers.__contains__(worker)
+            and self._active_workers.remove(worker)
         )
         self._active_workers.append(worker)
         self._thread_pool.start(worker)
@@ -564,9 +577,7 @@ class MainWindow(QMainWindow):
                     if self._version_manager.current_version
                     else None
                 )
-                self._version_panel.set_history(
-                    self._version_manager.get_history(), current_vid
-                )
+                self._version_panel.set_history(self._version_manager.get_history(), current_vid)
             except Exception as e:
                 logger.warning("Version manager init failed: %s", e)
                 self._version_manager = None
@@ -667,11 +678,7 @@ class MainWindow(QMainWindow):
         self._overview.set_model(self._model)
 
         # Auto-save version
-        if (
-            self._config.auto_save_on_edit
-            and self._version_manager
-            and self._model.cobra_model
-        ):
+        if self._config.auto_save_on_edit and self._version_manager and self._model.cobra_model:
             self._version_ctrl.auto_save_version("reaction_removal")
 
         self._mark_dirty()
@@ -679,7 +686,6 @@ class MainWindow(QMainWindow):
 
     def _get_current_task_results(self) -> list[TaskResult]:
         """Get current task results, running simulation if needed."""
-        from src.core.models import TaskResult as _TR
         from src.core.task_parser import TaskRunner
 
         if self._task_panel._before_map:
@@ -719,23 +725,15 @@ class MainWindow(QMainWindow):
         # Determine which results to show based on active left tab
         is_universal = self._left_tabs.currentWidget() is self._universal_table
         if is_universal:
-            candidate_ids = {
-                c.reaction.id for c in self._universal_table.get_candidates()
-            }
-            results = {
-                rid: ev for rid, ev in all_results.items() if rid in candidate_ids
-            }
+            candidate_ids = {c.reaction.id for c in self._universal_table.get_candidates()}
+            results = {rid: ev for rid, ev in all_results.items() if rid in candidate_ids}
             subsystem_map = {}
         else:
             if not self._model:
                 return
             model_ids = {r.id for r in self._model.reactions}
-            results = {
-                rid: ev for rid, ev in all_results.items() if rid in model_ids
-            }
-            subsystem_map = {
-                r.id: r.subsystem or "Unknown" for r in self._model.reactions
-            }
+            results = {rid: ev for rid, ev in all_results.items() if rid in model_ids}
+            subsystem_map = {r.id: r.subsystem or "Unknown" for r in self._model.reactions}
 
         if not results:
             return
@@ -872,17 +870,14 @@ class MainWindow(QMainWindow):
             self._update_recent_projects_menu()
             self._statusbar.showMessage(f"Project saved: {path}", 5000)
         except Exception as e:
-            QMessageBox.critical(
-                self, "Save Error", f"Failed to save project:\n{e}"
-            )
+            QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{e}")
             import traceback
+
             traceback.print_exc()
 
     def _open_project(self) -> None:
         """Open a project file."""
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open Project", "", "GEM Project (*.json)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "Open Project", "", "GEM Project (*.json)")
         if path:
             self._load_project(path)
 
@@ -944,10 +939,7 @@ class MainWindow(QMainWindow):
 
         # Restore universal candidates (does not depend on engine)
         if project.universal_candidates:
-            candidates = [
-                CandidateReaction.from_dict(d)
-                for d in project.universal_candidates
-            ]
+            candidates = [CandidateReaction.from_dict(d) for d in project.universal_candidates]
             self._universal_table.set_candidates(candidates)
         elif project.universal_path and self._model:
             # Candidates weren't saved — reload from universal model file
@@ -1001,16 +993,17 @@ class MainWindow(QMainWindow):
         # Update overview count (model reactions only)
         if self._model:
             model_ids = {r.id for r in self._model.reactions}
-            model_evaluated = sum(
-                1 for rid in all_results if rid in model_ids
-            )
+            model_evaluated = sum(1 for rid in all_results if rid in model_ids)
             self._overview.update_evaluation_count(
-                model_evaluated, self._model.reaction_count,
+                model_evaluated,
+                self._model.reaction_count,
             )
 
         # Update charts
         self._update_charts()
-        logger.info("Project evaluation results restored: %d reactions", len(project.evaluation_results))
+        logger.info(
+            "Project evaluation results restored: %d reactions", len(project.evaluation_results)
+        )
 
     def _reload_universal_from_path(self, filepath: str) -> None:
         """Reload universal candidates from file when not saved in project."""
@@ -1036,7 +1029,9 @@ class MainWindow(QMainWindow):
             )
             self._universal_table.set_candidates(candidates)
             logger.info(
-                "Universal model reloaded from %s: %d candidates", filepath, len(candidates),
+                "Universal model reloaded from %s: %d candidates",
+                filepath,
+                len(candidates),
             )
         except Exception as e:
             logger.warning("Failed to reload universal model: %s", e)
