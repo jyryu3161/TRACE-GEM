@@ -42,3 +42,8 @@ data/reac_xref.tsv
 data/bigg_models_metabolites.txt
 data/bigg_models_reactions.txt
 data/universal_model.json
+
+# Generated iML1515 depletion/improvement experiment artifacts (>5MB; see AGENTS.md §314)
+data/iML1515_*-iML1515-*.json
+data/iML1515_depleted_*.xml
+data/iML1515_*_improved*.xml
