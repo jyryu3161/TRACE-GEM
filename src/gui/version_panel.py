@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
@@ -222,14 +224,13 @@ class VersionPanelWidget(QWidget):
         # Version column
         version_text = f"\u2605 {version.version_id}" if is_current else f"  {version.version_id}"
 
-        # Date column
+        # Date column — convert UTC ISO timestamp to local time
         ts = version.timestamp
-        if "T" in ts:
-            date_part = ts.split("T")[0][5:]  # MM-DD
-            time_part = ts.split("T")[1][:5]  # HH:MM
-            date_text = f"{date_part} {time_part}"
-        else:
-            date_text = ts[:16]
+        try:
+            dt_local = datetime.fromisoformat(ts).astimezone()
+            date_text = dt_local.strftime("%m-%d %H:%M")
+        except (ValueError, TypeError):
+            date_text = ts[:16] if isinstance(ts, str) else "—"
 
         # Type column
         type_label, _type_color = _TYPE_CONFIG.get(
@@ -356,9 +357,17 @@ class VersionPanelWidget(QWidget):
     @staticmethod
     def _build_tooltip(version: ModelVersion) -> str:
         """Build a rich text tooltip for a version."""
+        try:
+            date_display = (
+                datetime.fromisoformat(version.timestamp)
+                .astimezone()
+                .strftime("%Y-%m-%d %H:%M:%S %Z")
+            )
+        except (ValueError, TypeError):
+            date_display = version.timestamp
         lines = [
             f"<b>Version:</b> {version.version_id}",
-            f"<b>Date:</b> {version.timestamp}",
+            f"<b>Date:</b> {date_display}",
             f"<b>Type:</b> {version.change_type}",
         ]
         if version.parent_version_id:
