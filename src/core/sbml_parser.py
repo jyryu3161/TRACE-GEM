@@ -14,6 +14,7 @@ from src.core.cobra_utils import (
 )
 from src.core.models import ModelData
 from src.utils.constants import KEGG_CODE_TO_NAME, ORGANISM_MAP
+from src.utils.subsystem_loader import get_subsystem_map, lookup_subsystem
 
 logger = logging.getLogger("gem_evaluator.sbml_parser")
 
@@ -43,8 +44,32 @@ class SBMLParser:
 
         model_data = self._convert_model(cobra_model)
         model_data.cobra_model = cobra_model
+        self._fill_subsystems(model_data, cobra_model.id)
         self._detect_organism(model_data)
         return model_data
+
+    def _fill_subsystems(self, model_data: ModelData, model_id: str) -> None:
+        """Populate Reaction.subsystem via BiGG official JSON lookup.
+
+        SBML alone lacks subsystem; BiGG JSON has 100% coverage. Silent
+        fallback to empty cells if download/parse fails.
+        """
+        subsystem_map = get_subsystem_map(model_id, Path("data/external"))
+        if not subsystem_map:
+            return
+        miss = 0
+        for r in model_data.reactions:
+            sub = lookup_subsystem(r, subsystem_map)
+            if sub:
+                r.subsystem = sub
+            else:
+                miss += 1
+        total = len(model_data.reactions)
+        if total and miss / total >= 0.05:
+            logger.warning(
+                "Subsystem lookup miss rate %.1f%% (%d/%d) for %s",
+                miss / total * 100, miss, total, model_id,
+            )
 
     def _convert_model(self, cobra_model: cobra.Model) -> ModelData:
         reactions = [convert_cobra_reaction(r) for r in cobra_model.reactions]
