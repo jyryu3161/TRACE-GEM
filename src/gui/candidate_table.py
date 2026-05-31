@@ -341,10 +341,12 @@ class CandidateTableWidget(QWidget):
         self._organism_combo.currentIndexChanged.connect(self._on_organism_changed)
         filter_layout.addWidget(self._organism_combo)
 
-        # Subsystem filter
+        # Subsystem filter — hidden: universal model lacks subsystem info
+        # (BiGG universal JSON has 0% coverage). Wired up for future revival.
         self._subsystem_combo = QComboBox()
         self._subsystem_combo.addItem("All Subsystems", "")
         self._subsystem_combo.currentIndexChanged.connect(self._on_subsystem_changed)
+        self._subsystem_combo.setVisible(False)
         filter_layout.addWidget(self._subsystem_combo, stretch=1)
 
         # Score slider
@@ -387,6 +389,7 @@ class CandidateTableWidget(QWidget):
         header.resizeSection(CandidateTableModel.COL_NAME, 140)
         header.resizeSection(CandidateTableModel.COL_EQUATION, 180)
         header.resizeSection(CandidateTableModel.COL_SUBSYSTEM, 120)
+        header.setSectionHidden(CandidateTableModel.COL_SUBSYSTEM, True)
         header.resizeSection(CandidateTableModel.COL_ORGANISM, 60)
         header.resizeSection(CandidateTableModel.COL_SCORE, 70)
         header.resizeSection(CandidateTableModel.COL_PENALTY, 70)
