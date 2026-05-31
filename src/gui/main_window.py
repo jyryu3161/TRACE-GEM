@@ -272,6 +272,10 @@ class MainWindow(QMainWindow):
 
     def _update_source_status(self) -> None:
         """Update the permanent source connection indicators in the status bar."""
+        # Disabled: KEGG + BiGG 2-source 단순화 후 인디케이터가 정보 가치 없음.
+        # Disabled intentionally — see comment above (re-enable: remove this return).
+        # Source 추가 시 아래 return 한 줄을 제거하면 부활.
+        return
         from src.evidence.evidence_types import get_ordered_sources
 
         # Remove old labels
