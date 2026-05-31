@@ -42,3 +42,7 @@ data/reac_xref.tsv
 data/bigg_models_metabolites.txt
 data/bigg_models_reactions.txt
 data/universal_model.json
+
+# BiGG official model JSON cache (auto-downloaded for subsystem lookup)
+data/external/*
+!data/external/.gitkeep
