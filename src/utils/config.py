@@ -22,7 +22,8 @@ class Config:
     # Evaluation settings
     batch_size: int = 10
     max_concurrent: int = 5
-    candidate_evidence_eager_limit: int = 1000
+    # 0 means evaluate evidence for all candidates before gap-filling.
+    candidate_evidence_eager_limit: int = 0
 
     # Scoring weights
     weight_kegg: float = 0.70

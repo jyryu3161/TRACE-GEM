@@ -140,6 +140,74 @@ class TestLoadModelWorker:
 
 
 class TestGapFillWorkflowWorker:
+    async def test_default_evaluates_all_candidate_evidence(self, monkeypatch):
+        from src.gui.workers import GapFillWorkflowWorker
+        from src.utils.config import Config
+
+        candidates = [
+            CandidateReaction(Reaction(id="R1", name="R1", equation="a -> b")),
+            CandidateReaction(Reaction(id="R2", name="R2", equation="a -> b")),
+        ]
+        captured: dict[str, object] = {}
+
+        class FakeLoader:
+            def load(self, path):
+                return object()
+
+            def extract_candidates(self, universal_model, model_data):
+                return candidates
+
+        class FakeGapFillEngine:
+            def __init__(self, config):
+                pass
+
+            async def initialize(self, **kwargs):
+                pass
+
+            async def run(self, **kwargs):
+                captured["evidence_results"] = kwargs["evidence_results"]
+                result = GapFillResult(total_tasks=0)
+                result.all_candidates = candidates
+                result.added_reactions = []
+                result.task_results_before = []
+                result.task_results_after = []
+                return result
+
+            async def close(self):
+                pass
+
+        import src.core.universal_loader as universal_loader_module
+        import src.gapfill.engine as gapfill_engine_module
+
+        monkeypatch.setattr(universal_loader_module, "UniversalLoader", FakeLoader)
+        monkeypatch.setattr(gapfill_engine_module, "GapFillEngine", FakeGapFillEngine)
+
+        evidence = MagicMock()
+        evidence.cache_manager = None
+        evidence.mapping_data = None
+        evidence.evaluate_candidates_batch = AsyncMock(
+            return_value={
+                "R1": ReactionEvidence(reaction_id="R1", confidence_score=0.8),
+                "R2": ReactionEvidence(reaction_id="R2", confidence_score=0.7),
+            }
+        )
+
+        worker = GapFillWorkflowWorker(
+            config=Config(),
+            model_data=ModelData(id="m", name="m", cobra_model=object()),
+            universal_path="universal.json",
+            task_path=None,
+            evidence_engine=evidence,
+            options={"evaluate_candidates": True},
+        )
+
+        await worker._run_pipeline()
+
+        evidence.evaluate_candidates_batch.assert_awaited_once()
+        evaluated_candidates = evidence.evaluate_candidates_batch.await_args.args[0]
+        assert evaluated_candidates == candidates
+        assert sorted(captured["evidence_results"]) == ["R1", "R2"]
+
     async def test_large_candidate_set_defers_evidence_to_added_reactions(self, monkeypatch):
         from src.gui.workers import GapFillWorkflowWorker
         from src.utils.config import Config
