@@ -17,7 +17,7 @@ except ImportError:
 
 
 def _add_value_labels(
-    plot_widget: "pg.PlotWidget",
+    plot_widget: pg.PlotWidget,
     x_vals: list[float],
     y_vals: list[float],
     fmt: str = "{:.2f}",
@@ -25,7 +25,7 @@ def _add_value_labels(
     offset_y: float = 0.0,
 ) -> None:
     """Add text labels above each bar showing the numeric value."""
-    for xv, yv in zip(x_vals, y_vals):
+    for xv, yv in zip(x_vals, y_vals, strict=False):
         if yv == 0:
             continue
         label = pg.TextItem(
@@ -93,7 +93,7 @@ class ScoreVisualizationWidget(QWidget):
 
         layout.addWidget(self._tabs)
 
-    def _style_plot(self, widget: "pg.PlotWidget") -> None:
+    def _style_plot(self, widget: pg.PlotWidget) -> None:
         """Apply shared chart styling for consistent export/screenshot output."""
         widget.showGrid(x=True, y=True, alpha=0.22)
         widget.setMenuEnabled(False)
@@ -261,7 +261,7 @@ class ScoreVisualizationWidget(QWidget):
         )
 
         ax = self._source_widget.getAxis("bottom")
-        ax.setTicks([list(zip(x, names))])
+        ax.setTicks([list(zip(x, names, strict=False))])
         self._source_widget.setXRange(-0.6, max(len(names) - 0.4, 0.5), padding=0)
         self._source_widget.setYRange(0, 1.05, padding=0)
 
@@ -298,13 +298,13 @@ class ScoreVisualizationWidget(QWidget):
         )
         self._subsystem_widget.addItem(bar)
 
-        for ypos, avg in zip(y, averages):
+        for ypos, avg in zip(y, averages, strict=False):
             label = pg.TextItem(f"{avg:.2f}", color=THEME.chart_fg, anchor=(0, 0.5))
             label.setPos(min(avg + 0.015, 1.02), ypos)
             self._subsystem_widget.addItem(label)
 
         ax = self._subsystem_widget.getAxis("left")
-        ax.setTicks([list(zip(y, names))])
+        ax.setTicks([list(zip(y, names, strict=False))])
         ax.setWidth(280)
         ax.setStyle(tickTextOffset=8, autoExpandTextSpace=True)
         self._subsystem_widget.setXRange(0, 1.05, padding=0)

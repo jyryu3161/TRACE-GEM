@@ -29,6 +29,7 @@ from src.core.models import (
     EvidenceSource,
     ModelData,
     Reaction,
+    TaskResult,
     WorkflowCheckpoint,
 )
 from src.evidence.engine import EvidenceEngine
@@ -683,7 +684,6 @@ class MainWindow(QMainWindow):
 
     def _get_current_task_results(self) -> list[TaskResult]:
         """Get current task results, running simulation if needed."""
-        from src.core.models import TaskResult as _TR
         from src.core.task_parser import TaskRunner
 
         if self._task_panel._before_map:

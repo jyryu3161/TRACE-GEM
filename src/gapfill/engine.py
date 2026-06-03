@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
+from typing import Protocol
 
 import cobra
 
@@ -25,6 +25,12 @@ from src.gapfill.penalty_calculator import PenaltyCalculator
 from src.utils.config import Config
 
 logger = logging.getLogger("gem_evaluator.gapfill.engine")
+
+
+class _CancelEvent(Protocol):
+    """Minimal cancellation event contract used by GUI/async workers."""
+
+    def is_set(self) -> bool: ...
 
 
 class GapFillEngine:
@@ -81,7 +87,7 @@ class GapFillEngine:
         tasks: list[MetabolicTask],
         evidence_results: dict[str, ReactionEvidence],
         progress_callback: Callable[[str, int, int, str], None] | None = None,
-        cancel_event: asyncio.Event | object | None = None,
+        cancel_event: _CancelEvent | None = None,
         start_phase: int = 1,
         preloaded_before: list[TaskResult] | None = None,
     ) -> GapFillResult:
@@ -366,7 +372,7 @@ class GapFillEngine:
         penalties: dict[str, float],
         result: GapFillResult,
         progress_callback: Callable[[int, int, str], None] | None = None,
-        cancel_event: asyncio.Event | object | None = None,
+        cancel_event: _CancelEvent | None = None,
     ) -> list[cobra.Reaction]:
         """Run task-driven gap-filling for each failed task.
 

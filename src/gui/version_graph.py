@@ -14,7 +14,6 @@ from src.core.models import ModelVersion
 from src.gui.theme import THEME
 
 try:
-    import numpy as np
     import pyqtgraph as pg
 
     HAS_PYQTGRAPH = True

@@ -8,11 +8,10 @@ from collections import defaultdict
 from collections.abc import Callable
 
 from src.api.base_client import BaseAPIClient
-from src.api.rate_limiter import RateLimiter
 from src.cache.cache_manager import CacheManager
 from src.core.id_mapper import IdentifierMapper
 from src.core.mapping_data import MappingData
-from src.core.models import CandidateReaction, ExternalIDs
+from src.core.models import CandidateReaction
 from src.utils.constants import (
     KEGG_API_BASE,
     ORGANISM_FILTER_CACHE_TTL,
@@ -177,9 +176,9 @@ class OrganismFilter:
         direct ``/link/{organism}/rn:Rxxxxx`` endpoint currently returns empty
         for this relationship.
         """
-        genes = self._reaction_genes.get(kegg_reaction_id)
-        if genes is not None:
-            return list(genes)
+        cached_genes = self._reaction_genes.get(kegg_reaction_id)
+        if cached_genes is not None:
+            return list(cached_genes)
 
         cache_key = f"organism_genes:{self._organism}:{kegg_reaction_id}"
         data = await self._kegg_client.get(
@@ -192,20 +191,17 @@ class OrganismFilter:
             return []
 
         # Parse: "rn:R00200\teco:b0001\n" -> ["b0001", ...]
-        genes: list[str] = []
+        parsed_genes: list[str] = []
         for line in data.strip().splitlines():
             parts = line.split("\t")
             if len(parts) >= 2:
                 gene_part = parts[1]
                 # Strip organism prefix: "eco:b0001" -> "b0001"
-                if ":" in gene_part:
-                    gene_id = gene_part.split(":", 1)[1]
-                else:
-                    gene_id = gene_part
-                if gene_id not in genes:
-                    genes.append(gene_id)
+                gene_id = gene_part.split(":", 1)[1] if ":" in gene_part else gene_part
+                if gene_id not in parsed_genes:
+                    parsed_genes.append(gene_id)
 
-        return genes
+        return parsed_genes
 
     async def close(self) -> None:
         """Close the KEGG client session."""
