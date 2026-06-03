@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.core.models import (
+    CandidateReaction,
     EvaluationStatus,
+    GapFillResult,
+    MetabolicTask,
+    ModelData,
     Reaction,
     ReactionEvidence,
 )
@@ -133,3 +137,85 @@ class TestLoadModelWorker:
         worker.run()
 
         assert len(errors) == 1
+
+
+class TestGapFillWorkflowWorker:
+    async def test_large_candidate_set_defers_evidence_to_added_reactions(self, monkeypatch):
+        from src.gui.workers import GapFillWorkflowWorker
+        from src.utils.config import Config
+
+        candidates = [
+            CandidateReaction(Reaction(id="R1", name="R1", equation="a -> b")),
+            CandidateReaction(Reaction(id="R2", name="R2", equation="a -> b")),
+        ]
+        added = [candidates[1]]
+        captured: dict[str, object] = {}
+
+        class FakeLoader:
+            def load(self, path):
+                return object()
+
+            def extract_candidates(self, universal_model, model_data):
+                return candidates
+
+        class FakeParser:
+            def parse(self, path):
+                raise AssertionError("preloaded tasks should not be parsed from disk")
+
+        class FakeGapFillEngine:
+            def __init__(self, config):
+                pass
+
+            async def initialize(self, **kwargs):
+                pass
+
+            async def run(self, **kwargs):
+                captured["tasks"] = kwargs["tasks"]
+                captured["evidence_results"] = kwargs["evidence_results"]
+                result = GapFillResult(total_tasks=len(kwargs["tasks"]))
+                result.all_candidates = candidates
+                result.added_reactions = list(added)
+                result.task_results_before = []
+                result.task_results_after = []
+                return result
+
+            async def close(self):
+                pass
+
+        import src.core.task_parser as task_parser_module
+        import src.core.universal_loader as universal_loader_module
+        import src.gapfill.engine as gapfill_engine_module
+
+        monkeypatch.setattr(universal_loader_module, "UniversalLoader", FakeLoader)
+        monkeypatch.setattr(task_parser_module, "TaskParser", FakeParser)
+        monkeypatch.setattr(gapfill_engine_module, "GapFillEngine", FakeGapFillEngine)
+
+        evidence = MagicMock()
+        evidence.cache_manager = None
+        evidence.mapping_data = None
+        evidence.evaluate_candidates_batch = AsyncMock(
+            return_value={"R2": ReactionEvidence(reaction_id="R2", confidence_score=1.0)}
+        )
+
+        task = MetabolicTask(task_id="T1", task_type="Metabolite", target_id="atp_c")
+        config = Config(candidate_evidence_eager_limit=1)
+        worker = GapFillWorkflowWorker(
+            config=config,
+            model_data=ModelData(id="m", name="m", cobra_model=object()),
+            universal_path="universal.json",
+            task_path="__preloaded__",
+            evidence_engine=evidence,
+            options={
+                "evaluate_candidates": True,
+                "preloaded_tasks": [task],
+            },
+        )
+
+        result = await worker._run_pipeline()
+
+        assert result.added_reactions == added
+        assert captured["tasks"] == [task]
+        assert captured["evidence_results"] == {}
+        evidence.evaluate_candidates_batch.assert_awaited_once()
+        evaluated_candidates = evidence.evaluate_candidates_batch.await_args.args[0]
+        assert evaluated_candidates == added

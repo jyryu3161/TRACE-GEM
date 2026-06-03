@@ -22,6 +22,7 @@ class Config:
     # Evaluation settings
     batch_size: int = 10
     max_concurrent: int = 5
+    candidate_evidence_eager_limit: int = 1000
 
     # Scoring weights
     weight_kegg: float = 0.70
@@ -35,6 +36,8 @@ class Config:
     default_task_file: str = "data/universal_essential_tasks.csv"
     gapfill_lower_bound: float = 0.05
     gapfill_iterations: int = 5
+    gapfill_universal_prune_threshold: int = 5000
+    gapfill_prune_to_model_metabolites: bool = True
     organism_filter_cache_ttl: int = 30 * 24 * 3600
     gapfill_penalty_epsilon: float = 0.01
     gapfill_organism_penalty_multiplier: float = 10.0

@@ -498,6 +498,60 @@ class TestGapFillEngine:
         assert "EX_so4_e" in model.reactions
         assert model.reactions.get_by_id("EX_so4_e") is not rxn
 
+    def test_prune_universal_keeps_model_compatible_reactions_and_task_targets(
+        self,
+    ) -> None:
+        """Large universals are pruned without dropping explicit task targets."""
+        config = Config(
+            gapfill_universal_prune_threshold=1,
+            gapfill_prune_to_model_metabolites=True,
+        )
+        engine = GapFillEngine(config)
+
+        model = cobra.Model("draft")
+        a = cobra.Metabolite("a_c", compartment="c")
+        b = cobra.Metabolite("b_c", compartment="c")
+        model.add_metabolites([a, b])
+
+        universal = cobra.Model("universal")
+        keep = cobra.Reaction("R_KEEP")
+        keep.add_metabolites({a.copy(): -1.0, b.copy(): 1.0})
+        drop = cobra.Reaction("R_DROP")
+        drop.add_metabolites(
+            {
+                cobra.Metabolite("x_c", compartment="c"): -1.0,
+                cobra.Metabolite("y_c", compartment="c"): 1.0,
+            }
+        )
+        target = cobra.Reaction("R_TARGET")
+        target.add_metabolites(
+            {
+                cobra.Metabolite("x_c", compartment="c"): -1.0,
+                cobra.Metabolite("z_c", compartment="c"): 1.0,
+            }
+        )
+        universal.add_reactions([keep, drop, target])
+
+        tasks = [
+            MetabolicTask(
+                task_id="T_TARGET",
+                task_type="Reaction",
+                target_id="R_TARGET",
+                expected_operator=">",
+                expected_value=0.0,
+            )
+        ]
+
+        pruned = engine._prune_universal_for_gapfill(universal, model, tasks)
+
+        assert pruned is not universal
+        assert {rxn.id for rxn in pruned.reactions} == {"R_KEEP", "R_TARGET"}
+        assert {rxn.id for rxn in universal.reactions} == {
+            "R_KEEP",
+            "R_DROP",
+            "R_TARGET",
+        }
+
     def test_lower_bound_for_strict_greater_uses_extra_tolerance(
         self, engine: GapFillEngine
     ) -> None:

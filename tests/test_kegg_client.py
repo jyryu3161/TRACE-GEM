@@ -205,7 +205,7 @@ class TestKEGGClient:
 
     @pytest.mark.asyncio
     async def test_check_evidence_raw_data_has_kegg_parsed(self, client):
-        """Raw data should contain kegg_parsed for downstream LLM verification."""
+        """Raw data should contain kegg_parsed for downstream evidence checks."""
         client.get = AsyncMock(return_value=SAMPLE_KEGG_REACTION)
 
         items = await client.check_evidence(

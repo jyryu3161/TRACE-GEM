@@ -187,6 +187,21 @@ class GapFillEngine:
                     candidate.penalty = penalties[candidate.reaction.id]
 
         latest_after_results: list[TaskResult] | None = None
+        gapfill_universal = self._prune_universal_for_gapfill(
+            universal_model,
+            user_model,
+            tasks,
+        )
+        if gapfill_universal is not universal_model:
+            _progress(
+                "gap_filling",
+                0,
+                1,
+                (
+                    f"Pruned universal model for gap-fill: "
+                    f"{len(gapfill_universal.reactions)}/{len(universal_model.reactions)} reactions"
+                ),
+            )
 
         # Phase 3: Gap-filling
         if start_phase <= 3:
@@ -219,7 +234,7 @@ class GapFillEngine:
                 )
                 added_reactions = await self._run_gapfill(
                     user_model,
-                    universal_model,
+                    gapfill_universal,
                     gapfillable_tasks,
                     penalties,
                     result,
@@ -645,6 +660,69 @@ class GapFillEngine:
             return []
 
         raise RuntimeError(f"Unknown task type: {task.task_type}")
+
+    def _prune_universal_for_gapfill(
+        self,
+        universal: cobra.Model,
+        user_model: cobra.Model,
+        tasks: list[MetabolicTask],
+    ) -> cobra.Model:
+        """Return a smaller universal model for large gap-fill problems.
+
+        BiGG universal JSON can contain tens of thousands of reactions. For
+        task-based repair of a draft model, reactions whose metabolites are
+        completely outside the draft model usually inflate the MILP without
+        helping restore removed reactions. Keep reactions compatible with the
+        current model metabolite set, while preserving explicit task targets.
+        """
+        if not self._config.gapfill_prune_to_model_metabolites:
+            return universal
+
+        threshold = max(0, self._config.gapfill_universal_prune_threshold)
+        if threshold == 0 or len(universal.reactions) <= threshold:
+            return universal
+
+        try:
+            allowed_metabolites = set(user_model.metabolites.list_attr("id"))
+        except Exception:
+            return universal
+
+        if not allowed_metabolites:
+            return universal
+
+        keep_reaction_ids: set[str] = set()
+        universal_rxn_map, universal_met_map, _ = self._task_runner._build_id_maps(universal)
+
+        for task in tasks:
+            if task.task_type == "Reaction":
+                rxn_id = self._task_runner._resolve_reaction(task.target_id, universal_rxn_map)
+                if rxn_id:
+                    keep_reaction_ids.add(rxn_id)
+            elif task.task_type == "Metabolite":
+                met_id = self._task_runner._resolve_metabolite(task.target_id, universal_met_map)
+                if met_id:
+                    allowed_metabolites.add(met_id)
+
+        for rxn in universal.reactions:
+            metabolite_ids = {met.id for met in rxn.metabolites}
+            if metabolite_ids and metabolite_ids <= allowed_metabolites:
+                keep_reaction_ids.add(rxn.id)
+
+        if not keep_reaction_ids or len(keep_reaction_ids) >= len(universal.reactions):
+            return universal
+
+        pruned = cobra.Model(f"{universal.id}_pruned")
+        pruned.name = f"{universal.name or universal.id} (pruned)"
+        pruned.compartments = dict(universal.compartments)
+        pruned.add_reactions(
+            [rxn.copy() for rxn in universal.reactions if rxn.id in keep_reaction_ids]
+        )
+        logger.info(
+            "Pruned universal model for gap-fill from %d to %d reactions",
+            len(universal.reactions),
+            len(pruned.reactions),
+        )
+        return pruned
 
     def _apply_gapfill_results(
         self,
