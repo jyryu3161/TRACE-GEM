@@ -131,6 +131,27 @@ class TestGPRAssigner:
         assert progress_calls[0] == (1, 2, "RXN_A")
         assert progress_calls[1] == (2, 2, "RXN_B")
 
+    async def test_assign_batch_normalizes_kegg_reaction_uri(
+        self, assigner: GPRAssigner
+    ) -> None:
+        """identifiers.org KEGG reaction annotations are normalized."""
+        rxn = Reaction(
+            id="RXN_URI",
+            name="URI",
+            equation="A -> B",
+            annotation={
+                "kegg.reaction": ["http://identifiers.org/kegg.reaction/R01324"]
+            },
+        )
+        candidate = CandidateReaction(reaction=rxn)
+
+        with patch.object(assigner, "assign_gpr", new_callable=AsyncMock) as mock_assign:
+            mock_assign.return_value = ("b0118", ["b0118"])
+            await assigner.assign_batch([candidate])
+
+        mock_assign.assert_awaited_once_with("R01324")
+        assert candidate.assigned_gpr == "b0118"
+
     async def test_close(self, assigner: GPRAssigner) -> None:
         """close() handles None session gracefully."""
         await assigner.close()  # Should not raise

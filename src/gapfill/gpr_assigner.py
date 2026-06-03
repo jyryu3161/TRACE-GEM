@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 
 import aiohttp
@@ -73,6 +74,9 @@ class GPRAssigner:
 
         GET /link/ko/rn:{reaction_id}
         """
+        kegg_reaction_id = _extract_kegg_reaction_id(kegg_reaction_id)
+        if not kegg_reaction_id:
+            return []
         text = await self._kegg_get(f"link/ko/rn:{kegg_reaction_id}")
         if not text:
             return []
@@ -166,7 +170,9 @@ class GPRAssigner:
 
             if kegg_ids:
                 # Use the first KEGG reaction ID
-                kegg_id = kegg_ids[0]
+                kegg_id = _extract_kegg_reaction_id(kegg_ids[0])
+                if not kegg_id:
+                    continue
                 gpr, genes = await self.assign_gpr(kegg_id)
                 candidate.assigned_gpr = gpr
                 candidate.kegg_organism_genes = genes
@@ -179,3 +185,11 @@ class GPRAssigner:
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
+
+
+def _extract_kegg_reaction_id(value: object) -> str:
+    """Return bare ``Rxxxxx`` from KEGG IDs or identifiers.org URIs."""
+    if not isinstance(value, str):
+        return ""
+    match = re.search(r"R\d{5}", value)
+    return match.group(0) if match else value.strip()

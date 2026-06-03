@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import cobra
 
 from src.core.models import CandidateReaction, ModelData, Reaction
 from src.core.universal_loader import UniversalLoader
@@ -81,6 +82,26 @@ class TestLoadJson:
 
         mock_load.assert_called_once_with(str(fake_file))
         assert result is mock_model
+
+    def test_load_json_removes_solver_reserved_reactions(
+        self,
+        loader: UniversalLoader,
+        tmp_path: Path,
+    ) -> None:
+        """Solver keyword reaction IDs are removed from universal models."""
+        fake_file = tmp_path / "model.json"
+        fake_file.touch()
+
+        model = cobra.Model("universal")
+        reserved = cobra.Reaction("St")
+        safe = cobra.Reaction("SAFE_RXN")
+        model.add_reactions([reserved, safe])
+
+        with patch("src.core.universal_loader.cobra.io.load_json_model", return_value=model):
+            result = loader.load_json(fake_file)
+
+        assert "St" not in result.reactions
+        assert "SAFE_RXN" in result.reactions
 
     def test_load_json_file_not_found(self, loader: UniversalLoader) -> None:
         """load_json raises FileNotFoundError for missing files."""

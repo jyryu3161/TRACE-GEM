@@ -332,7 +332,13 @@ class GapFillWorkflowWorker(QRunnable):
 
         engine = GapFillEngine(self.config)
         organism_code = self.model_data.kegg_organism_code or self.config.kegg_organism_code
-        await engine.initialize(organism_code=organism_code)
+        cache_mgr = self.evidence_engine.cache_manager if self.evidence_engine else None
+        mapping_data = self.evidence_engine.mapping_data if self.evidence_engine else None
+        await engine.initialize(
+            organism_code=organism_code,
+            cache_manager=cache_mgr,
+            mapping_data=mapping_data,
+        )
         try:
             result = await engine.run(
                 user_model=cobra_model,

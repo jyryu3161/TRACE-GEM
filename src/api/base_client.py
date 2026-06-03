@@ -45,7 +45,10 @@ class BaseAPIClient(ABC):
         if (
             self._session is None
             or self._session.closed
-            or self._session_loop is not current_loop
+            or (
+                self._session_loop is not None
+                and self._session_loop is not current_loop
+            )
         ):
             if self._session and not self._session.closed:
                 try:
@@ -60,7 +63,8 @@ class BaseAPIClient(ABC):
     async def close(self) -> None:
         if self._session and not self._session.closed:
             await self._session.close()
-            self._session = None
+        self._session = None
+        self._session_loop = None
 
     async def get(
         self,

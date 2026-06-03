@@ -18,6 +18,21 @@ logger = logging.getLogger("gem_evaluator.universal_loader")
 
 # Prefixes for utility reactions to exclude from candidates
 _UTILITY_PREFIXES = ("EX_", "DM_", "SK_", "sink_")
+_SOLVER_RESERVED_REACTION_IDS = {
+    "bounds",
+    "binaries",
+    "binary",
+    "end",
+    "generals",
+    "general",
+    "maximize",
+    "maximise",
+    "minimize",
+    "minimise",
+    "st",
+    "subject",
+    "subjectto",
+}
 
 
 class UniversalLoader:
@@ -47,6 +62,7 @@ class UniversalLoader:
 
         logger.info("Loading universal model (JSON) from %s", filepath)
         model = cobra.io.load_json_model(str(filepath))
+        self._remove_solver_reserved_reactions(model)
         logger.info(
             "Loaded universal model '%s': %d reactions, %d metabolites",
             model.id,
@@ -63,6 +79,7 @@ class UniversalLoader:
 
         logger.info("Loading universal model (SBML) from %s", filepath)
         model = cobra.io.read_sbml_model(str(filepath))
+        self._remove_solver_reserved_reactions(model)
         logger.info(
             "Loaded universal model '%s': %d reactions, %d metabolites",
             model.id,
@@ -127,3 +144,18 @@ class UniversalLoader:
     def _is_utility_reaction(self, rxn_id: str) -> bool:
         """Check if reaction is an exchange, demand, or sink reaction."""
         return any(rxn_id.startswith(p) for p in _UTILITY_PREFIXES)
+
+    def _remove_solver_reserved_reactions(self, model: cobra.Model) -> None:
+        """Remove reactions whose IDs collide with LP/MPS solver keywords."""
+        to_remove = [
+            rxn for rxn in model.reactions
+            if rxn.id.replace(" ", "").lower() in _SOLVER_RESERVED_REACTION_IDS
+        ]
+        if not to_remove:
+            return
+        model.remove_reactions(to_remove, remove_orphans=False)
+        logger.warning(
+            "Removed %d solver-reserved universal reaction ID(s): %s",
+            len(to_remove),
+            ", ".join(rxn.id for rxn in to_remove),
+        )

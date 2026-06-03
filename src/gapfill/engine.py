@@ -9,6 +9,7 @@ from collections.abc import Callable
 import cobra
 
 from src.cache.cache_manager import CacheManager
+from src.core.cobra_utils import convert_cobra_reaction
 from src.core.mapping_data import MappingData
 from src.core.models import (
     CandidateReaction,
@@ -22,7 +23,6 @@ from src.gapfill.gpr_assigner import GPRAssigner
 from src.gapfill.organism_filter import OrganismFilter
 from src.gapfill.penalty_calculator import PenaltyCalculator
 from src.utils.config import Config
-from src.utils.constants import GAPFILL_LOWER_BOUND
 
 logger = logging.getLogger("gem_evaluator.gapfill.engine")
 
@@ -180,39 +180,109 @@ class GapFillEngine:
                 if candidate.reaction.id in penalties:
                     candidate.penalty = penalties[candidate.reaction.id]
 
+        latest_after_results: list[TaskResult] | None = None
+
         # Phase 3: Gap-filling
         if start_phase <= 3:
-            _progress("gap_filling", 0, len(failed_tasks), "Running gap-fill...")
-            added_reactions = await self._run_gapfill(
-                user_model,
-                universal_model,
-                failed_tasks,
-                penalties,
-                result,
-                progress_callback=lambda c, t, d: _progress("gap_filling", c, t, d),
-                cancel_event=cancel_event,
-            )
+            current_results = result.task_results_before
+            added_by_id: dict[str, CandidateReaction] = {}
+            max_iterations = max(1, self._config.gapfill_iterations)
+            prev_passed = sum(1 for r in current_results if r.passed)
 
-            # Apply gap-fill results to the model
-            if added_reactions:
-                result.added_reactions = self._apply_gapfill_results(
+            for iteration in range(max_iterations):
+                failed_tasks = [r.task for r in current_results if not r.passed]
+                gapfillable_tasks = [t for t in failed_tasks if self._is_gapfillable_task(t)]
+                skipped_tasks = [t for t in failed_tasks if not self._is_gapfillable_task(t)]
+
+                if skipped_tasks:
+                    logger.info(
+                        "Skipping %d non-gap-fillable failed tasks: %s",
+                        len(skipped_tasks),
+                        ", ".join(t.task_id for t in skipped_tasks),
+                    )
+
+                if not gapfillable_tasks:
+                    logger.info("No gap-fillable failed tasks remain")
+                    break
+
+                _progress(
+                    "gap_filling",
+                    iteration,
+                    max_iterations,
+                    f"Iteration {iteration + 1}: {len(gapfillable_tasks)} failed task(s)",
+                )
+                added_reactions = await self._run_gapfill(
+                    user_model,
+                    universal_model,
+                    gapfillable_tasks,
+                    penalties,
+                    result,
+                    progress_callback=lambda c, t, d: _progress("gap_filling", c, t, d),
+                    cancel_event=cancel_event,
+                )
+
+                if not added_reactions:
+                    logger.info("Gap-fill iteration %d added no reactions", iteration + 1)
+                    break
+
+                added_candidates = self._apply_gapfill_results(
                     user_model, added_reactions, candidates
                 )
-                # Sort added reactions by evidence score descending
-                result.added_reactions.sort(
-                    key=lambda c: (
-                        evidence_results[c.reaction.id].confidence_score
-                        if c.reaction.id in evidence_results
-                        else 0.0
-                    ),
-                    reverse=True,
+                newly_added = 0
+                for candidate in added_candidates:
+                    if candidate.reaction.id not in added_by_id:
+                        added_by_id[candidate.reaction.id] = candidate
+                        newly_added += 1
+
+                if newly_added == 0:
+                    logger.info("Gap-fill iteration %d produced no new reactions", iteration + 1)
+                    break
+
+                current_results = self._run_tasks(
+                    user_model,
+                    tasks,
+                    phase="after",
+                    progress_callback=lambda c, t, d: _progress("testing_after", c, t, d),
                 )
-                logger.info(
-                    "Phase 3 complete: %d reactions added to model",
-                    len(result.added_reactions),
-                )
-            else:
-                logger.info("Phase 3 complete: no reactions added")
+                latest_after_results = current_results
+                passed_now = sum(1 for r in current_results if r.passed)
+
+                if all(r.passed for r in current_results):
+                    logger.info("All tasks pass after gap-fill iteration %d", iteration + 1)
+                    break
+
+                # Stop if an iteration produced no net improvement in passing
+                # tasks — added reactions that fix nothing (or break as many as
+                # they fix) should not keep accumulating across iterations.
+                if passed_now <= prev_passed:
+                    logger.info(
+                        "Gap-fill iteration %d fixed no additional tasks "
+                        "(%d -> %d passing); stopping",
+                        iteration + 1,
+                        prev_passed,
+                        passed_now,
+                    )
+                    break
+                prev_passed = passed_now
+
+                if _is_cancelled():
+                    result.is_partial = True
+                    break
+
+            result.added_reactions = list(added_by_id.values())
+            result.added_reactions.sort(
+                key=lambda c: (
+                    evidence_results[c.reaction.id].confidence_score
+                    if c.reaction.id in evidence_results
+                    else 0.0
+                ),
+                reverse=True,
+            )
+            logger.info(
+                "Phase 3 complete: %d reactions added to model in %d iteration(s)",
+                len(result.added_reactions),
+                result.iterations,
+            )
 
             result.completed_phase = 3
 
@@ -237,18 +307,31 @@ class GapFillEngine:
                 return result
 
         # Phase 5: Final task testing
-        _progress("testing_after", 0, len(tasks), "Running final tests...")
-        result.task_results_after = self._run_tasks(
-            user_model,
-            tasks,
-            phase="after",
-            progress_callback=lambda c, t, d: _progress("testing_after", c, t, d),
-        )
+        if latest_after_results is None:
+            _progress("testing_after", 0, len(tasks), "Running final tests...")
+            result.task_results_after = self._run_tasks(
+                user_model,
+                tasks,
+                phase="after",
+                progress_callback=lambda c, t, d: _progress("testing_after", c, t, d),
+            )
+        else:
+            result.task_results_after = latest_after_results
+            _progress("testing_after", len(tasks), len(tasks), "Final tests complete")
 
-        # Calculate tasks fixed
+        # Calculate tasks fixed and tasks broken (regressions)
         before_failed = {r.task.task_id for r in result.task_results_before if not r.passed}
+        before_passed = {r.task.task_id for r in result.task_results_before if r.passed}
         after_passed = {r.task.task_id for r in result.task_results_after if r.passed}
+        after_failed = {r.task.task_id for r in result.task_results_after if not r.passed}
         result.tasks_fixed = len(before_failed & after_passed)
+        result.tasks_broken = len(before_passed & after_failed)
+        if result.tasks_broken:
+            logger.warning(
+                "Gap-fill regressed %d previously-passing task(s): %s",
+                result.tasks_broken,
+                ", ".join(sorted(before_passed & after_failed)),
+            )
         result.completed_phase = 5
 
         logger.info(
@@ -297,7 +380,6 @@ class GapFillEngine:
         If infeasible, retry with lower_bound=0.01, then record as infeasible.
         """
         all_added: dict[str, cobra.Reaction] = {}  # deduplicate by ID
-        lower_bound = self._config.gapfill_lower_bound
 
         for i, task in enumerate(failed_tasks):
             # Check cancel between tasks
@@ -308,34 +390,26 @@ class GapFillEngine:
             if progress_callback:
                 progress_callback(i + 1, len(failed_tasks), f"Gap-filling for task {task.task_id}")
 
+            required = self._lower_bound_for_task(task)
             try:
                 reactions = self._gapfill_for_task(
-                    model, universal, task, penalties, lower_bound
+                    model, universal, task, penalties, required
                 )
-                for rxn in reactions:
-                    if rxn.id not in all_added:
-                        all_added[rxn.id] = rxn
-
             except RuntimeError:
-                # Retry with relaxed lower bound
-                try:
-                    reactions = self._gapfill_for_task(
-                        model, universal, task, penalties, 0.01
-                    )
-                    for rxn in reactions:
-                        if rxn.id not in all_added:
-                            all_added[rxn.id] = rxn
-                except (RuntimeError, Exception) as e:
-                    logger.warning(
-                        "Task %s infeasible: %s", task.task_id, e
-                    )
-                    result.infeasible_tasks.append(task.task_id)
-
-            except Exception as e:
-                logger.warning(
-                    "Gap-fill failed for task %s: %s", task.task_id, e
+                # Solver infeasibility near the requested bound: retry at a
+                # relaxed bound, but only keep reactions that genuinely satisfy
+                # the task's real threshold (see _retry_gapfill).
+                reactions = self._retry_gapfill(
+                    model, universal, task, penalties, required, result
                 )
+            except Exception as e:
+                logger.warning("Gap-fill failed for task %s: %s", task.task_id, e)
                 result.infeasible_tasks.append(task.task_id)
+                continue
+
+            for rxn in reactions:
+                if rxn.id not in all_added:
+                    all_added[rxn.id] = rxn
 
         if progress_callback:
             progress_callback(
@@ -344,6 +418,110 @@ class GapFillEngine:
 
         result.iterations += 1
         return list(all_added.values())
+
+    # Relaxation factor for the solver-infeasibility retry.  The retry exists
+    # only to dodge numerical infeasibility near the requested bound — it must
+    # not silently accept a solution far below the task's real requirement.
+    _RETRY_RELAX_FACTOR = 0.5
+    _RETRY_MIN_BOUND = 0.01
+
+    def _retry_gapfill(
+        self,
+        model: cobra.Model,
+        universal: cobra.Model,
+        task: MetabolicTask,
+        penalties: dict[str, float],
+        required: float,
+        result: GapFillResult,
+    ) -> list[cobra.Reaction]:
+        """Retry gap-fill at a relaxed bound after a solver infeasibility.
+
+        The relaxed bound scales with the task requirement so a high-threshold
+        task (e.g. ``>=10``) is never "solved" by a near-zero flux.  Any
+        reactions found at the relaxed bound are kept only if they actually let
+        the task pass at its real threshold; otherwise they are discarded so we
+        never inject spurious reactions that leave the task failing.
+        """
+        retry_bound = max(self._RETRY_MIN_BOUND, required * self._RETRY_RELAX_FACTOR)
+        if retry_bound >= required:
+            # Nothing meaningful to relax (requirement already at/below floor).
+            result.infeasible_tasks.append(task.task_id)
+            return []
+
+        try:
+            reactions = self._gapfill_for_task(
+                model, universal, task, penalties, retry_bound
+            )
+        except Exception as e:
+            logger.warning("Task %s infeasible: %s", task.task_id, e)
+            result.infeasible_tasks.append(task.task_id)
+            return []
+
+        if reactions and not self._reactions_satisfy_task(
+            model, universal, task, reactions
+        ):
+            logger.info(
+                "Task %s only reached relaxed bound %.4g (< required %.4g); "
+                "discarding %d spurious reaction(s)",
+                task.task_id,
+                retry_bound,
+                required,
+                len(reactions),
+            )
+            result.infeasible_tasks.append(task.task_id)
+            return []
+        return reactions
+
+    def _reactions_satisfy_task(
+        self,
+        model: cobra.Model,
+        universal: cobra.Model,
+        task: MetabolicTask,
+        reactions: list[cobra.Reaction],
+    ) -> bool:
+        """Return True if adding ``reactions`` lets ``task`` pass its real check.
+
+        Rebuilds the same task environment as evaluation (medium, trace
+        elements, cofactor turnover) so the verdict matches the Phase 5
+        re-evaluation rather than the relaxed gap-fill bound.
+        """
+        try:
+            test_model = model.copy()
+            self._preseed_missing_task_target(test_model, universal, task)
+            test_model = self._task_runner.prepare_task_model(
+                test_model, task, copy_model=False
+            )
+            existing = set(test_model.reactions.list_attr("id"))
+            to_add = [r.copy() for r in reactions if r.id not in existing]
+            if to_add:
+                test_model.add_reactions(to_add)
+            solution = test_model.optimize()
+            actual = (
+                solution.objective_value
+                if solution.status != "infeasible"
+                and solution.objective_value is not None
+                else 0.0
+            )
+        except Exception as e:
+            logger.debug("Validation solve failed for %s: %s", task.task_id, e)
+            return False
+
+        return self._task_runner._check_expected(
+            actual, task.expected_operator, task.expected_value
+        )
+
+    def _is_gapfillable_task(self, task: MetabolicTask) -> bool:
+        """Return True if adding reactions can plausibly fix ``task``."""
+        return task.expected_operator in {">", ">="}
+
+    def _lower_bound_for_task(self, task: MetabolicTask) -> float:
+        """Minimum objective value required from COBRApy gap-fill."""
+        configured = self._config.gapfill_lower_bound
+        if task.expected_operator == ">":
+            return max(configured, task.expected_value + TaskRunner._TOLERANCE)
+        if task.expected_operator == ">=":
+            return max(configured, task.expected_value)
+        return configured
 
     def _gapfill_for_task(
         self,
@@ -358,51 +536,13 @@ class GapFillEngine:
         Returns list of reactions that need to be added.
         """
         test_model = model.copy()
-
-        # Apply task medium: close all exchanges, then open specified ones
-        for rxn in test_model.reactions:
-            if rxn.id.startswith("EX_"):
-                rxn.lower_bound = 0.0
-
-        for rxn_id, lb in task.medium.items():
-            try:
-                rxn = test_model.reactions.get_by_id(rxn_id)
-                rxn.lower_bound = lb
-            except KeyError:
-                pass
-
-        # Apply task constraints
-        for rxn_id, (lb, ub) in task.constraints.items():
-            try:
-                rxn = test_model.reactions.get_by_id(rxn_id)
-                rxn.lower_bound = lb
-                rxn.upper_bound = ub
-            except KeyError:
-                pass
-
-        # Set objective based on task type
-        if task.task_type == "Metabolite":
-            demand_id = f"DM_{task.target_id}"
-            try:
-                met = test_model.metabolites.get_by_id(task.target_id)
-            except KeyError:
-                raise RuntimeError(
-                    f"Metabolite '{task.target_id}' not found in model"
-                )
-            demand_rxn = cobra.Reaction(demand_id)
-            demand_rxn.add_metabolites({met: -1.0})
-            demand_rxn.lower_bound = 0.0
-            demand_rxn.upper_bound = 1000.0
-            test_model.add_reactions([demand_rxn])
-            test_model.objective = demand_id
-        elif task.task_type == "Reaction":
-            try:
-                test_model.reactions.get_by_id(task.target_id)
-            except KeyError:
-                raise RuntimeError(
-                    f"Reaction '{task.target_id}' not found in model"
-                )
-            test_model.objective = task.target_id
+        preseeded = self._preseed_missing_task_target(test_model, universal, task)
+        try:
+            test_model = self._task_runner.prepare_task_model(
+                test_model, task, copy_model=False
+            )
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
 
         # Run gap-fill
         result = cobra.flux_analysis.gapfilling.gapfill(
@@ -410,12 +550,68 @@ class GapFillEngine:
             universal,
             lower_bound=lower_bound,
             penalties=penalties,
+            demand_reactions=False,
         )
 
         if not result or not result[0]:
+            return preseeded
+
+        reactions_by_id = {rxn.id: rxn for rxn in preseeded}
+        for rxn in result[0]:
+            reactions_by_id.setdefault(rxn.id, rxn)
+        return list(reactions_by_id.values())
+
+    def _preseed_missing_task_target(
+        self,
+        model: cobra.Model,
+        universal: cobra.Model,
+        task: MetabolicTask,
+    ) -> list[cobra.Reaction]:
+        """Add a missing task target from universal so it can be optimized.
+
+        COBRApy's gapfill requires the objective to exist in the draft model.
+        If a reaction-task target was one of the removed reactions, we add a
+        temporary copy before solving and return it as a required gap-fill
+        reaction.  For metabolite tasks, a missing target metabolite is added
+        if present in the universal model so demand/turnover construction can
+        still drive gap-fill.
+        """
+        if task.task_type == "Reaction":
+            model_rxn_map, _, _ = self._task_runner._build_id_maps(model)
+            if self._task_runner._resolve_reaction(task.target_id, model_rxn_map):
+                return []
+
+            universal_rxn_map, _, _ = self._task_runner._build_id_maps(universal)
+            universal_rxn_id = self._task_runner._resolve_reaction(
+                task.target_id, universal_rxn_map
+            )
+            if not universal_rxn_id:
+                raise RuntimeError(
+                    f"Reaction '{task.target_id}' not found in model or universal"
+                )
+
+            rxn = universal.reactions.get_by_id(universal_rxn_id).copy()
+            model.add_reactions([rxn])
+            return [rxn]
+
+        if task.task_type == "Metabolite":
+            _, model_met_map, _ = self._task_runner._build_id_maps(model)
+            if self._task_runner._resolve_metabolite(task.target_id, model_met_map):
+                return []
+
+            _, universal_met_map, _ = self._task_runner._build_id_maps(universal)
+            universal_met_id = self._task_runner._resolve_metabolite(
+                task.target_id, universal_met_map
+            )
+            if not universal_met_id:
+                raise RuntimeError(
+                    f"Metabolite '{task.target_id}' not found in model or universal"
+                )
+
+            model.add_metabolites([universal.metabolites.get_by_id(universal_met_id).copy()])
             return []
 
-        return list(result[0])
+        raise RuntimeError(f"Unknown task type: {task.task_type}")
 
     def _apply_gapfill_results(
         self,
@@ -436,11 +632,12 @@ class GapFillEngine:
 
         added_candidates: list[CandidateReaction] = []
 
-        # Filter out reactions already in model
-        new_reactions = [
-            rxn for rxn in reactions_to_add
-            if rxn.id not in model.reactions
-        ]
+        new_reactions: list[cobra.Reaction] = []
+        for rxn in reactions_to_add:
+            try:
+                model.reactions.get_by_id(rxn.id)
+            except KeyError:
+                new_reactions.append(rxn)
 
         if new_reactions:
             model.add_reactions(new_reactions)
@@ -448,11 +645,18 @@ class GapFillEngine:
         for rxn in reactions_to_add:
             if rxn.id in candidate_map:
                 candidate = candidate_map[rxn.id]
-                candidate.selected = True
-                added_candidates.append(candidate)
             else:
-                logger.debug(
-                    "Gap-filled reaction %s not found in candidates", rxn.id
+                candidate = CandidateReaction(
+                    reaction=convert_cobra_reaction(rxn),
+                    source_model="gapfill",
                 )
+                candidate_map[rxn.id] = candidate
+                candidates.append(candidate)
+                logger.debug(
+                    "Gap-filled reaction %s not found in candidates; created fallback",
+                    rxn.id,
+                )
+            candidate.selected = True
+            added_candidates.append(candidate)
 
         return added_candidates

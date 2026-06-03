@@ -51,7 +51,7 @@ class Config:
     default_universal_model: str = "data/bigg_universal_model_fixed.json"
     default_task_file: str = "data/universal_essential_tasks.csv"
     gapfill_lower_bound: float = 0.05
-    gapfill_iterations: int = 1
+    gapfill_iterations: int = 5
     organism_filter_cache_ttl: int = 30 * 24 * 3600
     gapfill_penalty_epsilon: float = 0.01
     gapfill_organism_penalty_multiplier: float = 10.0

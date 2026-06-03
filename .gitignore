@@ -19,6 +19,8 @@ env/
 *.swo
 *~
 .pytest_cache/
+.omc/
+tmp/
 htmlcov/
 .coverage
 *.log

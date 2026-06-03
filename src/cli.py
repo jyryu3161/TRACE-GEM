@@ -492,6 +492,7 @@ def _save_gapfill_report(
         writer.writerow(["Gap-Fill Summary"])
         writer.writerow(["Reactions Added", len(result.added_reactions)])
         writer.writerow(["Tasks Fixed", result.tasks_fixed])
+        writer.writerow(["Tasks Broken", result.tasks_broken])
         writer.writerow(["Total Tasks", result.total_tasks])
         writer.writerow(["Iterations", result.iterations])
         writer.writerow(["Infeasible Tasks", ";".join(result.infeasible_tasks)])

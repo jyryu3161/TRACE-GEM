@@ -439,6 +439,7 @@ class GapFillResult:
     task_results_before: list[TaskResult] = field(default_factory=list)
     task_results_after: list[TaskResult] = field(default_factory=list)
     tasks_fixed: int = 0
+    tasks_broken: int = 0
     total_tasks: int = 0
     iterations: int = 0
     infeasible_tasks: list[str] = field(default_factory=list)

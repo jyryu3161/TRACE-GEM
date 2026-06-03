@@ -80,6 +80,14 @@ class VersionGraphWidget(QWidget):
 
         layout.addWidget(self._plot)
 
+        self._legend = QLabel(self._build_legend_html())
+        self._legend.setTextFormat(Qt.TextFormat.RichText)
+        self._legend.setStyleSheet(
+            f"color: {THEME.muted_text}; font-size: 11px; padding: 2px 4px;"
+        )
+        self._legend.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._legend)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -107,6 +115,7 @@ class VersionGraphWidget(QWidget):
         self._positions.clear()
         if HAS_PYQTGRAPH and hasattr(self, "_plot"):
             self._plot.clear()
+            self._plot.setTitle("No versions")
 
     # ------------------------------------------------------------------
     # Graph building
@@ -114,13 +123,16 @@ class VersionGraphWidget(QWidget):
 
     def _rebuild_graph(self, highlight_id: str | None = None) -> None:
         """Rebuild the entire graph from self._versions."""
-        if not HAS_PYQTGRAPH or not hasattr(self, "_plot"):
-            return
-
-        self._plot.clear()
+        can_render = HAS_PYQTGRAPH and hasattr(self, "_plot")
+        if can_render:
+            self._plot.clear()
+            self._plot.setTitle("")
         self._scatter = None
 
         if not self._versions:
+            self._positions.clear()
+            if can_render:
+                self._plot.setTitle("No versions")
             return
 
         # 1. Sort by timestamp (oldest first)
@@ -166,6 +178,9 @@ class VersionGraphWidget(QWidget):
 
             y = float(vid_lane.get(v.version_id, 0))
             self._positions[v.version_id] = (x, y)
+
+        if not can_render:
+            return
 
         # 4. Draw edges (parent → child)
         for v in sorted_versions:
@@ -252,14 +267,7 @@ class VersionGraphWidget(QWidget):
             text.setFont(font)
             self._plot.addItem(text)
 
-        # 7. Set tooltips on spots
-        for i, v in enumerate(sorted_versions):
-            tip = self._build_tooltip(v)
-            # Tooltips are set via the widget-level tooltip at click position
-            # PyQtGraph ScatterPlotItem doesn't support per-point tooltips natively
-            # so we handle it via sigClicked + setToolTip on the widget
-
-        # 8. Auto-range with padding
+        # 7. Auto-range with padding
         self._plot.autoRange(padding=0.15)
 
     # ------------------------------------------------------------------
@@ -284,6 +292,26 @@ class VersionGraphWidget(QWidget):
     # ------------------------------------------------------------------
     # Tooltip
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_legend_html() -> str:
+        """Build a compact rich-text legend for the graph colors."""
+        entries = [
+            ("Initial", THEME.version_type_initial),
+            ("Gap-fill", THEME.version_type_gap_fill),
+            ("Manual edit", THEME.version_type_manual_edit),
+            ("Restore", THEME.version_type_restore),
+            ("Current", THEME.graph_current_border),
+        ]
+        parts = []
+        for label, color in entries:
+            parts.append(
+                f'<span style="color:{color}; font-weight:bold;">●</span> {label}'
+            )
+        parts.append(
+            f'<span style="color:{THEME.graph_edge_restore};">- - -</span> restore source'
+        )
+        return "&nbsp;&nbsp;".join(parts)
 
     @staticmethod
     def _build_tooltip(version: ModelVersion) -> str:

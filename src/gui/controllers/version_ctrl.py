@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
+from src.core.cobra_utils import sync_model_data_from_cobra
 from src.gui.diff_dialog import DiffDialog
 from src.gui.save_dialog import SaveDialog
 
@@ -126,8 +127,8 @@ class VersionController:
         try:
             restored_model = self._w._version_manager.restore_version(version_id)
 
-            # Update the model data's cobra_model reference
-            self._w._model.cobra_model = restored_model
+            # Refresh both the COBRA model and the GUI-facing ModelData lists.
+            sync_model_data_from_cobra(self._w._model, restored_model)
 
             # Refresh all panels
             self._w._reaction_table.set_model_data(self._w._model)
