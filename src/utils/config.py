@@ -23,29 +23,12 @@ class Config:
     batch_size: int = 10
     max_concurrent: int = 5
 
-    # API keys
-    gemini_api_key: str | None = None
-    perplexity_api_key: str | None = None
-    pubmed_api_key: str | None = None
-    pubmed_email: str | None = None
-
-    # UniProt taxonomy ID (83333 = E. coli K12)
-    uniprot_taxonomy_id: str = "83333"
-
-    # Scoring weights (6 sources)
-    weight_kegg: float = 0.30
-    weight_bigg: float = 0.15
-    weight_uniprot: float = 0.15
-    weight_pubmed: float = 0.15
-    weight_gemini: float = 0.125
-    weight_perplexity: float = 0.125
+    # Scoring weights
+    weight_kegg: float = 0.70
+    weight_bigg: float = 0.30
 
     # Source enable flags
     enable_bigg: bool = True
-    enable_uniprot: bool = True
-    enable_pubmed: bool = True
-    enable_gemini: bool = True
-    enable_perplexity: bool = True
 
     # Gap-fill settings
     default_universal_model: str = "data/bigg_universal_model_fixed.json"
@@ -74,28 +57,11 @@ class Config:
             try:
                 data = json.loads(CONFIG_FILE_PATH.read_text())
                 filtered = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
-                # Strip whitespace from API keys to prevent header injection errors
-                for key in ("gemini_api_key", "perplexity_api_key", "pubmed_api_key"):
-                    if key in filtered and isinstance(filtered[key], str):
-                        filtered[key] = filtered[key].strip() or None
                 config = cls(**filtered)
             except (json.JSONDecodeError, TypeError):
                 config = cls()
         else:
             config = cls()
-
-        # Environment variable overrides for API keys
-        import os
-
-        env_map = {
-            "GEM_GEMINI_API_KEY": "gemini_api_key",
-            "GEM_PERPLEXITY_API_KEY": "perplexity_api_key",
-            "GEM_PUBMED_API_KEY": "pubmed_api_key",
-        }
-        for env_var, attr in env_map.items():
-            val = os.environ.get(env_var)
-            if val:
-                setattr(config, attr, val.strip())
 
         return config
 
@@ -121,8 +87,4 @@ class Config:
         return {
             "kegg": self.weight_kegg,
             "bigg": self.weight_bigg,
-            "uniprot": self.weight_uniprot,
-            "pubmed": self.weight_pubmed,
-            "gemini": self.weight_gemini,
-            "perplexity": self.weight_perplexity,
         }

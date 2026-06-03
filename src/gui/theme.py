@@ -79,10 +79,6 @@ class ThemeColors:
     # --- Source colors (per evidence source) ---
     source_kegg: str = "#3498db"  # Blue
     source_bigg: str = "#2ecc71"  # Green
-    source_uniprot: str = "#9b59b6"  # Purple
-    source_pubmed: str = "#e74c3c"  # Red
-    source_gemini: str = "#1abc9c"  # Teal
-    source_perplexity: str = "#34495e"  # Dark Gray
 
     # --- HTML evidence ---
     evidence_item_bg: str = "#f9f9f9"

@@ -185,7 +185,6 @@ def _make_model_with_rxns(rxn_ids: list[str] | None = None) -> cobra.Model:
 def vm_config(tmp_path: Path) -> Config:
     return Config(
         version_dir=str(tmp_path / "versions"),
-        gemini_api_key=None,
         max_versions=5,
     )
 

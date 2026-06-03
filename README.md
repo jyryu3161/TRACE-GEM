@@ -1,18 +1,14 @@
 # GEM Evaluator
 
-Genome-Scale Metabolic Model Evidence Evaluator — SBML 모델의 반응(reaction)을 6개 생물학적 데이터베이스 및 LLM 소스(KEGG, BiGG, UniProt, PubMed, Gemini, Perplexity)를 사용하여 검증하고 confidence score를 산출하는 도구.
+Genome-Scale Metabolic Model Evidence Evaluator — SBML 모델의 반응(reaction)을 KEGG와 BiGG evidence로 검증하고 confidence score를 산출하는 도구.
 
 ## 주요 기능
 
 - **SBML 모델 로딩**: COBRApy 기반 SBML 파싱 (반응, 유전자, 대사물질 추출)
-- **다중 소스 검증**: 6개 evidence 소스를 통한 반응 검증
+- **Evidence 검증**: KEGG/BiGG 기반 반응 검증
   - **KEGG**: BiGG ID → KEGG 매핑을 통한 반응 존재 여부 및 기질/산물 일치도 확인
   - **BiGG Models**: 범용 반응 데이터베이스 검증
-  - **UniProt**: 단백질/유전자 기반 evidence
-  - **PubMed**: 문헌 기반 evidence
-  - **Gemini**: LLM 기반 반응 정합성 검증
-  - **Perplexity**: LLM 기반 organism 특이성 검증
-- **Confidence Scoring**: 6-source 가중 점수 산출
+- **Confidence Scoring**: KEGG/BiGG 가중 점수 산출
 - **Gap-Filling**: BiGG universal model 기반 자동 gap-filling (MILP 최적화)
   - Metabolic task 기반 모델 검증 (before/after 비교)
   - Organism-specific 유전자 필터링 (KEGG API)
@@ -78,15 +74,6 @@ sudo dnf install -y \
     git-lfs
 ```
 
-### API 키 (선택)
-
-LLM 검증 기능을 사용하려면 아래 API 키가 필요합니다. 없어도 KEGG/BiGG/UniProt/PubMed 기반 평가는 동작합니다.
-
-| 서비스 | 용도 | 발급처 |
-|--------|------|--------|
-| Gemini API | KEGG 매핑 정합성 검증 | [Google AI Studio](https://aistudio.google.com/apikey) |
-| Perplexity API | Organism 특이적 반응 존재 검증 | [Perplexity Settings](https://www.perplexity.ai/settings/api) |
-
 ## 설치
 
 ### 1. Git LFS 설치
@@ -151,9 +138,9 @@ pre-commit install
 
 ## 환경 설정
 
-### API 키 설정
+### 평가 설정
 
-앱 실행 후 **Settings** 대화상자에서 API 키를 입력하거나, 설정 파일을 직접 편집할 수 있습니다.
+앱 실행 후 **Settings** 대화상자에서 organism/evidence 설정을 조정하거나, 설정 파일을 직접 편집할 수 있습니다.
 
 설정 파일 경로: `~/.gem_evaluator/config.json`
 
@@ -161,19 +148,9 @@ pre-commit install
 {
   "kegg_organism_code": "eco",
   "organism_name": "Escherichia coli",
-  "gemini_api_key": "YOUR_GEMINI_API_KEY",
-  "perplexity_api_key": "YOUR_PERPLEXITY_API_KEY",
   "enable_bigg": true,
-  "enable_uniprot": true,
-  "enable_pubmed": true,
-  "enable_gemini": true,
-  "enable_perplexity": true,
-  "weight_kegg": 0.30,
-  "weight_bigg": 0.15,
-  "weight_uniprot": 0.15,
-  "weight_pubmed": 0.15,
-  "weight_gemini": 0.125,
-  "weight_perplexity": 0.125,
+  "weight_kegg": 0.70,
+  "weight_bigg": 0.30,
   "batch_size": 10,
   "max_concurrent": 5
 }
@@ -184,13 +161,10 @@ pre-commit install
 | 항목 | 기본값 | 설명 |
 |------|--------|------|
 | `kegg_organism_code` | `eco` | KEGG organism 코드 (예: `eco`, `sce`, `hsa`) |
-| `organism_name` | `Escherichia coli` | LLM 프롬프트에 사용되는 organism 이름 |
-| `weight_kegg` | `0.30` | KEGG 검증 가중치 |
-| `weight_bigg` | `0.15` | BiGG 검증 가중치 |
-| `weight_uniprot` | `0.15` | UniProt 검증 가중치 |
-| `weight_pubmed` | `0.15` | PubMed 검증 가중치 |
-| `weight_gemini` | `0.125` | Gemini 검증 가중치 |
-| `weight_perplexity` | `0.125` | Perplexity 검증 가중치 |
+| `organism_name` | `Escherichia coli` | organism 표시 이름 |
+| `enable_bigg` | `true` | BiGG local lookup 사용 여부 |
+| `weight_kegg` | `0.70` | KEGG 검증 가중치 |
+| `weight_bigg` | `0.30` | BiGG 검증 가중치 |
 | `batch_size` | `10` | 배치 평가 크기 |
 | `max_concurrent` | `5` | 최대 동시 평가 수 |
 
@@ -366,13 +340,10 @@ src/
 │   ├── rate_limiter.py    # 토큰 버킷 속도 제한기
 │   ├── kegg_client.py     # KEGG REST API 클라이언트
 │   ├── bigg_client.py     # BiGG Models API 클라이언트
-│   ├── uniprot_client.py  # UniProt REST API 클라이언트
-│   ├── pubmed_client.py   # PubMed/NCBI API 클라이언트
-│   ├── gemini_client.py   # Gemini 2.5 Flash 검증 클라이언트
-│   └── perplexity_client.py # Perplexity Sonar 검증 클라이언트
+│   └── bigg_lookup.py     # BiGG local lookup
 ├── evidence/          # Evidence 수집 및 스코어링
-│   ├── engine.py          # 오케스트레이터: 6개 소스별 반응 검증 실행
-│   ├── scoring.py         # 가중 다중 소스 confidence 점수 산출
+│   ├── engine.py          # KEGG/BiGG 반응 검증 실행
+│   ├── scoring.py         # 가중 confidence 점수 산출
 │   └── evidence_types.py  # 임계값 및 표시 상수
 ├── gapfill/           # Gap-filling 엔진
 │   ├── engine.py          # MILP 기반 gap-fill 워크플로우
@@ -415,8 +386,7 @@ src/
 
 - **SBML 파싱**: COBRApy (libsbml 래핑)
 - **GUI**: PySide6 (Qt6) + PyQtGraph
-- **DB APIs**: Biopython (KEGG, PubMed), aiohttp (BiGG, UniProt REST)
-- **LLM APIs**: google-genai (Gemini), openai SDK (Perplexity)
+- **DB APIs**: Biopython (KEGG), aiohttp (REST), BiGG local lookup
 - **Gap-Filling**: COBRApy MILP solver (GLPK/Gurobi)
 - **캐싱**: SQLite (aiosqlite)
 - **비동기**: QRunnable 워커 + asyncio 이벤트 루프 (워커 스레드, GUI) / asyncio.run (CLI)

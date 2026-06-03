@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
 from src.core.models import ModelDiff, ReactionChange
@@ -14,7 +11,7 @@ from src.versioning.change_summarizer import ChangeSummarizer
 
 @pytest.fixture
 def config() -> Config:
-    return Config(gemini_api_key=None)
+    return Config()
 
 
 @pytest.fixture
@@ -23,7 +20,7 @@ def summarizer(config: Config) -> ChangeSummarizer:
 
 
 class TestTemplateSummary:
-    """Template-based summary generation (no LLM)."""
+    """Template-based summary generation."""
 
     def test_initial_load(self, summarizer: ChangeSummarizer) -> None:
         diff = ModelDiff(
@@ -111,89 +108,8 @@ class TestTemplateSummary:
 class TestSummarizeAsync:
     """Async summarize() method."""
 
-    async def test_uses_template_when_no_api_key(self, summarizer: ChangeSummarizer) -> None:
+    async def test_uses_template(self, summarizer: ChangeSummarizer) -> None:
         diff = ModelDiff(reactions_added=["RXN1", "RXN2"])
         result = await summarizer.summarize(diff, "gap_fill")
         assert "Gap-filling" in result
         assert "2 reactions" in result
-
-    async def test_llm_fallback_on_error(self) -> None:
-        config = Config(gemini_api_key="fake-key")
-        summarizer = ChangeSummarizer(config)
-        diff = ModelDiff(reactions_added=["RXN1"])
-
-        with patch.object(
-            summarizer, "_llm_summary", side_effect=RuntimeError("API error")
-        ):
-            result = await summarizer.summarize(diff, "gap_fill")
-            assert "Gap-filling" in result
-
-    async def test_llm_called_when_key_present(self) -> None:
-        config = Config(gemini_api_key="fake-key")
-        summarizer = ChangeSummarizer(config)
-        diff = ModelDiff(reactions_added=["RXN1"])
-
-        with patch.object(
-            summarizer, "_llm_summary", new_callable=AsyncMock, return_value="LLM summary"
-        ) as mock_llm:
-            result = await summarizer.summarize(diff, "gap_fill")
-            assert result == "LLM summary"
-            mock_llm.assert_awaited_once_with(diff, "gap_fill")
-
-    async def test_llm_summary_builds_prompt(self) -> None:
-        """Verify _llm_summary calls Gemini with a proper prompt."""
-        config = Config(gemini_api_key="test-key")
-        summarizer = ChangeSummarizer(config)
-        diff = ModelDiff(
-            reactions_added=["GLNS", "PRPPS"],
-            reactions_modified=[
-                ReactionChange("PFK", "lower_bound", "0", "1"),
-            ],
-        )
-
-        mock_response = MagicMock()
-        mock_response.text = "Added 2 reactions and modified PFK bounds."
-        mock_client_instance = MagicMock()
-        mock_client_instance.models.generate_content.return_value = mock_response
-
-        mock_genai_module = MagicMock()
-        mock_genai_module.Client.return_value = mock_client_instance
-
-        # Pre-insert mock into sys.modules so `from google import genai` resolves
-        mock_google = MagicMock()
-        mock_google.genai = mock_genai_module
-        saved_google = sys.modules.get("google")
-        saved_genai = sys.modules.get("google.genai")
-        sys.modules["google"] = mock_google
-        sys.modules["google.genai"] = mock_genai_module
-        try:
-            result = await summarizer._llm_summary(diff, "gap_fill")
-        finally:
-            if saved_google is not None:
-                sys.modules["google"] = saved_google
-            else:
-                sys.modules.pop("google", None)
-            if saved_genai is not None:
-                sys.modules["google.genai"] = saved_genai
-            else:
-                sys.modules.pop("google.genai", None)
-
-        assert result == "Added 2 reactions and modified PFK bounds."
-        mock_client_instance.models.generate_content.assert_called_once()
-        call_args = mock_client_instance.models.generate_content.call_args
-        prompt = call_args.kwargs.get("contents", call_args[1].get("contents", ""))
-        assert "gap_fill" in prompt
-        assert "GLNS" in prompt
-
-    async def test_llm_empty_response_falls_back(self) -> None:
-        """When LLM returns empty text, summarize() falls back to template."""
-        config = Config(gemini_api_key="test-key")
-        summarizer = ChangeSummarizer(config)
-        diff = ModelDiff()
-
-        # Mock _llm_summary to raise ValueError (as empty response does)
-        with patch.object(
-            summarizer, "_llm_summary", side_effect=ValueError("Empty LLM response")
-        ):
-            result = await summarizer.summarize(diff, "initial_load")
-            assert "Initial model load" in result

@@ -10,10 +10,6 @@ from src.gui.theme import THEME
 SOURCE_COLORS: dict[EvidenceSource, str] = {
     EvidenceSource.KEGG: THEME.source_kegg,
     EvidenceSource.BIGG: THEME.source_bigg,
-    EvidenceSource.UNIPROT: THEME.source_uniprot,
-    EvidenceSource.PUBMED: THEME.source_pubmed,
-    EvidenceSource.GEMINI: THEME.source_gemini,
-    EvidenceSource.PERPLEXITY: THEME.source_perplexity,
 }
 
 

@@ -1,30 +1,20 @@
-"""Tests for evidence_types module — SOURCE_REGISTRY, helpers."""
+"""Tests for evidence source registry and helpers."""
 
 from __future__ import annotations
 
-import pytest
-
 from src.core.models import EvidenceSource
-
-try:
-    from src.evidence.evidence_types import (
-        SOURCE_REGISTRY,
-        SourceConfig,
-        get_active_sources,
-        get_ordered_sources,
-        get_source_config,
-    )
-
-    HAS_DEPS = True
-except ImportError:
-    HAS_DEPS = False
-
-pytestmark = pytest.mark.skipif(not HAS_DEPS, reason="PySide6 not available")
+from src.evidence.evidence_types import (
+    SOURCE_REGISTRY,
+    SourceConfig,
+    get_active_sources,
+    get_ordered_sources,
+    get_source_config,
+)
 
 
 class TestSourceRegistry:
-    def test_all_six_sources_registered(self) -> None:
-        assert len(SOURCE_REGISTRY) == 6
+    def test_all_sources_registered(self) -> None:
+        assert len(SOURCE_REGISTRY) == 2
         for source in EvidenceSource:
             assert source in SOURCE_REGISTRY
 
@@ -34,10 +24,9 @@ class TestSourceRegistry:
         assert cfg.order == 0
         assert cfg.requires_api_key is False
 
-    def test_gemini_requires_api_key(self) -> None:
-        cfg = SOURCE_REGISTRY[EvidenceSource.GEMINI]
-        assert cfg.requires_api_key is True
-        assert cfg.config_key == "gemini_api_key"
+    def test_no_sources_require_api_key(self) -> None:
+        assert all(not cfg.requires_api_key for cfg in SOURCE_REGISTRY.values())
+        assert all(not cfg.config_key for cfg in SOURCE_REGISTRY.values())
 
 
 class TestGetSourceConfig:
@@ -50,7 +39,7 @@ class TestGetSourceConfig:
 class TestGetOrderedSources:
     def test_returns_sorted_by_order(self) -> None:
         ordered = get_ordered_sources()
-        assert len(ordered) == 6
+        assert len(ordered) == 2
         orders = [sc.order for _, sc in ordered]
         assert orders == sorted(orders)
 
@@ -61,41 +50,15 @@ class TestGetOrderedSources:
 
 class TestGetActiveSources:
     def test_all_enabled(self) -> None:
-        """Mock config with all sources enabled."""
-
         class MockConfig:
             enable_bigg = True
-            enable_uniprot = True
-            enable_pubmed = True
-            enable_gemini = True
-            enable_perplexity = True
 
         active = get_active_sources(MockConfig())
-        assert len(active) == 6
+        assert active == [EvidenceSource.KEGG, EvidenceSource.BIGG]
 
-    def test_only_kegg_when_all_disabled(self) -> None:
+    def test_only_kegg_when_bigg_disabled(self) -> None:
         class MockConfig:
             enable_bigg = False
-            enable_uniprot = False
-            enable_pubmed = False
-            enable_gemini = False
-            enable_perplexity = False
 
         active = get_active_sources(MockConfig())
         assert active == [EvidenceSource.KEGG]
-
-    def test_partial_enable(self) -> None:
-        class MockConfig:
-            enable_bigg = True
-            enable_uniprot = False
-            enable_pubmed = True
-            enable_gemini = False
-            enable_perplexity = True
-
-        active = get_active_sources(MockConfig())
-        assert EvidenceSource.KEGG in active
-        assert EvidenceSource.BIGG in active
-        assert EvidenceSource.PUBMED in active
-        assert EvidenceSource.PERPLEXITY in active
-        assert EvidenceSource.UNIPROT not in active
-        assert EvidenceSource.GEMINI not in active

@@ -13,7 +13,7 @@ from src.utils.constants import SOURCE_WEIGHTS
 class ConfidenceScorer:
     """Calculate confidence scores from multi-source evidence.
 
-    Supports KEGG, Gemini, and Perplexity sources with configurable weights.
+    Supports KEGG and BiGG sources with configurable weights.
     When a source is absent (no items), its weight is redistributed to
     sources that have evidence.
     """
@@ -28,10 +28,6 @@ class ConfidenceScorer:
         # Store per-source scores
         evidence.kegg_score = source_scores.get(EvidenceSource.KEGG, 0.0)
         evidence.bigg_score = source_scores.get(EvidenceSource.BIGG, 0.0)
-        evidence.uniprot_score = source_scores.get(EvidenceSource.UNIPROT, 0.0)
-        evidence.pubmed_score = source_scores.get(EvidenceSource.PUBMED, 0.0)
-        evidence.gemini_score = source_scores.get(EvidenceSource.GEMINI, 0.0)
-        evidence.perplexity_score = source_scores.get(EvidenceSource.PERPLEXITY, 0.0)
 
         # Determine which sources have evidence
         active_sources: dict[str, float] = {}

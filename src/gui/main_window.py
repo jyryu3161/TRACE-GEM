@@ -753,8 +753,8 @@ class MainWindow(QMainWindow):
             "About GEM Evaluator",
             f"<h2>{APP_NAME} v{APP_VERSION}</h2>"
             "<p>Genome-Scale Metabolic Model Evidence Evaluator</p>"
-            "<p>Evaluates reactions in SBML models against KEGG, BiGG, UniProt, "
-            "PubMed, Gemini, and Perplexity to verify reaction evidence.</p>",
+            "<p>Evaluates reactions in SBML models against KEGG and BiGG "
+            "to verify reaction evidence.</p>",
         )
 
     def _show_settings(self) -> None:

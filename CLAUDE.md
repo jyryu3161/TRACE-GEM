@@ -1,6 +1,6 @@
 # GEM Evaluator
 
-Genome-Scale Metabolic Model Evidence Evaluator. Evaluates reactions in SBML models against biological databases (KEGG, UniProt, PubMed, BiGG, MetaCyc) to compute confidence scores.
+Genome-Scale Metabolic Model Evidence Evaluator. Evaluates reactions in SBML models against KEGG and BiGG evidence to compute confidence scores.
 
 ## Development Setup
 
@@ -48,12 +48,10 @@ src/
 │   ├── rate_limiter.py # Token-bucket rate limiter
 │   ├── bigg_client.py
 │   ├── kegg_client.py
-│   ├── pubmed_client.py
-│   ├── uniprot_client.py
-│   └── metacyc_client.py
+│   └── bigg_lookup.py
 ├── evidence/      # Evidence collection and scoring
-│   ├── engine.py       # Orchestrator: queries all sources per reaction
-│   ├── scoring.py      # Weighted multi-source confidence scoring
+│   ├── engine.py       # Orchestrator: queries KEGG/BiGG per reaction
+│   ├── scoring.py      # Weighted confidence scoring
 │   └── evidence_types.py # Thresholds and display constants
 ├── gui/           # PySide6 (Qt6) GUI
 │   ├── main_window.py  # Main app window, menus, export
@@ -83,7 +81,7 @@ src/
 
 - **SBML Parsing**: COBRApy (wraps libsbml)
 - **GUI**: PySide6 (Qt6) + PyQtGraph
-- **DB APIs**: Biopython (KEGG, PubMed), aiohttp (REST)
+- **DB APIs**: Biopython (KEGG), aiohttp (REST), BiGG local lookup
 - **Caching**: SQLite via aiosqlite
 - **Async**: QRunnable workers + asyncio event loops in worker threads
 

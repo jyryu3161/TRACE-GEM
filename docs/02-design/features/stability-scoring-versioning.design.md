@@ -303,12 +303,10 @@ class ChangeSummarizer:
     async def summarize(self, diff: ModelDiff, change_type: str) -> str:
         """변경 요약 생성.
 
-        1. LLM 사용 가능 시: Gemini API로 요약
-        2. LLM 불가 시: 템플릿 기반 자동 생성
+        1. 템플릿 기반 자동 생성
 
-        LLM 프롬프트:
-        "Summarize metabolic model changes in 1-2 sentences:
-         {change_type}, +{N} reactions, -{M} reactions, ~{K} modified..."
+        요약 예:
+        "Gap-filling: added {N} reactions"
         """
 
     def _template_summary(self, diff: ModelDiff, change_type: str) -> str:

@@ -57,25 +57,11 @@ class EvidencePanelWidget(QWidget):
         # KEGG Verification summary card (special — includes match ratios)
         html_parts.append(self._render_kegg_card(evidence))
 
-        # Database source cards (BiGG, UniProt, PubMed)
-        for source in (
-            EvidenceSource.BIGG,
-            EvidenceSource.UNIPROT,
-            EvidenceSource.PUBMED,
-        ):
+        # Database source cards
+        for source in (EvidenceSource.BIGG,):
             items = [i for i in evidence.items if i.source == source]
             if items:
                 html_parts.append(self._render_source_card(source, items[0]))
-
-        # Gemini verification card
-        gemini_items = [i for i in evidence.items if i.source == EvidenceSource.GEMINI]
-        if gemini_items:
-            html_parts.append(self._render_source_card(EvidenceSource.GEMINI, gemini_items[0]))
-
-        # Perplexity verification card
-        pplx_items = [i for i in evidence.items if i.source == EvidenceSource.PERPLEXITY]
-        if pplx_items:
-            html_parts.append(self._render_source_card(EvidenceSource.PERPLEXITY, pplx_items[0]))
 
         # Individual evidence items (all sources)
         for item in evidence.items:
