@@ -231,14 +231,19 @@ class GapFillEngine:
                     logger.info("Gap-fill iteration %d added no reactions", iteration + 1)
                     break
 
+                existing_before = self._model_reaction_ids(user_model)
                 added_candidates = self._apply_gapfill_results(
                     user_model, added_reactions, candidates
                 )
+                iteration_new_ids: list[str] = []
                 newly_added = 0
                 for candidate in added_candidates:
-                    if candidate.reaction.id not in added_by_id:
-                        added_by_id[candidate.reaction.id] = candidate
+                    reaction_id = candidate.reaction.id
+                    if reaction_id not in added_by_id:
+                        added_by_id[reaction_id] = candidate
                         newly_added += 1
+                        if reaction_id not in existing_before:
+                            iteration_new_ids.append(reaction_id)
 
                 if newly_added == 0:
                     logger.info("Gap-fill iteration %d produced no new reactions", iteration + 1)
@@ -263,11 +268,25 @@ class GapFillEngine:
                 if passed_now <= prev_passed:
                     logger.info(
                         "Gap-fill iteration %d fixed no additional tasks "
-                        "(%d -> %d passing); stopping",
+                        "(%d -> %d passing); rolling back %d reaction(s) and stopping",
                         iteration + 1,
                         prev_passed,
                         passed_now,
+                        len(iteration_new_ids),
                     )
+                    self._rollback_gapfill_results(
+                        user_model,
+                        added_candidates,
+                        iteration_new_ids,
+                        added_by_id,
+                    )
+                    current_results = self._run_tasks(
+                        user_model,
+                        tasks,
+                        phase="after",
+                        progress_callback=lambda c, t, d: _progress("testing_after", c, t, d),
+                    )
+                    latest_after_results = current_results
                     break
                 prev_passed = passed_now
 
@@ -524,10 +543,18 @@ class GapFillEngine:
         """Minimum objective value required from COBRApy gap-fill."""
         configured = self._config.gapfill_lower_bound
         if task.expected_operator == ">":
-            return max(configured, task.expected_value + TaskRunner._TOLERANCE)
+            return max(configured, task.expected_value + (TaskRunner._TOLERANCE * 2.0))
         if task.expected_operator == ">=":
             return max(configured, task.expected_value)
         return configured
+
+    @staticmethod
+    def _model_reaction_ids(model: cobra.Model) -> set[str]:
+        """Return reaction IDs currently present in ``model``."""
+        try:
+            return set(model.reactions.list_attr("id"))
+        except Exception:
+            return set()
 
     def _gapfill_for_task(
         self,
@@ -643,7 +670,7 @@ class GapFillEngine:
             try:
                 model.reactions.get_by_id(rxn.id)
             except KeyError:
-                new_reactions.append(rxn)
+                new_reactions.append(rxn.copy())
 
         if new_reactions:
             model.add_reactions(new_reactions)
@@ -666,3 +693,30 @@ class GapFillEngine:
             added_candidates.append(candidate)
 
         return added_candidates
+
+    def _rollback_gapfill_results(
+        self,
+        model: cobra.Model,
+        added_candidates: list[CandidateReaction],
+        reaction_ids: list[str],
+        added_by_id: dict[str, CandidateReaction],
+    ) -> None:
+        """Remove reaction additions from a failed/no-progress iteration."""
+        reaction_id_set = set(reaction_ids)
+        if not reaction_id_set:
+            return
+
+        for candidate in added_candidates:
+            if candidate.reaction.id in reaction_id_set:
+                candidate.selected = False
+                added_by_id.pop(candidate.reaction.id, None)
+
+        reactions_to_remove: list[cobra.Reaction] = []
+        for reaction_id in reaction_id_set:
+            try:
+                reactions_to_remove.append(model.reactions.get_by_id(reaction_id))
+            except KeyError:
+                continue
+
+        if reactions_to_remove:
+            model.remove_reactions(reactions_to_remove, remove_orphans=True)

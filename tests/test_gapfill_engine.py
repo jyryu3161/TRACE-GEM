@@ -317,7 +317,7 @@ class TestGapFillEngine:
         with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
              patch.object(engine, "_run_gapfill", new_callable=AsyncMock, return_value=[mock_rxn]), \
              patch.object(engine, "_apply_gapfill_results", return_value=[sample_candidates[0]]):
-            result = await engine.run(
+            await engine.run(
                 mock_model,
                 mock_universal,
                 sample_candidates,
@@ -496,6 +496,22 @@ class TestGapFillEngine:
         assert result[0].source_model == "gapfill"
         assert result[0].selected is True
         assert "EX_so4_e" in model.reactions
+        assert model.reactions.get_by_id("EX_so4_e") is not rxn
+
+    def test_lower_bound_for_strict_greater_uses_extra_tolerance(
+        self, engine: GapFillEngine
+    ) -> None:
+        """Strict greater-than tasks need solver slack beyond the pass tolerance."""
+        engine._config.gapfill_lower_bound = 0.0
+        task = MetabolicTask(
+            task_id="GT",
+            task_type="Metabolite",
+            target_id="atp_c",
+            expected_operator=">",
+            expected_value=1.0,
+        )
+
+        assert engine._lower_bound_for_task(task) == pytest.approx(1.000002)
 
     def test_retry_discards_subthreshold_solution(
         self, engine: GapFillEngine
@@ -648,3 +664,50 @@ class TestGapFillEngine:
         # Despite gapfill_iterations=5, the no-progress guard stops after one
         # gap-fill round instead of looping five times.
         assert gapfill_mock.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_progress_iteration_rolls_back_added_reactions(
+        self,
+        engine: GapFillEngine,
+        sample_tasks: list[MetabolicTask],
+        sample_candidates: list[CandidateReaction],
+        sample_evidence: dict[str, ReactionEvidence],
+    ) -> None:
+        """No-progress gap-fill additions are removed before returning."""
+        engine._config.gapfill_iterations = 5
+        before_results = [
+            TaskResult(task=sample_tasks[0], passed=False, actual_value=0.0),
+            TaskResult(task=sample_tasks[1], passed=True, actual_value=1.0),
+        ]
+        after_no_progress = [
+            TaskResult(task=sample_tasks[0], passed=False, actual_value=0.0),
+            TaskResult(task=sample_tasks[1], passed=True, actual_value=1.0),
+        ]
+        after_rollback = [
+            TaskResult(task=sample_tasks[0], passed=False, actual_value=0.0),
+            TaskResult(task=sample_tasks[1], passed=True, actual_value=1.0),
+        ]
+        run_results = [before_results, after_no_progress, after_rollback]
+
+        def mock_run_all(model, tasks, progress_callback=None):
+            return run_results.pop(0)
+
+        model = cobra.Model("draft")
+        rxn = cobra.Reaction("GLNS")
+        gapfill_mock = AsyncMock(return_value=[rxn])
+
+        with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
+             patch.object(engine, "_run_gapfill", gapfill_mock):
+            result = await engine.run(
+                model,
+                MagicMock(),
+                sample_candidates,
+                sample_tasks,
+                sample_evidence,
+            )
+
+        assert "GLNS" not in model.reactions
+        assert result.added_reactions == []
+        assert result.tasks_fixed == 0
+        assert result.tasks_broken == 0
+        assert sample_candidates[0].selected is False
