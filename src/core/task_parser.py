@@ -224,9 +224,7 @@ class TaskRunner:
             if norm == rxn.id:
                 continue
             existing = rxn_map.get(norm)
-            if existing is None:
-                rxn_map[norm] = rxn.id
-            elif existing.endswith("_boundary") and not rxn.id.endswith("_boundary"):
+            if existing is None or existing.endswith("_boundary") and not rxn.id.endswith("_boundary"):
                 rxn_map[norm] = rxn.id
 
             # Collect all actual IDs that normalise to the same exchange ID
@@ -274,9 +272,7 @@ class TaskRunner:
             if norm == met.id:
                 continue
             existing = met_map.get(norm)
-            if existing is None:
-                met_map[norm] = met.id
-            elif existing.endswith("_boundary") and not met.id.endswith("_boundary"):
+            if existing is None or existing.endswith("_boundary") and not met.id.endswith("_boundary"):
                 met_map[norm] = met.id
 
         return rxn_map, met_map, exchange_groups
@@ -325,88 +321,8 @@ class TaskRunner:
         6. Set objective based on task type
         7. Optimize and compare with expected value
         """
-        test_model = model.copy()
-        rxn_map, met_map, exchange_groups = self._build_id_maps(test_model)
-
-        # Resolve exchanges that should stay open unconditionally.
-        keep_open: set[str] = set()
-        for free_id in self._FREE_EXCHANGE:
-            for actual in self._resolve_exchange_group(free_id, exchange_groups):
-                keep_open.add(actual)
-        for trace_id in self._TRACE_ELEMENTS:
-            for actual in self._resolve_exchange_group(trace_id, exchange_groups):
-                keep_open.add(actual)
-
-        # Save default lower bounds for keep-open exchanges so we can
-        # restore them after the blanket close.
-        default_lb: dict[str, float] = {}
-        for rxn in test_model.reactions:
-            if rxn.id in keep_open:
-                default_lb[rxn.id] = rxn.lower_bound
-
         try:
-            # Close ALL non-boundary exchange reactions (lb=0).
-            # Boundary sinks must stay open — old SBML models need them
-            # for the _LPAREN_ exchange reactions to export properly.
-            closed_count = 0
-            for rxn in test_model.reactions:
-                if not rxn.id.startswith("EX_"):
-                    continue
-                if rxn.id.endswith("_boundary"):
-                    continue
-                if rxn.lower_bound < 0:
-                    rxn.lower_bound = 0.0
-                    closed_count += 1
-
-            # Restore keep-open exchanges (free + trace) to their defaults.
-            for rxn_id, lb in default_lb.items():
-                test_model.reactions.get_by_id(rxn_id).lower_bound = lb
-
-            logger.debug(
-                "Closed %d exchanges, restored %d (free+trace)",
-                closed_count, len(default_lb),
-            )
-
-            # Apply medium
-            self._apply_medium(test_model, task.medium, rxn_map, exchange_groups)
-
-            # Apply constraints
-            self._apply_constraints(test_model, task.constraints, rxn_map, exchange_groups)
-
-            # Set objective based on task type
-            if task.task_type == "Metabolite":
-                # Resolve metabolite ID via normalisation map
-                actual_met_id = self._resolve_metabolite(task.target_id, met_map)
-                if not actual_met_id:
-                    return TaskResult(
-                        task=task,
-                        passed=False,
-                        actual_value=0.0,
-                        error_message=f"Metabolite '{task.target_id}' not found in model",
-                    )
-
-                obj_rxn = self._make_demand_reaction(
-                    test_model, task.target_id, actual_met_id, met_map,
-                )
-                test_model.add_reactions([obj_rxn])
-                test_model.objective = obj_rxn.id
-            elif task.task_type == "Reaction":
-                actual_rxn_id = self._resolve_reaction(task.target_id, rxn_map)
-                if not actual_rxn_id:
-                    return TaskResult(
-                        task=task,
-                        passed=False,
-                        actual_value=0.0,
-                        error_message=f"Reaction '{task.target_id}' not found in model",
-                    )
-                test_model.objective = actual_rxn_id
-            else:
-                return TaskResult(
-                    task=task,
-                    passed=False,
-                    actual_value=0.0,
-                    error_message=f"Unknown task type: {task.task_type}",
-                )
+            test_model = self.prepare_task_model(model, task)
 
             # Optimize
             solution = test_model.optimize()
@@ -434,6 +350,95 @@ class TaskRunner:
                 actual_value=0.0,
                 error_message=str(exc),
             )
+
+    def prepare_task_model(
+        self,
+        model: cobra.Model,
+        task: MetabolicTask,
+        *,
+        copy_model: bool = True,
+    ) -> cobra.Model:
+        """Prepare a model copy for evaluating or gap-filling one task.
+
+        This is the single source of truth for task medium, extra
+        constraints, ID normalisation, and objective construction.  Gap-fill
+        must use the same model environment as task evaluation; otherwise it
+        can declare a task infeasible even when the full model passes it.
+        """
+        test_model = model.copy() if copy_model else model
+        rxn_map, met_map, exchange_groups = self._build_id_maps(test_model)
+
+        self._apply_task_environment(test_model, task, rxn_map, exchange_groups)
+        self._set_task_objective(test_model, task, rxn_map, met_map)
+        return test_model
+
+    def _apply_task_environment(
+        self,
+        model: cobra.Model,
+        task: MetabolicTask,
+        rxn_map: dict[str, str],
+        exchange_groups: dict[str, list[str]],
+    ) -> None:
+        """Apply the task medium and reaction constraints to ``model``."""
+        keep_open: set[str] = set()
+        for free_id in self._FREE_EXCHANGE:
+            keep_open.update(self._resolve_exchange_group(free_id, exchange_groups))
+        for trace_id in self._TRACE_ELEMENTS:
+            keep_open.update(self._resolve_exchange_group(trace_id, exchange_groups))
+
+        default_lb: dict[str, float] = {
+            rxn.id: rxn.lower_bound for rxn in model.reactions if rxn.id in keep_open
+        }
+
+        closed_count = 0
+        for rxn in model.reactions:
+            if not rxn.id.startswith("EX_"):
+                continue
+            if rxn.id.endswith("_boundary"):
+                continue
+            if rxn.lower_bound < 0:
+                rxn.lower_bound = 0.0
+                closed_count += 1
+
+        for rxn_id, lb in default_lb.items():
+            model.reactions.get_by_id(rxn_id).lower_bound = lb
+
+        logger.debug(
+            "Closed %d exchanges, restored %d (free+trace)",
+            closed_count, len(default_lb),
+        )
+
+        self._apply_medium(model, task.medium, rxn_map, exchange_groups)
+        self._apply_constraints(model, task.constraints, rxn_map, exchange_groups)
+
+    def _set_task_objective(
+        self,
+        model: cobra.Model,
+        task: MetabolicTask,
+        rxn_map: dict[str, str],
+        met_map: dict[str, str],
+    ) -> None:
+        """Set the objective for a task-prepared model."""
+        if task.task_type == "Metabolite":
+            actual_met_id = self._resolve_metabolite(task.target_id, met_map)
+            if not actual_met_id:
+                raise ValueError(f"Metabolite '{task.target_id}' not found in model")
+
+            obj_rxn = self._make_demand_reaction(
+                model, task.target_id, actual_met_id, met_map,
+            )
+            model.add_reactions([obj_rxn])
+            model.objective = obj_rxn.id
+            return
+
+        if task.task_type == "Reaction":
+            actual_rxn_id = self._resolve_reaction(task.target_id, rxn_map)
+            if not actual_rxn_id:
+                raise ValueError(f"Reaction '{task.target_id}' not found in model")
+            model.objective = actual_rxn_id
+            return
+
+        raise ValueError(f"Unknown task type: {task.task_type}")
 
     def run_all(
         self,

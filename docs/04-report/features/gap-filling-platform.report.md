@@ -177,7 +177,7 @@ T1 ✅ ─→ T2 ✅ (dev-loader)  ─→ T4 ✅ (dev-loader)  ─→ T6 ✅ (de
 |------|------|----------|
 | 종 필터링 초기 비용 | 첫 실행 시 KEGG API 1회 (캐시 후 30일 유효) | 백그라운드 프리로딩 |
 | GPR 정확도 | KO 기반 추정, 실제 operon 구조 미반영 | RefSeq/STRING 통합 |
-| LLM 검증 시간 | 후보 수천 건 시 Gemini/Perplexity 비용 | 상위 N개만 LLM 검증 |
+| Evidence 평가 시간 | 후보 수천 건 시 KEGG 요청 비용 | 캐시와 배치 크기 튜닝 |
 | Gap-fill infeasible | LP solver 한계로 일부 task 해결 불가 | 반복적 relaxation 전략 |
 
 ---

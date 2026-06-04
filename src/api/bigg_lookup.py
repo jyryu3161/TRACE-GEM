@@ -13,7 +13,7 @@ from src.core.models import (
     Reaction,
 )
 
-logger = logging.getLogger("gem_evaluator.api.bigg_lookup")
+logger = logging.getLogger("metataskgapfill.api.bigg_lookup")
 
 # Default data directory
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
@@ -326,18 +326,17 @@ class BiGGLookup:
         rid = bigg_id or reaction.id
         entry = self.get_reaction(rid)
 
-        if entry is None:
+        if entry is None and reaction.name:
             # Try fuzzy match by name as fallback
-            if reaction.name:
-                matches = self.search_by_name(reaction.name, max_results=1)
-                if matches:
-                    entry = matches[0]
-                    logger.debug(
-                        "BiGG fuzzy match: '%s' → '%s' (by name '%s')",
-                        rid,
-                        entry.bigg_id,
-                        reaction.name,
-                    )
+            matches = self.search_by_name(reaction.name, max_results=1)
+            if matches:
+                entry = matches[0]
+                logger.debug(
+                    "BiGG fuzzy match: '%s' → '%s' (by name '%s')",
+                    rid,
+                    entry.bigg_id,
+                    reaction.name,
+                )
 
         if entry is None:
             return [

@@ -7,14 +7,13 @@ import logging
 from src.core.models import ModelDiff
 from src.utils.config import Config
 
-logger = logging.getLogger("gem_evaluator.versioning.change_summarizer")
+logger = logging.getLogger("metataskgapfill.versioning.change_summarizer")
 
 
 class ChangeSummarizer:
     """Convert a ModelDiff into a natural-language summary.
 
-    Tries Gemini LLM when an API key is configured, falling back to
-    template-based generation.
+    Uses deterministic template-based generation.
     """
 
     def __init__(self, config: Config) -> None:
@@ -30,12 +29,6 @@ class ChangeSummarizer:
         Returns:
             Human-readable summary string.
         """
-        if self._config.gemini_api_key:
-            try:
-                return await self._llm_summary(diff, change_type)
-            except Exception as e:
-                logger.warning("LLM summarization failed, using template: %s", e)
-
         return self._template_summary(diff, change_type)
 
     def _template_summary(self, diff: ModelDiff, change_type: str) -> str:
@@ -52,41 +45,6 @@ class ChangeSummarizer:
         # Generic fallback
         counts = diff.summary_counts
         return f"{change_type}: {counts}" if counts != "No changes" else change_type
-
-    async def _llm_summary(self, diff: ModelDiff, change_type: str) -> str:
-        """Summarize via Gemini LLM."""
-        from google import genai  # type: ignore[import-untyped]
-
-        client = genai.Client(api_key=self._config.gemini_api_key.strip())  # type: ignore[union-attr]
-
-        prompt = (
-            "Summarize the following metabolic model changes in 1-2 sentences. "
-            "Be concise and specific.\n\n"
-            f"Change type: {change_type}\n"
-            f"Changes: {diff.summary_counts}\n"
-        )
-
-        if diff.reactions_added:
-            prompt += f"Reactions added: {', '.join(diff.reactions_added[:10])}"
-            if len(diff.reactions_added) > 10:
-                prompt += f" (and {len(diff.reactions_added) - 10} more)"
-            prompt += "\n"
-
-        if diff.reactions_removed:
-            prompt += f"Reactions removed: {', '.join(diff.reactions_removed[:10])}\n"
-
-        if diff.reactions_modified:
-            mod_ids = sorted({c.reaction_id for c in diff.reactions_modified})[:10]
-            prompt += f"Reactions modified: {', '.join(mod_ids)}\n"
-
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
-        text = (response.text or "").strip()
-        if not text:
-            raise ValueError("Empty LLM response")
-        return text
 
     # ------------------------------------------------------------------
     # Template helpers

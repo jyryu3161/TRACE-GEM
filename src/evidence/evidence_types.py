@@ -17,10 +17,6 @@ STRENGTH_LABELS = {
 SOURCE_LABELS = {
     EvidenceSource.KEGG: "KEGG",
     EvidenceSource.BIGG: "BiGG Models",
-    EvidenceSource.UNIPROT: "UniProt",
-    EvidenceSource.PUBMED: "PubMed",
-    EvidenceSource.GEMINI: "Gemini",
-    EvidenceSource.PERPLEXITY: "Perplexity",
 }
 
 # Default color coding for evidence strength (hex literals — no GUI dependency)
@@ -35,10 +31,6 @@ STRENGTH_COLORS: dict[EvidenceStrength, str] = {
 _DEFAULT_SOURCE_COLORS: dict[EvidenceSource, str] = {
     EvidenceSource.KEGG: "#3498db",
     EvidenceSource.BIGG: "#2ecc71",
-    EvidenceSource.UNIPROT: "#9b59b6",
-    EvidenceSource.PUBMED: "#e74c3c",
-    EvidenceSource.GEMINI: "#1abc9c",
-    EvidenceSource.PERPLEXITY: "#34495e",
 }
 
 
@@ -76,46 +68,6 @@ SOURCE_REGISTRY: dict[EvidenceSource, SourceConfig] = {
         weight_key="weight_bigg",
         description="BiGG universal reaction database",
         order=1,
-    ),
-    EvidenceSource.UNIPROT: SourceConfig(
-        display_name="UniProt",
-        color=_DEFAULT_SOURCE_COLORS[EvidenceSource.UNIPROT],
-        requires_api_key=False,
-        config_key="",
-        enable_key="enable_uniprot",
-        weight_key="weight_uniprot",
-        description="UniProt protein/gene evidence",
-        order=2,
-    ),
-    EvidenceSource.PUBMED: SourceConfig(
-        display_name="PubMed",
-        color=_DEFAULT_SOURCE_COLORS[EvidenceSource.PUBMED],
-        requires_api_key=False,
-        config_key="pubmed_api_key",
-        enable_key="enable_pubmed",
-        weight_key="weight_pubmed",
-        description="PubMed literature evidence",
-        order=4,
-    ),
-    EvidenceSource.GEMINI: SourceConfig(
-        display_name="Gemini",
-        color=_DEFAULT_SOURCE_COLORS[EvidenceSource.GEMINI],
-        requires_api_key=True,
-        config_key="gemini_api_key",
-        enable_key="enable_gemini",
-        weight_key="weight_gemini",
-        description="Gemini LLM reaction verification",
-        order=5,
-    ),
-    EvidenceSource.PERPLEXITY: SourceConfig(
-        display_name="Perplexity",
-        color=_DEFAULT_SOURCE_COLORS[EvidenceSource.PERPLEXITY],
-        requires_api_key=True,
-        config_key="perplexity_api_key",
-        enable_key="enable_perplexity",
-        weight_key="weight_perplexity",
-        description="Perplexity species-specific verification",
-        order=6,
     ),
 }
 

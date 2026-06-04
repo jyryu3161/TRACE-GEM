@@ -81,7 +81,7 @@
 
 | Item | Status | Details |
 |------|:------:|---------|
-| `evaluate_candidate()` method | MATCH | Present. Uses `resolve_universal()`, BiGG auto-STRONG, EC-based UniProt. Includes PubMed, MetaCyc, Gemini, Perplexity steps. |
+| `evaluate_candidate()` method | MATCH | Present. Uses universal ID resolution, KEGG verification, and BiGG auto-STRONG. |
 | `evaluate_candidates_batch()` method | MATCH | Present with same batch/semaphore pattern as `evaluate_batch()`. |
 
 ### `src/gui/main_window.py`

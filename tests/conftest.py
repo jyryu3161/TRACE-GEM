@@ -164,22 +164,6 @@ def mock_bigg_response() -> dict:
 
 
 @pytest.fixture
-def mock_uniprot_response() -> dict:
-    """Load mock UniProt API response from fixture file."""
-    import json
-
-    return json.loads((FIXTURES_DIR / "mock_uniprot_response.json").read_text())
-
-
-@pytest.fixture
-def mock_pubmed_response() -> dict:
-    """Load mock PubMed API response from fixture file."""
-    import json
-
-    return json.loads((FIXTURES_DIR / "mock_pubmed_response.json").read_text())
-
-
-@pytest.fixture
 def sample_evidence_map() -> dict[str, ReactionEvidence]:
     """Evidence results for the sample model reactions."""
     ev_eno = ReactionEvidence(reaction_id="ENO")

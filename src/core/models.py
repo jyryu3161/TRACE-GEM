@@ -1,4 +1,4 @@
-"""Data models for the GEM Evaluator."""
+"""Data models for the MetaTaskGapFill."""
 
 from __future__ import annotations
 
@@ -16,10 +16,6 @@ class EvidenceStrength(Enum):
 class EvidenceSource(Enum):
     KEGG = "kegg"
     BIGG = "bigg"
-    UNIPROT = "uniprot"
-    PUBMED = "pubmed"
-    GEMINI = "gemini"
-    PERPLEXITY = "perplexity"
 
 
 class EvaluationStatus(Enum):
@@ -252,10 +248,6 @@ class ReactionEvidence:
     # Per-source scores
     kegg_score: float = 0.0
     bigg_score: float = 0.0
-    uniprot_score: float = 0.0
-    pubmed_score: float = 0.0
-    gemini_score: float = 0.0
-    perplexity_score: float = 0.0
 
     # Cross-reference IDs resolved
     ec_numbers: list[str] = field(default_factory=list)
@@ -273,10 +265,6 @@ class ReactionEvidence:
             "error_message": self.error_message,
             "kegg_score": self.kegg_score,
             "bigg_score": self.bigg_score,
-            "uniprot_score": self.uniprot_score,
-            "pubmed_score": self.pubmed_score,
-            "gemini_score": self.gemini_score,
-            "perplexity_score": self.perplexity_score,
             "ec_numbers": self.ec_numbers,
             "kegg_reaction_ids": self.kegg_reaction_ids,
             "substrate_match_ratio": self.substrate_match_ratio,
@@ -286,7 +274,12 @@ class ReactionEvidence:
 
     @classmethod
     def from_dict(cls, data: dict) -> ReactionEvidence:
-        items = [EvidenceItem.from_dict(d) for d in data.get("items", [])]
+        items: list[EvidenceItem] = []
+        for item_data in data.get("items", []):
+            try:
+                items.append(EvidenceItem.from_dict(item_data))
+            except ValueError:
+                continue
         return cls(
             reaction_id=data["reaction_id"],
             confidence_score=data.get("confidence_score", 0.0),
@@ -294,10 +287,6 @@ class ReactionEvidence:
             error_message=data.get("error_message"),
             kegg_score=data.get("kegg_score", 0.0),
             bigg_score=data.get("bigg_score", 0.0),
-            uniprot_score=data.get("uniprot_score", 0.0),
-            pubmed_score=data.get("pubmed_score", 0.0),
-            gemini_score=data.get("gemini_score", 0.0),
-            perplexity_score=data.get("perplexity_score", 0.0),
             ec_numbers=data.get("ec_numbers", []),
             kegg_reaction_ids=data.get("kegg_reaction_ids", []),
             substrate_match_ratio=data.get("substrate_match_ratio", 0.0),
@@ -439,6 +428,7 @@ class GapFillResult:
     task_results_before: list[TaskResult] = field(default_factory=list)
     task_results_after: list[TaskResult] = field(default_factory=list)
     tasks_fixed: int = 0
+    tasks_broken: int = 0
     total_tasks: int = 0
     iterations: int = 0
     infeasible_tasks: list[str] = field(default_factory=list)

@@ -15,7 +15,7 @@ from src.core.models import (
 )
 from src.utils.constants import KEGG_API_BASE, RATE_LIMITS
 
-logger = logging.getLogger("gem_evaluator.api.kegg")
+logger = logging.getLogger("metataskgapfill.api.kegg")
 
 
 @dataclass

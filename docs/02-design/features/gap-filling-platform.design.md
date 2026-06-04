@@ -622,7 +622,7 @@ class EvidenceEngine:
 
         기존 evaluate_reaction()과의 차이:
         - resolve_universal() 사용 (annotation 형식 차이)
-        - 유전자가 없으므로 UniProt는 EC 기반 검색만
+        - Universal model 후보이므로 BiGG evidence는 자동 STRONG
         - BiGG verification: universal model 자체에서 왔으므로 자동 STRONG
         """
 

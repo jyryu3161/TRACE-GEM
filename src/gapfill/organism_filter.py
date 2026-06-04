@@ -4,21 +4,21 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import defaultdict
 from collections.abc import Callable
 
 from src.api.base_client import BaseAPIClient
-from src.api.rate_limiter import RateLimiter
 from src.cache.cache_manager import CacheManager
 from src.core.id_mapper import IdentifierMapper
 from src.core.mapping_data import MappingData
-from src.core.models import CandidateReaction, ExternalIDs
+from src.core.models import CandidateReaction
 from src.utils.constants import (
     KEGG_API_BASE,
     ORGANISM_FILTER_CACHE_TTL,
     RATE_LIMITS,
 )
 
-logger = logging.getLogger("gem_evaluator.gapfill.organism_filter")
+logger = logging.getLogger("metataskgapfill.gapfill.organism_filter")
 
 
 class _KEGGLinkClient(BaseAPIClient):
@@ -56,6 +56,7 @@ class OrganismFilter:
         self._id_mapper: IdentifierMapper | None = None
         self._kegg_client = _KEGGLinkClient(cache_manager=cache_manager)
         self._organism_reactions: set[str] | None = None
+        self._reaction_genes: dict[str, list[str]] = {}
 
         if mapping_data:
             self._id_mapper = IdentifierMapper(mapping_data)
@@ -63,8 +64,9 @@ class OrganismFilter:
     async def initialize(self) -> None:
         """Load the organism's complete reaction set from KEGG (1 API call).
 
-        GET https://rest.kegg.jp/link/reaction/{organism_code}
-        Response format: "eco:b0001\\trn:R00200\\n"
+        KEGG does not expose a direct organism -> reaction link endpoint.
+        Build the set through organism KO/EC annotations and global KO/EC ->
+        reaction links.
         """
         self._organism_reactions = await self._load_organism_reactions()
         logger.info(
@@ -165,43 +167,19 @@ class OrganismFilter:
 
         return kegg_ids
 
-    async def _load_organism_reactions(self) -> set[str]:
-        """Load all reaction IDs for the organism from KEGG.
-
-        Cache key: "organism_reactions:{code}"
-        Cache TTL: 30 days
-        """
-        cache_key = f"organism_reactions:{self._organism}"
-        data = await self._kegg_client.get(
-            f"/link/reaction/{self._organism}",
-            cache_key=cache_key,
-            cache_ttl=ORGANISM_FILTER_CACHE_TTL,
-        )
-
-        if not data or not isinstance(data, str):
-            logger.warning(
-                "No KEGG reaction data for organism '%s'", self._organism
-            )
-            return set()
-
-        # Parse: "eco:b0001\trn:R00200\n" -> {"R00200", ...}
-        reaction_ids: set[str] = set()
-        for line in data.strip().splitlines():
-            parts = line.split("\t")
-            if len(parts) >= 2:
-                match = re.search(r"rn:(R\d{5})", parts[1])
-                if match:
-                    reaction_ids.add(match.group(1))
-
-        return reaction_ids
-
     async def _get_organism_genes_for_reaction(
         self, kegg_reaction_id: str
     ) -> list[str]:
         """Get organism-specific genes for a reaction.
 
-        GET /link/genes/{organism}/rn:{reaction_id}
+        Genes are populated while loading the organism reaction set. KEGG's
+        direct ``/link/{organism}/rn:Rxxxxx`` endpoint currently returns empty
+        for this relationship.
         """
+        cached_genes = self._reaction_genes.get(kegg_reaction_id)
+        if cached_genes is not None:
+            return list(cached_genes)
+
         cache_key = f"organism_genes:{self._organism}:{kegg_reaction_id}"
         data = await self._kegg_client.get(
             f"/link/{self._organism}/rn:{kegg_reaction_id}",
@@ -213,24 +191,93 @@ class OrganismFilter:
             return []
 
         # Parse: "rn:R00200\teco:b0001\n" -> ["b0001", ...]
-        genes: list[str] = []
+        parsed_genes: list[str] = []
         for line in data.strip().splitlines():
             parts = line.split("\t")
             if len(parts) >= 2:
                 gene_part = parts[1]
                 # Strip organism prefix: "eco:b0001" -> "b0001"
-                if ":" in gene_part:
-                    gene_id = gene_part.split(":", 1)[1]
-                else:
-                    gene_id = gene_part
-                if gene_id not in genes:
-                    genes.append(gene_id)
+                gene_id = gene_part.split(":", 1)[1] if ":" in gene_part else gene_part
+                if gene_id not in parsed_genes:
+                    parsed_genes.append(gene_id)
 
-        return genes
+        return parsed_genes
 
     async def close(self) -> None:
         """Close the KEGG client session."""
         await self._kegg_client.close()
+
+    async def _load_organism_reactions(self) -> set[str]:
+        """Load organism-specific reactions via KEGG KO and EC links.
+
+        KEGG supports organism -> KO/EC links and global KO/EC -> reaction
+        links, but ``/link/reaction/{org}`` and ``/link/rn/{org}`` return 400.
+        This method joins the supported link tables in memory and also builds
+        a reaction -> organism genes map for GPR annotation.
+        """
+        ko_to_genes = await self._load_organism_feature_genes("ko")
+        ec_to_genes = await self._load_organism_feature_genes("ec")
+
+        reaction_genes: dict[str, set[str]] = defaultdict(set)
+        reaction_ids: set[str] = set()
+
+        if ko_to_genes:
+            ko_to_reactions = await self._load_feature_reactions("ko")
+            self._merge_feature_reactions(ko_to_genes, ko_to_reactions, reaction_genes)
+
+        if ec_to_genes:
+            ec_to_reactions = await self._load_feature_reactions("ec")
+            self._merge_feature_reactions(ec_to_genes, ec_to_reactions, reaction_genes)
+
+        for reaction_id, genes in reaction_genes.items():
+            if genes:
+                reaction_ids.add(reaction_id)
+
+        self._reaction_genes = {
+            reaction_id: sorted(genes)
+            for reaction_id, genes in reaction_genes.items()
+            if genes
+        }
+
+        if not reaction_ids:
+            logger.warning(
+                "No KEGG reaction data for organism '%s'", self._organism
+            )
+
+        return reaction_ids
+
+    async def _load_organism_feature_genes(
+        self,
+        feature_db: str,
+    ) -> dict[str, set[str]]:
+        """Return feature ID -> organism genes for KO or EC annotations."""
+        cache_key = f"organism_{feature_db}:{self._organism}"
+        data = await self._kegg_client.get(
+            f"/link/{feature_db}/{self._organism}",
+            cache_key=cache_key,
+            cache_ttl=ORGANISM_FILTER_CACHE_TTL,
+        )
+        return _parse_feature_gene_links(data, feature_db)
+
+    async def _load_feature_reactions(self, feature_db: str) -> dict[str, set[str]]:
+        """Return KO/EC feature ID -> KEGG reaction IDs."""
+        cache_key = f"kegg_{feature_db}_reaction_links"
+        data = await self._kegg_client.get(
+            f"/link/rn/{feature_db}",
+            cache_key=cache_key,
+            cache_ttl=ORGANISM_FILTER_CACHE_TTL,
+        )
+        return _parse_feature_reaction_links(data, feature_db)
+
+    def _merge_feature_reactions(
+        self,
+        feature_to_genes: dict[str, set[str]],
+        feature_to_reactions: dict[str, set[str]],
+        reaction_genes: dict[str, set[str]],
+    ) -> None:
+        for feature_id, genes in feature_to_genes.items():
+            for reaction_id in feature_to_reactions.get(feature_id, set()):
+                reaction_genes[reaction_id].update(genes)
 
 
 def _extract_id(uri: str) -> str:
@@ -238,3 +285,39 @@ def _extract_id(uri: str) -> str:
     if "/" in uri:
         return uri.rsplit("/", 1)[-1]
     return uri
+
+
+def _parse_feature_gene_links(data: object, feature_db: str) -> dict[str, set[str]]:
+    """Parse ``org:gene<TAB>{feature_db}:id`` KEGG link output."""
+    result: dict[str, set[str]] = defaultdict(set)
+    if not data or not isinstance(data, str):
+        return result
+
+    prefix = f"{feature_db}:"
+    for line in data.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2 or not parts[1].startswith(prefix):
+            continue
+        gene = parts[0].split(":", 1)[-1]
+        feature_id = parts[1].split(":", 1)[1]
+        if gene and feature_id:
+            result[feature_id].add(gene)
+    return result
+
+
+def _parse_feature_reaction_links(data: object, feature_db: str) -> dict[str, set[str]]:
+    """Parse ``{feature_db}:id<TAB>rn:Rxxxxx`` KEGG link output."""
+    result: dict[str, set[str]] = defaultdict(set)
+    if not data or not isinstance(data, str):
+        return result
+
+    prefix = f"{feature_db}:"
+    for line in data.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2 or not parts[0].startswith(prefix):
+            continue
+        feature_id = parts[0].split(":", 1)[1]
+        match = re.search(r"rn:(R\d{5})", parts[1])
+        if feature_id and match:
+            result[feature_id].add(match.group(1))
+    return result

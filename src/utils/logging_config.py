@@ -1,4 +1,4 @@
-"""Logging configuration for the GEM Evaluator."""
+"""Logging configuration for the MetaTaskGapFill."""
 
 import logging
 import sys
@@ -9,7 +9,7 @@ from src.utils.constants import LOG_DIR
 def setup_logging(level: int = logging.INFO) -> logging.Logger:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    logger = logging.getLogger("gem_evaluator")
+    logger = logging.getLogger("metataskgapfill")
     logger.setLevel(level)
 
     if logger.handlers:
@@ -27,7 +27,7 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
     logger.addHandler(console)
 
     # File handler
-    file_handler = logging.FileHandler(LOG_DIR / "gem_evaluator.log")
+    file_handler = logging.FileHandler(LOG_DIR / "metataskgapfill.log")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(
         logging.Formatter(

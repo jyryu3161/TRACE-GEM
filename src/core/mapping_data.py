@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-logger = logging.getLogger("gem_evaluator.mapping_data")
+logger = logging.getLogger("metataskgapfill.mapping_data")
 
 # Default data directory relative to project root
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
@@ -43,6 +43,7 @@ class MappingData:
         bigg_model_path = data_dir / "bigg_universal_model_fixed.json"
         if bigg_model_path.exists():
             mapping._load_metabolite_mappings(bigg_model_path)
+            mapping._load_reaction_mappings_from_bigg_json(bigg_model_path)
         else:
             logger.warning("Metabolite mapping file not found: %s", bigg_model_path)
 
@@ -105,6 +106,67 @@ class MappingData:
                         if kid not in existing:
                             existing.append(kid)
                     self.met_bigg_to_kegg[base_id] = existing
+
+    def _load_reaction_mappings_from_bigg_json(self, path: Path) -> None:
+        """Parse reaction annotations from BiGG JSON as a built-in fallback."""
+        with open(path) as f:
+            data = json.load(f)
+
+        for rxn in data.get("reactions", []):
+            bigg_id = rxn.get("id", "")
+            if not bigg_id:
+                continue
+
+            annotation = rxn.get("annotation", {})
+            kegg_ids: list[str] = []
+            mnxr_ids: list[str] = []
+            ec_numbers: list[str] = []
+
+            for key in ("KEGG Reaction", "kegg.reaction"):
+                for uri in annotation.get(key, []):
+                    kid = self._extract_id_from_uri(uri)
+                    if kid and kid not in kegg_ids:
+                        kegg_ids.append(kid)
+
+            for key in ("MetaNetX (MNX) Equation", "metanetx.reaction"):
+                for uri in annotation.get(key, []):
+                    mid = self._extract_id_from_uri(uri)
+                    if mid and mid not in mnxr_ids:
+                        mnxr_ids.append(mid)
+
+            for key in ("EC Number", "ec-code"):
+                for uri in annotation.get(key, []):
+                    ec = self._extract_id_from_uri(uri).replace("EC:", "").strip()
+                    if ec and ec not in ec_numbers:
+                        ec_numbers.append(ec)
+
+            if kegg_ids:
+                existing = self.rxn_bigg_to_kegg.get(bigg_id, [])
+                for kid in kegg_ids:
+                    if kid not in existing:
+                        existing.append(kid)
+                self.rxn_bigg_to_kegg[bigg_id] = existing
+
+                for kid in kegg_ids:
+                    existing_bigg = self.rxn_kegg_to_bigg.get(kid, [])
+                    if bigg_id not in existing_bigg:
+                        existing_bigg.append(bigg_id)
+                    self.rxn_kegg_to_bigg[kid] = existing_bigg
+
+            if mnxr_ids:
+                existing = self.rxn_bigg_to_mnxr.get(bigg_id, [])
+                for mid in mnxr_ids:
+                    if mid not in existing:
+                        existing.append(mid)
+                self.rxn_bigg_to_mnxr[bigg_id] = existing
+
+            if kegg_ids:
+                for ec in ec_numbers:
+                    existing = self.rxn_ec_to_kegg.get(ec, [])
+                    for kid in kegg_ids:
+                        if kid not in existing:
+                            existing.append(kid)
+                    self.rxn_ec_to_kegg[ec] = existing
 
     def _load_reaction_xref(self, path: Path) -> None:
         """Parse reac_xref.tsv to build BiGG → MNXR → KEGG reaction mappings."""

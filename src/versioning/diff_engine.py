@@ -8,7 +8,7 @@ import cobra
 
 from src.core.models import ModelDiff, ReactionChange
 
-logger = logging.getLogger("gem_evaluator.versioning.diff_engine")
+logger = logging.getLogger("metataskgapfill.versioning.diff_engine")
 
 
 class DiffEngine:

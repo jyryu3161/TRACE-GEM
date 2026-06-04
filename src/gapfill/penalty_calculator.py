@@ -8,7 +8,7 @@ from src.core.models import CandidateReaction, ReactionEvidence
 from src.utils.config import Config
 from src.utils.constants import GAPFILL_MAX_PENALTY
 
-logger = logging.getLogger("gem_evaluator.gapfill.penalty")
+logger = logging.getLogger("metataskgapfill.gapfill.penalty")
 
 
 class PenaltyCalculator:

@@ -29,6 +29,7 @@ from src.core.models import (
     EvidenceSource,
     ModelData,
     Reaction,
+    TaskResult,
     WorkflowCheckpoint,
 )
 from src.evidence.engine import EvidenceEngine
@@ -59,11 +60,11 @@ from src.utils.config import Config
 from src.utils.constants import APP_NAME, APP_VERSION, KEGG_CODE_TO_NAME
 from src.versioning.version_manager import VersionManager
 
-logger = logging.getLogger("gem_evaluator.gui")
+logger = logging.getLogger("metataskgapfill.gui")
 
 
 class MainWindow(QMainWindow):
-    """Main application window for GEM Evaluator."""
+    """Main application window for MetaTaskGapFill."""
 
     def __init__(self, config: Config) -> None:
         super().__init__()
@@ -683,7 +684,6 @@ class MainWindow(QMainWindow):
 
     def _get_current_task_results(self) -> list[TaskResult]:
         """Get current task results, running simulation if needed."""
-        from src.core.models import TaskResult as _TR
         from src.core.task_parser import TaskRunner
 
         if self._task_panel._before_map:
@@ -750,11 +750,11 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.about(
             self,
-            "About GEM Evaluator",
+            "About MetaTaskGapFill",
             f"<h2>{APP_NAME} v{APP_VERSION}</h2>"
             "<p>Genome-Scale Metabolic Model Evidence Evaluator</p>"
-            "<p>Evaluates reactions in SBML models against KEGG, BiGG, UniProt, "
-            "PubMed, Gemini, and Perplexity to verify reaction evidence.</p>",
+            "<p>Evaluates reactions in SBML models against KEGG and BiGG "
+            "to verify reaction evidence.</p>",
         )
 
     def _show_settings(self) -> None:

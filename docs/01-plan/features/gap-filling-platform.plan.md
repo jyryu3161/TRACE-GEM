@@ -7,7 +7,7 @@
 ## 1. 개요
 
 ### 1.1 현재 상태
-- SBML 모델을 로드하고, 모델 내 반응들을 7개 데이터베이스(KEGG, BiGG, UniProt, PubMed, MetaCyc, Gemini, Perplexity)로 평가하여 confidence score를 부여
+- SBML 모델을 로드하고, 모델 내 반응들을 KEGG/BiGG evidence로 평가하여 confidence score를 부여
 - 평가 결과를 CSV/JSON/SBML로 내보내기 가능
 - GUI(PySide6) + CLI 이중 인터페이스
 
@@ -330,10 +330,9 @@ class GapFillResult:
 **파일**: `src/evidence/engine.py` 수정
 
 1. `evaluate_candidates()` 메서드 추가
-   - Universal model 반응을 기존 `evaluate_reaction()` 파이프라인으로 평가
-   - 유전자 없는 반응 대응: UniProt/PubMed는 EC 기반으로 검색
-   - Gemini/Perplexity: 반응의 metabolite 정보 기반으로 LLM 검증
-   - 종 특이성 결과를 evidence에 포함
+   - Universal model 반응을 KEGG/BiGG 전용 `evaluate_reaction()` 파이프라인으로 평가
+   - 후보 반응이 universal model에서 왔으면 BiGG evidence는 자동 STRONG으로 기록
+   - KEGG 매핑과 metabolite match ratio를 evidence에 포함
 
 2. `evaluate_batch()` 확장
    - 내 모델 + 후보 반응을 구분하여 배치 처리

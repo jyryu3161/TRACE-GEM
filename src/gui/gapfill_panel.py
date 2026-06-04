@@ -96,9 +96,12 @@ class GapFillPanelWidget(QWidget):
         """Populate the panel with gap-filling results."""
         # Summary
         added = len(result.added_reactions)
+        broken_note = (
+            f", {result.tasks_broken} regressed" if result.tasks_broken else ""
+        )
         self._summary_label.setText(
             f"Gap-filling complete: {added} reactions added, "
-            f"{result.tasks_fixed}/{result.total_tasks} tasks fixed, "
+            f"{result.tasks_fixed}/{result.total_tasks} tasks fixed{broken_note}, "
             f"{result.iterations} iteration(s)"
         )
 

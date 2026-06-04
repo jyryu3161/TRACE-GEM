@@ -6,6 +6,7 @@ import asyncio
 import logging
 import threading
 import traceback
+from contextlib import suppress
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
@@ -18,15 +19,13 @@ if TYPE_CHECKING:
     from src.cache.cache_manager import CacheManager
     from src.core.mapping_data import MappingData
 
-logger = logging.getLogger("gem_evaluator.workers")
+logger = logging.getLogger("metataskgapfill.workers")
 
 
 def _safe_emit(signal, *args) -> None:
     """Emit a signal, silently ignoring RuntimeError if the source was deleted."""
-    try:
+    with suppress(RuntimeError):
         signal.emit(*args)
-    except RuntimeError:
-        pass
 
 
 class WorkerSignals(QObject):
@@ -298,29 +297,47 @@ class GapFillWorkflowWorker(QRunnable):
         # Step 3: Parse tasks
         tasks = []
         if self.task_path:
-            on_progress("parsing_tasks", 0, 1, "Parsing metabolic tasks...")
-            parser = TaskParser()
-            tasks = parser.parse(self.task_path)
-            on_progress("parsing_tasks", 1, 1, f"{len(tasks)} tasks parsed")
+            if self.task_path == "__preloaded__":
+                tasks = list(self.options.get("preloaded_tasks") or [])
+                on_progress("parsing_tasks", 1, 1, f"{len(tasks)} pre-loaded tasks")
+            else:
+                on_progress("parsing_tasks", 0, 1, "Parsing metabolic tasks...")
+                parser = TaskParser()
+                tasks = parser.parse(self.task_path)
+                on_progress("parsing_tasks", 1, 1, f"{len(tasks)} tasks parsed")
 
         if self._is_cancelled():
             return GapFillResult(total_tasks=len(tasks), is_partial=True, completed_phase=0)
 
         # Step 4: Evaluate candidates (optional, skip on resume)
         evidence_results: dict = {}
+        defer_candidate_evidence = False
         if (
             self._start_phase <= 1
             and self.options.get("evaluate_candidates")
             and self.evidence_engine
         ):
-            on_progress("evaluating", 0, len(candidates), "Evaluating candidates...")
+            eager_limit = max(0, self.config.candidate_evidence_eager_limit)
+            defer_candidate_evidence = eager_limit > 0 and len(candidates) > eager_limit
+            if defer_candidate_evidence:
+                on_progress(
+                    "evaluating",
+                    0,
+                    len(candidates),
+                    (
+                        f"{len(candidates)} candidates exceeds eager evidence limit "
+                        f"({eager_limit}); deferring evidence to gap-filled reactions"
+                    ),
+                )
+            else:
+                on_progress("evaluating", 0, len(candidates), "Evaluating candidates...")
 
-            def eval_progress(current: int, total: int, rxn_id: str) -> None:
-                _safe_emit(self.signals.progress, "evaluating", current, total, rxn_id)
+                def eval_progress(current: int, total: int, rxn_id: str) -> None:
+                    _safe_emit(self.signals.progress, "evaluating", current, total, rxn_id)
 
-            evidence_results = await self.evidence_engine.evaluate_candidates_batch(
-                candidates, progress_callback=eval_progress
-            )
+                evidence_results = await self.evidence_engine.evaluate_candidates_batch(
+                    candidates, progress_callback=eval_progress
+                )
 
         if self._is_cancelled():
             return GapFillResult(total_tasks=len(tasks), is_partial=True, completed_phase=0)
@@ -332,7 +349,13 @@ class GapFillWorkflowWorker(QRunnable):
 
         engine = GapFillEngine(self.config)
         organism_code = self.model_data.kegg_organism_code or self.config.kegg_organism_code
-        await engine.initialize(organism_code=organism_code)
+        cache_mgr = self.evidence_engine.cache_manager if self.evidence_engine else None
+        mapping_data = self.evidence_engine.mapping_data if self.evidence_engine else None
+        await engine.initialize(
+            organism_code=organism_code,
+            cache_manager=cache_mgr,
+            mapping_data=mapping_data,
+        )
         try:
             result = await engine.run(
                 user_model=cobra_model,
@@ -347,6 +370,36 @@ class GapFillWorkflowWorker(QRunnable):
             )
         finally:
             await engine.close()
+
+        if (
+            defer_candidate_evidence
+            and self.evidence_engine
+            and isinstance(result, GapFillResult)
+            and result.added_reactions
+        ):
+            on_progress(
+                "evaluating",
+                0,
+                len(result.added_reactions),
+                "Evaluating gap-filled reactions...",
+            )
+
+            def added_eval_progress(current: int, total: int, rxn_id: str) -> None:
+                _safe_emit(self.signals.progress, "evaluating", current, total, rxn_id)
+
+            added_evidence = await self.evidence_engine.evaluate_candidates_batch(
+                result.added_reactions,
+                progress_callback=added_eval_progress,
+                cancel_event=self._cancel_event,
+            )
+            result.added_reactions.sort(
+                key=lambda c: (
+                    added_evidence[c.reaction.id].confidence_score
+                    if c.reaction.id in added_evidence
+                    else 0.0
+                ),
+                reverse=True,
+            )
 
         return result
 

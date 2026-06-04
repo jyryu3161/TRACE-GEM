@@ -1,4 +1,4 @@
-"""Project save/load manager for GEM Evaluator."""
+"""Project save/load manager for MetaTaskGapFill."""
 
 from __future__ import annotations
 
@@ -170,7 +170,6 @@ class ProjectManager:
         universal_table = window._universal_table
         candidates = universal_table.get_candidates()
         if candidates:
-            from src.core.models import CandidateReaction
             universal_candidates_data = [c.to_dict() for c in candidates]
 
         return ProjectData(

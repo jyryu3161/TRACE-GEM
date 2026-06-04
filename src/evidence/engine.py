@@ -1,4 +1,4 @@
-"""Evidence collection engine — orchestrates multi-source reaction verification."""
+"""Evidence collection engine — orchestrates KEGG/BiGG reaction verification."""
 
 from __future__ import annotations
 
@@ -24,21 +24,17 @@ from src.evidence.scoring import ConfidenceScorer
 from src.utils.config import Config
 from src.utils.constants import BATCH_SIZE
 
-logger = logging.getLogger("gem_evaluator.evidence")
+logger = logging.getLogger("metataskgapfill.evidence")
 
 
 class EvidenceEngine:
-    """Orchestrates multi-source evidence collection with offline ID mapping."""
+    """Orchestrates KEGG/BiGG evidence collection with offline ID mapping."""
 
     def __init__(self, config: Config) -> None:
         self._config = config
         self._cache: CacheManager | None = None
         self._kegg: KEGGClient | None = None
         self._bigg: Any = None
-        self._uniprot: Any = None
-        self._pubmed: Any = None
-        self._gemini: Any = None
-        self._perplexity: Any = None
         self._mapper: IdentifierMapper | None = None
         self._mapping_data: MappingData | None = None
         self._scorer = ConfidenceScorer(config.weights)
@@ -58,7 +54,7 @@ class EvidenceEngine:
         )
         self._mapper = IdentifierMapper(self._mapping_data)
 
-        # Initialize BiGG local lookup (replaces REST API)
+        # Initialize BiGG local lookup.
         if self._config.enable_bigg:
             try:
                 from src.api.bigg_lookup import BiGGLookup
@@ -73,59 +69,6 @@ class EvidenceEngine:
             except Exception as e:
                 logger.warning("Failed to initialize BiGG lookup: %s", e)
 
-        # Initialize UniProt client
-        if self._config.enable_uniprot:
-            try:
-                from src.api.uniprot_client import UniProtClient
-
-                self._uniprot = UniProtClient(
-                    taxonomy_id=self._config.uniprot_taxonomy_id,
-                    cache_manager=self._cache,
-                )
-                logger.info("UniProt client initialized")
-            except Exception as e:
-                logger.warning("Failed to initialize UniProt client: %s", e)
-
-        # Initialize PubMed client
-        if self._config.enable_pubmed:
-            try:
-                from src.api.pubmed_client import PubMedClient
-
-                self._pubmed = PubMedClient(
-                    email=self._config.pubmed_email,
-                    api_key=self._config.pubmed_api_key,
-                    cache_manager=self._cache,
-                )
-                logger.info("PubMed client initialized")
-            except Exception as e:
-                logger.warning("Failed to initialize PubMed client: %s", e)
-
-        # Initialize Gemini client if API key is available
-        if self._config.gemini_api_key and self._config.enable_gemini:
-            try:
-                from src.api.gemini_client import GeminiClient
-
-                self._gemini = GeminiClient(
-                    api_key=self._config.gemini_api_key,
-                    cache_manager=self._cache,
-                )
-                logger.info("Gemini client initialized")
-            except Exception as e:
-                logger.warning("Failed to initialize Gemini client: %s", e)
-
-        # Initialize Perplexity client if API key is available
-        if self._config.perplexity_api_key and self._config.enable_perplexity:
-            try:
-                from src.api.perplexity_client import PerplexityClient
-
-                self._perplexity = PerplexityClient(
-                    api_key=self._config.perplexity_api_key,
-                    cache_manager=self._cache,
-                )
-                logger.info("Perplexity client initialized")
-            except Exception as e:
-                logger.warning("Failed to initialize Perplexity client: %s", e)
-
     async def close(self) -> None:
         """Close all API clients and cache."""
         if self._closed:
@@ -133,10 +76,6 @@ class EvidenceEngine:
         for client_attr in (
             "_kegg",
             "_bigg",
-            "_uniprot",
-            "_pubmed",
-            "_gemini",
-            "_perplexity",
         ):
             client = getattr(self, client_attr, None)
             if client:
@@ -179,9 +118,7 @@ class EvidenceEngine:
             evidence.kegg_reaction_ids = ext_ids.kegg_reaction_ids
 
             # Steps 2-3: KEGG verification + extract match ratios
-            kegg_parsed_data = await self._run_kegg_verification(
-                reaction, ext_ids, evidence
-            )
+            await self._run_kegg_verification(reaction, ext_ids, evidence)
 
             # Step 4: BiGG verification
             if self._bigg:
@@ -194,12 +131,7 @@ class EvidenceEngine:
                 except Exception as e:
                     logger.warning("BiGG verification failed for %s: %s", reaction.id, e)
 
-            # Steps 5-9: Common evidence pipeline
-            await self._run_evidence_pipeline(
-                reaction, ext_ids, evidence, kegg_parsed_data
-            )
-
-            # Step 10: Score
+            # Step 5: Score
             self._scorer.score(evidence)
             evidence.status = EvaluationStatus.EVALUATED
 
@@ -252,9 +184,7 @@ class EvidenceEngine:
             evidence.kegg_reaction_ids = ext_ids.kegg_reaction_ids
 
             # Steps 2-3: KEGG verification + extract match ratios
-            kegg_parsed_data = await self._run_kegg_verification(
-                reaction, ext_ids, evidence
-            )
+            await self._run_kegg_verification(reaction, ext_ids, evidence)
 
             # Step 4: BiGG verification — automatic STRONG for universal model candidates
             evidence.items.append(
@@ -269,12 +199,7 @@ class EvidenceEngine:
                 )
             )
 
-            # Steps 5-9: Common evidence pipeline
-            await self._run_evidence_pipeline(
-                reaction, ext_ids, evidence, kegg_parsed_data
-            )
-
-            # Step 10: Score
+            # Step 5: Score
             self._scorer.score(evidence)
             evidence.status = EvaluationStatus.EVALUATED
 
@@ -313,7 +238,7 @@ class EvidenceEngine:
         reaction: Reaction,
         ext_ids: Any,
         evidence: ReactionEvidence,
-    ) -> Any:
+    ) -> None:
         """Run KEGG verification and extract match ratios (Steps 2-3)."""
         assert self._kegg is not None
         kegg_items = await self._kegg.check_evidence(
@@ -325,7 +250,6 @@ class EvidenceEngine:
         )
         evidence.items.extend(kegg_items)
 
-        kegg_parsed_data = None
         for item in kegg_items:
             if item.raw_data:
                 sub_match = item.raw_data.get("substrate_match")
@@ -334,80 +258,6 @@ class EvidenceEngine:
                     evidence.substrate_match_ratio = sub_match
                 if prod_match is not None:
                     evidence.product_match_ratio = prod_match
-                kegg_parsed_data = item.raw_data.get("kegg_parsed")
-
-        return kegg_parsed_data
-
-    async def _run_evidence_pipeline(
-        self,
-        reaction: Reaction,
-        ext_ids: Any,
-        evidence: ReactionEvidence,
-        kegg_parsed_data: Any,
-    ) -> None:
-        """Run shared evidence sources: UniProt, PubMed, Gemini, Perplexity (Steps 5-8)."""
-        # Step 5: UniProt verification
-        if self._uniprot:
-            try:
-                uniprot_items = await self._uniprot.check_evidence(
-                    reaction,
-                    ec_numbers=ext_ids.ec_numbers,
-                )
-                evidence.items.extend(uniprot_items)
-            except Exception as e:
-                logger.warning("UniProt verification failed for %s: %s", reaction.id, e)
-
-        # Step 6: PubMed verification
-        if self._pubmed:
-            try:
-                pubmed_items = await self._pubmed.check_evidence(
-                    reaction,
-                    ec_numbers=ext_ids.ec_numbers,
-                    organism_name=self._config.organism_name,
-                )
-                evidence.items.extend(pubmed_items)
-            except Exception as e:
-                logger.warning("PubMed verification failed for %s: %s", reaction.id, e)
-
-        # Resolve metabolite names for LLM prompts
-        reactant_names: dict[str, str] = {}
-        product_names: dict[str, str] = {}
-        for met_id in reaction.reactants:
-            name = self._mapper.get_metabolite_name(met_id) if self._mapper else None
-            reactant_names[met_id] = name or met_id
-        for met_id in reaction.products:
-            name = self._mapper.get_metabolite_name(met_id) if self._mapper else None
-            product_names[met_id] = name or met_id
-
-        # Step 8: Gemini verification (if KEGG match exists)
-        if self._gemini and kegg_parsed_data:
-            try:
-                gemini_item = await self._gemini.verify_reaction_match(
-                    reaction,
-                    kegg_parsed_data,
-                    evidence.substrate_match_ratio,
-                    evidence.product_match_ratio,
-                    self._config.organism_name,
-                    reactant_names=reactant_names,
-                    product_names=product_names,
-                )
-                evidence.items.append(gemini_item)
-            except Exception as e:
-                logger.warning("Gemini verification failed for %s: %s", reaction.id, e)
-
-        # Step 9: Perplexity verification
-        if self._perplexity:
-            try:
-                pplx_item = await self._perplexity.verify_reaction_existence(
-                    reaction,
-                    self._config.organism_name,
-                    ext_ids.ec_numbers,
-                    reactant_names=reactant_names,
-                    product_names=product_names,
-                )
-                evidence.items.append(pplx_item)
-            except Exception as e:
-                logger.warning("Perplexity verification failed for %s: %s", reaction.id, e)
 
     async def _run_batch(
         self,

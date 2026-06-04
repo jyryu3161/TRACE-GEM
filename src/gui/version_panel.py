@@ -169,6 +169,7 @@ class VersionPanelWidget(QWidget):
         btn_layout.addWidget(self._export_btn)
 
         layout.addLayout(btn_layout)
+        self._update_action_buttons()
 
     # ------------------------------------------------------------------
     # Public API
@@ -195,6 +196,7 @@ class VersionPanelWidget(QWidget):
         self._current_version_id = None
         self._tree.clear()
         self._graph.clear()
+        self._update_action_buttons()
 
     # ------------------------------------------------------------------
     # Tree building
@@ -214,6 +216,7 @@ class VersionPanelWidget(QWidget):
             self._tree.addTopLevelItem(item)
 
         self._tree.setSortingEnabled(True)
+        self._update_action_buttons()
 
     def _make_item(self, version: ModelVersion) -> QTreeWidgetItem:
         """Create a QTreeWidgetItem for a single version."""
@@ -426,6 +429,7 @@ class VersionPanelWidget(QWidget):
         ids = self._get_selected_version_ids()
         if len(ids) == 1:
             self._graph.highlight_version(ids[0])
+        self._update_action_buttons()
 
     def _on_graph_version_selected(self, version_id: str) -> None:
         """Sync graph node click → table selection."""
@@ -447,6 +451,13 @@ class VersionPanelWidget(QWidget):
             if vid:
                 ids.append(vid)
         return ids
+
+    def _update_action_buttons(self) -> None:
+        """Enable version actions only when the current selection is valid."""
+        selected_count = len(self._get_selected_version_ids())
+        self._compare_btn.setEnabled(selected_count == 2)
+        self._restore_btn.setEnabled(selected_count == 1)
+        self._export_btn.setEnabled(selected_count == 1)
 
     # ------------------------------------------------------------------
     # Actions
@@ -528,7 +539,8 @@ class VersionPanelWidget(QWidget):
 
     def _on_edit_description(self, version_id: str, item: QTreeWidgetItem) -> None:
         """Prompt user for new description and emit description_updated signal."""
-        current_desc = item.text(COL_DESC)
+        version = next((v for v in self._versions if v.version_id == version_id), None)
+        current_desc = version.description if version else item.text(COL_DESC)
         new_desc, ok = QInputDialog.getText(
             self, "Edit Description",
             f"New description for {version_id}:",

@@ -14,7 +14,7 @@ import aiosqlite
 from src.cache.schema import SCHEMA_SQL
 from src.utils.constants import API_CACHE_TTL, CACHE_DB_PATH, CONFIG_DIR
 
-logger = logging.getLogger("gem_evaluator.cache")
+logger = logging.getLogger("metataskgapfill.cache")
 
 
 class CacheManager:

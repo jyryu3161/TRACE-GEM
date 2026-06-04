@@ -1,6 +1,9 @@
-# GEM Evaluator
+# MetaTaskGapFill
 
-Genome-Scale Metabolic Model Evidence Evaluator. Evaluates reactions in SBML models against biological databases (KEGG, UniProt, PubMed, BiGG, MetaCyc) to compute confidence scores.
+Genome-scale metabolic model evidence evaluator and task-aware gap-filling
+platform. The application loads SBML/COBRA models, evaluates reaction evidence
+against KEGG and BiGG, checks metabolic tasks, repairs missing reactions with
+COBRApy gap-filling, and tracks model versions.
 
 ## Development Setup
 
@@ -16,90 +19,140 @@ pre-commit install
 ```bash
 # Run the app
 python -m src.app
+metatask-gapfill
+
+# CLI
+python -m src.cli --help
+metatask-gapfill-cli --help
 
 # Run tests
-pytest tests/ -v
+pytest
+pytest tests/test_gapfill_engine.py tests/test_gui_workers.py
 
-# Run with coverage
+# Coverage
 pytest tests/ --cov=src --cov-report=term-missing
 
 # Lint and format
+ruff check src/ tests/
 ruff check src/ tests/ --fix
 ruff format src/ tests/
 
 # Type check
 mypy src/ --ignore-missing-imports
-
-# Pre-commit (all hooks)
-pre-commit run --all-files
 ```
+
+## Current Scope
+
+- Evidence sources are KEGG and BiGG only.
+- PubMed, Gemini, Perplexity, UniProt, MetaCyc, and LLM-based evidence paths are
+  intentionally not part of the active codebase.
+- Default candidate evidence behavior is eager: all extracted candidate
+  reactions are evaluated before gap-filling. `Config.candidate_evidence_eager_limit`
+  is `0` by default; set it to a positive threshold to defer evidence for large
+  universals and evaluate only gap-filled reactions.
+- CLI gap-fill mode accepts draft model, universal model, metabolic task CSV,
+  and optional base medium. If `--medium` is omitted, use the draft COBRA
+  model's default medium. If provided, medium may be JSON, CSV/TSV, or inline
+  spec such as `glc__D_e(-10);o2_e(-1000)`.
+- Gap-filling is metabolic-task-aware. Task evaluation and gap-fill setup share
+  `TaskRunner.prepare_task_model()` so medium, free exchanges, trace elements,
+  cofactor turnover, constraints, and ID normalization stay consistent.
+- Negative or upper-bound tasks are not gap-fillable and are skipped by the
+  reaction-addition repair step.
+- The gap-fill workflow has an outer convergence loop controlled by
+  `Config.gapfill_iterations`. This is not the same as alternative solution
+  enumeration; each task currently keeps the first COBRApy gap-fill solution.
+- Large universal models are pruned for MILP solving when above
+  `Config.gapfill_universal_prune_threshold`, keeping reactions compatible with
+  the draft model metabolite set plus explicit task targets.
 
 ## Project Structure
 
-```
+```text
 src/
-├── core/          # Data models, SBML parsing, GPR parsing, ID mapping
-│   ├── models.py       # Dataclasses: Reaction, ModelData, EvidenceItem, etc.
-│   ├── sbml_parser.py  # COBRApy-based SBML loader
-│   ├── gpr_parser.py   # Gene-Protein-Reaction rule parser
-│   └── id_mapper.py    # BiGG → external DB ID resolution
-├── api/           # External API clients (all async)
-│   ├── base_client.py  # ABC with rate limiting, retry, circuit breaker
-│   ├── rate_limiter.py # Token-bucket rate limiter
-│   ├── bigg_client.py
-│   ├── kegg_client.py
-│   ├── pubmed_client.py
-│   ├── uniprot_client.py
-│   └── metacyc_client.py
-├── evidence/      # Evidence collection and scoring
-│   ├── engine.py       # Orchestrator: queries all sources per reaction
-│   ├── scoring.py      # Weighted multi-source confidence scoring
-│   └── evidence_types.py # Thresholds and display constants
-├── gui/           # PySide6 (Qt6) GUI
-│   ├── main_window.py  # Main app window, menus, export
-│   ├── workers.py      # QRunnable workers (async in worker threads)
-│   ├── reaction_table.py   # Table model + filter proxy + widget
-│   ├── delegates.py    # Score bar and status cell renderers
-│   ├── model_overview.py
-│   ├── reaction_detail.py
-│   ├── evidence_panel.py
-│   ├── gene_panel.py
-│   ├── metabolite_panel.py
-│   ├── score_visualization.py  # PyQtGraph charts
-│   ├── progress_dialog.py
-│   ├── settings_dialog.py
-│   └── styles.py
-├── cache/         # SQLite caching layer
+├── api/                 # Async external/local evidence clients
+│   ├── base_client.py   # Rate limiting, retry, circuit breaker base class
+│   ├── bigg_client.py   # BiGG API/local evidence checks
+│   ├── bigg_lookup.py   # BiGG local lookup helpers
+│   ├── kegg_client.py   # KEGG evidence checks
+│   └── rate_limiter.py
+├── cache/               # SQLite cache layer
 │   ├── cache_manager.py
 │   └── schema.py
-├── utils/         # Configuration, logging, constants
+├── core/                # Domain models and COBRA/SBML utilities
+│   ├── cobra_utils.py
+│   ├── gpr_parser.py
+│   ├── id_mapper.py
+│   ├── mapping_data.py
+│   ├── models.py
+│   ├── project_manager.py
+│   ├── sbml_parser.py
+│   ├── task_parser.py   # TaskParser and TaskRunner
+│   └── universal_loader.py
+├── evidence/            # KEGG/BiGG evidence orchestration and scoring
+│   ├── engine.py
+│   ├── evidence_types.py
+│   └── scoring.py
+├── gapfill/             # Task-aware gap-filling, penalties, GPR assignment
+│   ├── engine.py
+│   ├── gpr_assigner.py
+│   ├── organism_filter.py
+│   └── penalty_calculator.py
+├── gui/                 # PySide6 GUI, panels, controllers, workers
+│   ├── controllers/
+│   ├── candidate_table.py
+│   ├── gapfill_panel.py
+│   ├── main_window.py
+│   ├── reaction_removal_dialog.py
+│   ├── score_visualization.py
+│   ├── task_panel.py
+│   ├── version_panel.py
+│   ├── workers.py
+│   └── workflow_wizard.py
+├── utils/               # Config, constants, logging, subsystem loading
 │   ├── config.py
 │   ├── constants.py
-│   └── logging_config.py
-└── app.py         # Entry point
+│   ├── logging_config.py
+│   └── subsystem_loader.py
+├── versioning/          # Model snapshots, diffs, storage, summaries
+│   ├── change_summarizer.py
+│   ├── diff_engine.py
+│   ├── storage.py
+│   └── version_manager.py
+└── app.py               # GUI entry point
 ```
 
-## Tech Stack
+## Data Files
 
-- **SBML Parsing**: COBRApy (wraps libsbml)
-- **GUI**: PySide6 (Qt6) + PyQtGraph
-- **DB APIs**: Biopython (KEGG, PubMed), aiohttp (REST)
-- **Caching**: SQLite via aiosqlite
-- **Async**: QRunnable workers + asyncio event loops in worker threads
+- `data/iML1515.xml`: primary E. coli test model.
+- `data/bigg_universal_model_fixed.json`: large BiGG universal model.
+- `data/universal_essential_tasks.csv`: universal metabolic task set.
+- Optional local mapping files, when present, improve evidence and organism
+  filtering: `reac_xref.tsv`, `reaction_analysis_result.tsv`,
+  `bigg_models_reactions.txt`, `bigg_models_metabolites.txt`.
 
-## Conventions
+## Implementation Notes
 
-- Python 3.10+, type hints on all functions
-- `from __future__ import annotations` in every module
-- Dataclasses for data models, ABC for client interfaces
-- asyncio for all API calls — always in worker threads, never on the GUI thread
-- SQLite cache with configurable TTL per source
-- See `style.md` for detailed coding standards
+- Use COBRApy models as the authoritative model state when running tasks and
+  gap-fill. Synchronize GUI/domain `ModelData` through `core.cobra_utils`.
+- Keep API calls async and off the GUI thread. GUI workers create their own
+  asyncio event loops.
+- Do not add PubMed/Gemini/Perplexity evidence code back unless the product
+  scope explicitly changes.
+- For metabolic tasks, prefer reusing `TaskRunner` public/shared helpers over
+  reimplementing environment setup in gap-fill code.
+- When adding reactions from a universal model, copy COBRA reactions before
+  inserting them into the user model.
+- Preserve model version history when user-visible model edits occur.
 
 ## Testing
 
-- pytest + pytest-asyncio + pytest-qt
-- `asyncio_mode = "auto"` — no need for `@pytest.mark.asyncio` on fixtures
-- All external API calls must be mocked in tests
-- Fixtures in `tests/conftest.py`, mock data in `tests/fixtures/`
-- GUI tests use `qtbot` fixture from pytest-qt
+- pytest + pytest-asyncio are used; external API calls must be mocked.
+- GUI tests use offscreen Qt probing via `tests/conftest.py`.
+- Gap-fill changes should cover:
+  - task pass/fail before and after repair,
+  - rollback of no-progress iterations,
+  - negative/upper-bound task skipping,
+  - reaction copy semantics,
+  - large universal pruning,
+  - GUI worker evidence evaluation mode.

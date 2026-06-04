@@ -18,11 +18,11 @@ if GUI_AVAILABLE:
 
     _app = QApplication.instance() or QApplication(sys.argv)
     from src.gui.task_panel import (
-        TaskPanelWidget,
         _COLOR_FAIL_FAIL,
         _COLOR_FAIL_PASS,
         _COLOR_PASS_FAIL,
         _COLOR_PASS_PASS,
+        TaskPanelWidget,
     )
 
 

@@ -55,14 +55,20 @@ def sample_candidates() -> list[CandidateReaction]:
     ]
 
 
-# Simulated KEGG response for organism reactions
-MOCK_ORGANISM_REACTIONS = (
-    "eco:b0485\trn:R00253\n"
-    "eco:b1779\trn:R00200\n"
-    "eco:b2388\trn:R00756\n"
+MOCK_ORGANISM_KO = (
+    "eco:b0485\tko:K01915\n"
+    "eco:b1297\tko:K01915\n"
+    "eco:b2388\tko:K00850\n"
 )
 
-MOCK_GENE_RESPONSE = "rn:R00253\teco:b0485\nrn:R00253\teco:b1297\n"
+MOCK_ORGANISM_EC = "eco:b1779\tec:1.1.1.1\n"
+
+MOCK_KO_REACTIONS = (
+    "ko:K01915\trn:R00253\n"
+    "ko:K00850\trn:R00756\n"
+)
+
+MOCK_EC_REACTIONS = "ec:1.1.1.1\trn:R00200\n"
 
 
 class TestOrganismFilter:
@@ -71,9 +77,18 @@ class TestOrganismFilter:
         """KEGG organism reaction set is loaded and parsed correctly."""
         filt = OrganismFilter("eco")
 
-        with patch.object(
-            filt._kegg_client, "get", new_callable=AsyncMock, return_value=MOCK_ORGANISM_REACTIONS
-        ):
+        async def mock_get(path, cache_key=None, cache_ttl=None):
+            if path == "/link/ko/eco":
+                return MOCK_ORGANISM_KO
+            if path == "/link/ec/eco":
+                return MOCK_ORGANISM_EC
+            if path == "/link/rn/ko":
+                return MOCK_KO_REACTIONS
+            if path == "/link/rn/ec":
+                return MOCK_EC_REACTIONS
+            return None
+
+        with patch.object(filt._kegg_client, "get", side_effect=mock_get):
             await filt.initialize()
 
         assert filt._organism_reactions is not None
@@ -91,10 +106,14 @@ class TestOrganismFilter:
         filt = OrganismFilter("eco")
 
         async def mock_get(path, cache_key=None, cache_ttl=None):
-            if "/link/reaction/" in path:
-                return MOCK_ORGANISM_REACTIONS
-            if "/link/eco/rn:" in path:
-                return MOCK_GENE_RESPONSE
+            if path == "/link/ko/eco":
+                return MOCK_ORGANISM_KO
+            if path == "/link/ec/eco":
+                return MOCK_ORGANISM_EC
+            if path == "/link/rn/ko":
+                return MOCK_KO_REACTIONS
+            if path == "/link/rn/ec":
+                return MOCK_EC_REACTIONS
             return None
 
         with patch.object(filt._kegg_client, "get", side_effect=mock_get):
@@ -117,10 +136,14 @@ class TestOrganismFilter:
         filt = OrganismFilter("eco")
 
         async def mock_get(path, cache_key=None, cache_ttl=None):
-            if "/link/reaction/" in path:
-                return MOCK_ORGANISM_REACTIONS
-            if "/link/eco/rn:R00253" in path:
-                return MOCK_GENE_RESPONSE
+            if path == "/link/ko/eco":
+                return MOCK_ORGANISM_KO
+            if path == "/link/ec/eco":
+                return MOCK_ORGANISM_EC
+            if path == "/link/rn/ko":
+                return MOCK_KO_REACTIONS
+            if path == "/link/rn/ec":
+                return MOCK_EC_REACTIONS
             return None
 
         with patch.object(filt._kegg_client, "get", side_effect=mock_get):
@@ -199,14 +222,19 @@ class TestOrganismFilter:
         filt = OrganismFilter("eco")
         callback = MagicMock()
 
-        with patch.object(
-            filt._kegg_client, "get", new_callable=AsyncMock, return_value=MOCK_ORGANISM_REACTIONS
-        ):
-            await filt.initialize()
+        async def mock_get(path, cache_key=None, cache_ttl=None):
+            if path == "/link/ko/eco":
+                return MOCK_ORGANISM_KO
+            if path == "/link/ec/eco":
+                return MOCK_ORGANISM_EC
+            if path == "/link/rn/ko":
+                return MOCK_KO_REACTIONS
+            if path == "/link/rn/ec":
+                return MOCK_EC_REACTIONS
+            return None
 
-        with patch.object(
-            filt._kegg_client, "get", new_callable=AsyncMock, return_value=MOCK_GENE_RESPONSE
-        ):
+        with patch.object(filt._kegg_client, "get", side_effect=mock_get):
+            await filt.initialize()
             await filt.filter_candidates(sample_candidates, progress_callback=callback)
 
         assert callback.call_count == len(sample_candidates)

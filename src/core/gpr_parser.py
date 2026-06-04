@@ -12,7 +12,7 @@ import re
 
 from src.core.models import AndNode, GeneNode, GPRNode, OrNode
 
-logger = logging.getLogger("gem_evaluator.gpr_parser")
+logger = logging.getLogger("metataskgapfill.gpr_parser")
 
 
 def parse_gpr(rule_str: str) -> GPRNode | None:

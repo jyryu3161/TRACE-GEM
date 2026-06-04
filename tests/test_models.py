@@ -37,11 +37,10 @@ class TestEvidenceStrength:
 class TestEvidenceSource:
     def test_values(self):
         assert EvidenceSource.KEGG.value == "kegg"
-        assert EvidenceSource.GEMINI.value == "gemini"
-        assert EvidenceSource.PERPLEXITY.value == "perplexity"
+        assert EvidenceSource.BIGG.value == "bigg"
 
     def test_all_sources(self):
-        assert len(EvidenceSource) == 6
+        assert len(EvidenceSource) == 2
 
 
 class TestEvaluationStatus:
@@ -231,20 +230,13 @@ class TestReactionEvidence:
         assert ev.kegg_reaction_ids == []
         assert ev.substrate_match_ratio == 0.0
         assert ev.product_match_ratio == 0.0
-        assert ev.gemini_score == 0.0
-        assert ev.perplexity_score == 0.0
 
-    def test_kegg_score(self):
+    def test_source_scores(self):
         ev = ReactionEvidence(reaction_id="RXN1")
         ev.kegg_score = 0.8
+        ev.bigg_score = 0.6
         assert ev.kegg_score == 0.8
-
-    def test_llm_scores(self):
-        ev = ReactionEvidence(reaction_id="RXN1")
-        ev.gemini_score = 0.9
-        ev.perplexity_score = 0.7
-        assert ev.gemini_score == 0.9
-        assert ev.perplexity_score == 0.7
+        assert ev.bigg_score == 0.6
 
 
 class TestExternalIDs:

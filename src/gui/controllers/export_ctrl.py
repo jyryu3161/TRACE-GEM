@@ -14,7 +14,7 @@ from src.core.models import EvidenceSource, ReactionEvidence
 if TYPE_CHECKING:
     from src.gui.main_window import MainWindow
 
-logger = logging.getLogger("gem_evaluator.gui.export")
+logger = logging.getLogger("metataskgapfill.gui.export")
 
 
 class ExportController:

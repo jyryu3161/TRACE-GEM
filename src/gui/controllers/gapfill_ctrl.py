@@ -15,7 +15,7 @@ from src.gui.workers import EvaluateBatchWorker, GapFillWorkflowWorker, TaskRunW
 if TYPE_CHECKING:
     from src.gui.main_window import MainWindow
 
-logger = logging.getLogger("gem_evaluator.gui.gapfill")
+logger = logging.getLogger("metataskgapfill.gui.gapfill")
 
 
 class GapFillController:

@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
-name = "gem-evaluator"
+name = "metatask-gapfill"
 version = "0.2.0"
-description = "Genome-Scale Metabolic Model Evidence Evaluator"
+description = "Metabolic-task-aware gap-filling with KEGG and BiGG evidence"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -15,12 +15,10 @@ authors = [
 dependencies = [
     "cobra>=0.29.0",
     "PySide6>=6.6.0,<6.9",
-    "pyqtgraph>=0.13.0",
+    "pyqtgraph>=0.13.0,<0.14",
     "biopython>=1.83",
     "aiohttp>=3.9.0",
     "aiosqlite>=0.19.0",
-    "google-genai>=1.0.0",
-    "openai>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -33,8 +31,8 @@ dev = [
 ]
 
 [project.scripts]
-gem-evaluator = "src.app:main"
-gem-evaluator-cli = "src.cli:main"
+metatask-gapfill = "src.app:main"
+metatask-gapfill-cli = "src.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["src*"]

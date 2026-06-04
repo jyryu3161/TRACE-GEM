@@ -19,8 +19,7 @@
 디버깅 결과 확인된 문제:
 - `InitEngineWorker`에서 signal이 emit되기 전에 Worker 객체가 GC됨 → `RuntimeError: Signal source has been deleted`
 - 대형 SBML 모델 로드 시 COBRApy 경고가 stderr로 출력되며 예외 발생 가능
-- `Perplexity` 초기화 시 `atexit` 에러 (`can't register atexit after shutdown`)
-- Gemini `google.genai` import 실패 시 cascade 에러
+- 외부 verification 클라이언트 초기화 실패 시 cascade 에러
 
 ### 2.2 수정 방안
 
@@ -29,7 +28,7 @@
 | `src/gui/workers.py` | Worker 시그널 emit을 try/except RuntimeError로 감싸기 |
 | `src/gui/main_window.py` | `_active_worker` 외에 모든 worker를 리스트로 관리하여 GC 방지 |
 | `src/gui/main_window.py` | 모델 로드 에러 시 상세 traceback을 QMessageBox로 표시 |
-| `src/evidence/engine.py` | Perplexity/Gemini 초기화 실패 시 graceful skip (경고만) |
+| `src/evidence/engine.py` | 외부 verification 초기화 실패 시 graceful skip (경고만) |
 | `src/core/sbml_parser.py` | COBRApy 경고를 logging으로 redirect, 예외 catch 강화 |
 
 ---
@@ -253,24 +252,14 @@ src/
 └────────────────────────────────────────────────┘
 ```
 
-### 4.7 LLM 변경 요약 생성
+### 4.7 변경 요약 생성
 
-`ChangeSummarizer`는 기존 Gemini/Perplexity 클라이언트를 재활용:
+`ChangeSummarizer`는 deterministic template 기반 요약을 생성:
 
 ```python
 async def summarize(self, diff: ModelDiff, change_type: str) -> str:
-    """ModelDiff를 LLM에게 전달하여 자연어 요약 생성."""
-    prompt = f"""
-    The following changes were made to a genome-scale metabolic model ({change_type}):
-    - Reactions added: {len(diff.reactions_added)} ({', '.join(diff.reactions_added[:5])}...)
-    - Reactions removed: {len(diff.reactions_removed)}
-    - Reactions modified: {len(diff.reactions_modified)}
-    - Genes added: {len(diff.genes_added)}
-
-    Summarize these changes in 1-2 sentences for version history.
-    """
-    # Gemini API 호출 (기존 클라이언트 재활용)
-    # fallback: LLM 없으면 자동 생성 템플릿 사용
+    """ModelDiff를 사람이 읽기 쉬운 요약으로 변환."""
+    return self._template_summary(diff, change_type)
 ```
 
 ---
@@ -282,7 +271,7 @@ async def summarize(self, diff: ModelDiff, change_type: str) -> str:
 |------|------|------|
 | A-1 | `src/gui/workers.py` | 모든 Worker의 signal emit을 `try/except RuntimeError`로 보호 |
 | A-2 | `src/gui/main_window.py` | Worker 리스트 관리로 GC 방지, 에러 핸들링 강화 |
-| A-3 | `src/evidence/engine.py` | Gemini/Perplexity 초기화 실패 시 graceful skip |
+| A-3 | `src/evidence/engine.py` | 외부 verification 초기화 실패 시 graceful skip |
 | A-4 | `src/core/sbml_parser.py` | COBRApy 경고 redirect, 대형 모델 에러 catch |
 
 ### Phase B: Score-Based Gap-Fill 검증/개선

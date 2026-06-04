@@ -13,7 +13,7 @@ import cobra
 from src.core.models import ModelDiff, ModelVersion, ReactionChange
 from src.utils.constants import VERSION_DIR
 
-logger = logging.getLogger("gem_evaluator.versioning.storage")
+logger = logging.getLogger("metataskgapfill.versioning.storage")
 
 
 class VersionStorage:

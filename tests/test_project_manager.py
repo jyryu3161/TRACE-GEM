@@ -50,9 +50,9 @@ class TestEvidenceItemSerialization:
 
     def test_roundtrip(self):
         item = EvidenceItem(
-            source=EvidenceSource.PUBMED,
+            source=EvidenceSource.BIGG,
             strength=EvidenceStrength.WEAK,
-            description="PubMed mention",
+            description="BiGG mention",
         )
         restored = EvidenceItem.from_dict(item.to_dict())
         assert restored.source == item.source
@@ -69,10 +69,6 @@ class TestReactionEvidenceSerialization:
             status=EvaluationStatus.EVALUATED,
             kegg_score=0.9,
             bigg_score=0.8,
-            uniprot_score=0.7,
-            pubmed_score=0.6,
-            gemini_score=0.5,
-            perplexity_score=0.4,
             ec_numbers=["2.7.1.11"],
             kegg_reaction_ids=["R00756"],
             substrate_match_ratio=1.0,
@@ -191,7 +187,7 @@ class TestProjectManager:
             universal_path="/path/to/universal.json",
             tasks_path="/path/to/tasks.csv",
             current_version_id="v003",
-            version_dir="~/.gem_evaluator/versions/e_coli_core",
+            version_dir="~/.metataskgapfill/versions/e_coli_core",
             scoring_weights={"kegg": 0.3, "bigg": 0.15},
         )
 

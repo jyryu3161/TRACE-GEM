@@ -2,25 +2,26 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.cli import _build_parser, _save_gapfill_report, async_gapfill_main
+from src.cli import (
+    _build_parser,
+    _save_gapfill_report,
+    apply_base_medium_to_tasks,
+    load_medium_argument,
+)
 from src.core.models import (
     CandidateReaction,
     GapFillResult,
     MetabolicTask,
     ModelData,
     Reaction,
-    ReactionEvidence,
     TaskResult,
 )
-from src.core.task_parser import TaskRunner
-from src.core.universal_loader import UniversalLoader
 from src.gapfill.engine import GapFillEngine
 from src.utils.config import Config
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -114,6 +115,7 @@ class TestCLIGapFillMode:
             "--organism", "eco",
             "--universal", "/path/to/universal.json",
             "--tasks", "/path/to/tasks.csv",
+            "--medium", "/path/to/medium.json",
             "--output-model", "/path/to/improved.xml",
             "--output-report", "/path/to/report.csv",
             "--skip-evaluation",
@@ -122,6 +124,7 @@ class TestCLIGapFillMode:
         assert args.organism == "eco"
         assert args.universal == "/path/to/universal.json"
         assert args.tasks == "/path/to/tasks.csv"
+        assert args.medium == "/path/to/medium.json"
         assert args.output_model == "/path/to/improved.xml"
         assert args.output_report == "/path/to/report.csv"
         assert args.skip_evaluation is True
@@ -132,6 +135,7 @@ class TestCLIGapFillMode:
         args = parser.parse_args(["model.xml", "--gap-fill"])
         assert args.universal is None
         assert args.tasks is None
+        assert args.medium is None
         assert args.output_model is None
         assert args.output_report is None
         assert args.skip_evaluation is False
@@ -141,6 +145,59 @@ class TestCLIGapFillMode:
         parser = _build_parser()
         args = parser.parse_args(["model.xml"])
         assert args.gap_fill is False
+
+    def test_inline_medium_parsed(self) -> None:
+        """Inline medium specs are parsed into exchange lower bounds."""
+        medium = load_medium_argument("glc__D_e(-10);EX_o2_e(-1000)", None)
+        assert medium == {"EX_glc__D_e": -10.0, "EX_o2_e": -1000.0}
+
+    def test_json_medium_parsed(self, tmp_path) -> None:
+        """JSON medium maps positive uptake values to negative lower bounds."""
+        path = tmp_path / "medium.json"
+        path.write_text('{"EX_glc__D_e": 10, "o2_e": 1000, "EX_nh4_e": 0}')
+
+        medium = load_medium_argument(str(path), None)
+
+        assert medium == {
+            "EX_glc__D_e": -10.0,
+            "EX_o2_e": -1000.0,
+            "EX_nh4_e": 0.0,
+        }
+
+    def test_csv_medium_parsed(self, tmp_path) -> None:
+        """CSV medium accepts reaction_id plus lower_bound."""
+        path = tmp_path / "medium.csv"
+        path.write_text("reaction_id,lower_bound\nEX_glc__D_e,-10\nEX_o2_e,-1000\n")
+
+        medium = load_medium_argument(str(path), None)
+
+        assert medium == {"EX_glc__D_e": -10.0, "EX_o2_e": -1000.0}
+
+    def test_model_default_medium_used_when_medium_omitted(self) -> None:
+        """Without --medium, CLI uses the draft COBRA model medium."""
+        cobra_model = MagicMock()
+        cobra_model.medium = {"EX_glc__D_e": 10.0}
+
+        medium = load_medium_argument(None, cobra_model)
+
+        assert medium == {"EX_glc__D_e": -10.0}
+
+    def test_base_medium_applied_before_task_medium(self) -> None:
+        """Task-specific medium overrides the CLI/model base medium."""
+        task = MetabolicTask(
+            task_id="T",
+            task_type="Metabolite",
+            target_id="atp_c",
+            medium={"EX_o2_e": 0.0},
+        )
+
+        merged = apply_base_medium_to_tasks(
+            [task],
+            {"EX_glc__D_e": -10.0, "EX_o2_e": -1000.0},
+        )
+
+        assert merged[0].medium == {"EX_glc__D_e": -10.0, "EX_o2_e": 0.0}
+        assert task.medium == {"EX_o2_e": 0.0}
 
 
 # ---------------------------------------------------------------------------

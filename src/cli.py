@@ -1,4 +1,4 @@
-"""CLI for batch evaluation of genome-scale metabolic models."""
+"""CLI for MetaTaskGapFill batch evaluation and task-aware gap-filling."""
 
 from __future__ import annotations
 
@@ -39,8 +39,10 @@ def _format_time(seconds: float) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="gem-evaluator-cli",
-        description="Batch-evaluate SBML model reactions against biological databases.",
+        prog="metatask-gapfill-cli",
+        description=(
+            "Evaluate SBML model reactions and run metabolic-task-based gap-filling."
+        ),
     )
     parser.add_argument("model", help="Path to SBML model file (.xml)")
     parser.add_argument(
@@ -95,6 +97,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to metabolic tasks CSV file. Default: universal essential tasks",
     )
     gf_group.add_argument(
+        "--medium",
+        metavar="PATH_OR_SPEC",
+        default=None,
+        help=(
+            "Base medium for metabolic tasks. Accepts JSON, CSV, or inline spec "
+            "like 'glc__D_e(-10);o2_e(-1000)'. If omitted, the draft model's "
+            "COBRA medium is used."
+        ),
+    )
+    gf_group.add_argument(
         "--output-model",
         metavar="PATH",
         default=None,
@@ -113,6 +125,163 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def _normalize_medium_reaction_id(raw_id: str) -> str:
+    """Return an exchange reaction ID from a metabolite or exchange ID."""
+    medium_id = raw_id.strip()
+    if medium_id.startswith("EX_"):
+        return medium_id
+    return f"EX_{medium_id}"
+
+
+def _medium_value_to_lower_bound(value: float) -> float:
+    """Convert medium values to exchange lower bounds.
+
+    Positive values are treated as COBRA-style uptake capacities and converted
+    to negative lower bounds. Negative values are treated as explicit lower
+    bounds. Zero closes uptake.
+    """
+    if value > 0:
+        return -value
+    return value
+
+
+def _parse_medium_spec(spec: str) -> dict[str, float]:
+    """Parse inline medium spec: ``glc__D_e(-10);EX_o2_e(-1000)``."""
+    import re
+
+    medium: dict[str, float] = {}
+    for entry in spec.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        match = re.match(r"^(.+?)\(([^)]+)\)$", entry)
+        if not match:
+            raise ValueError(f"Invalid medium entry: {entry}")
+        rxn_id = _normalize_medium_reaction_id(match.group(1))
+        medium[rxn_id] = float(match.group(2))
+    return medium
+
+
+def _load_medium_json(path: Path) -> dict[str, float]:
+    """Load medium from JSON mapping or list records."""
+    data = json.loads(path.read_text())
+    medium: dict[str, float] = {}
+
+    if isinstance(data, dict):
+        for raw_id, value in data.items():
+            medium[_normalize_medium_reaction_id(str(raw_id))] = _medium_value_to_lower_bound(
+                float(value)
+            )
+        return medium
+
+    if isinstance(data, list):
+        for row in data:
+            if not isinstance(row, dict):
+                raise ValueError("JSON medium list entries must be objects")
+            raw_id = row.get("reaction_id") or row.get("exchange") or row.get("id")
+            if raw_id is None:
+                raise ValueError("JSON medium rows need reaction_id, exchange, or id")
+            if "lower_bound" in row:
+                value = float(row["lower_bound"])
+            elif "uptake" in row:
+                value = _medium_value_to_lower_bound(float(row["uptake"]))
+            elif "bound" in row:
+                value = _medium_value_to_lower_bound(float(row["bound"]))
+            else:
+                raise ValueError("JSON medium rows need lower_bound, uptake, or bound")
+            medium[_normalize_medium_reaction_id(str(raw_id))] = value
+        return medium
+
+    raise ValueError("JSON medium must be an object or list of objects")
+
+
+def _load_medium_csv(path: Path) -> dict[str, float]:
+    """Load medium from CSV with exchange/reaction_id/id and bound columns."""
+    medium: dict[str, float] = {}
+    with path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh, delimiter="\t" if path.suffix.lower() == ".tsv" else ",")
+        for row in reader:
+            raw_id = row.get("reaction_id") or row.get("exchange") or row.get("id")
+            if raw_id is None:
+                raise ValueError("CSV medium needs reaction_id, exchange, or id column")
+            if row.get("lower_bound") not in (None, ""):
+                value = float(row["lower_bound"])
+            elif row.get("uptake") not in (None, ""):
+                value = _medium_value_to_lower_bound(float(row["uptake"]))
+            elif row.get("bound") not in (None, ""):
+                value = _medium_value_to_lower_bound(float(row["bound"]))
+            else:
+                raise ValueError("CSV medium needs lower_bound, uptake, or bound column")
+            medium[_normalize_medium_reaction_id(raw_id)] = value
+    return medium
+
+
+def load_medium_argument(value: str | None, cobra_model: Any | None) -> dict[str, float]:
+    """Load CLI medium input or fall back to the draft model's default medium."""
+    if value:
+        path = Path(value)
+        if path.exists():
+            if path.suffix.lower() == ".json":
+                return _load_medium_json(path)
+            if path.suffix.lower() in {".csv", ".tsv"}:
+                return _load_medium_csv(path)
+            raise ValueError(f"Unsupported medium file extension: {path.suffix}")
+        return _parse_medium_spec(value)
+
+    if cobra_model is None:
+        return {}
+
+    try:
+        cobra_medium = cobra_model.medium
+    except Exception:
+        cobra_medium = {}
+
+    medium = {
+        _normalize_medium_reaction_id(str(rxn_id)): _medium_value_to_lower_bound(float(value))
+        for rxn_id, value in cobra_medium.items()
+    }
+    if medium:
+        return medium
+
+    try:
+        exchanges = list(cobra_model.exchanges)
+    except Exception:
+        exchanges = []
+    return {
+        rxn.id: rxn.lower_bound
+        for rxn in exchanges
+        if getattr(rxn, "lower_bound", 0.0) < 0
+    }
+
+
+def apply_base_medium_to_tasks(
+    tasks: list[MetabolicTask],
+    base_medium: dict[str, float],
+) -> list[MetabolicTask]:
+    """Merge base medium into tasks, letting task-specific medium override it."""
+    if not base_medium:
+        return tasks
+
+    merged_tasks: list[MetabolicTask] = []
+    for task in tasks:
+        merged_medium = dict(base_medium)
+        merged_medium.update(task.medium)
+        merged_tasks.append(
+            MetabolicTask(
+                task_id=task.task_id,
+                task_type=task.task_type,
+                target_id=task.target_id,
+                medium=merged_medium,
+                constraints=dict(task.constraints),
+                expected_operator=task.expected_operator,
+                expected_value=task.expected_value,
+                description=task.description,
+                category=task.category,
+            )
+        )
+    return merged_tasks
 
 
 def _resolve_format(args: argparse.Namespace) -> str:
@@ -302,6 +471,7 @@ async def async_gapfill_main(
     model_data: ModelData,
     universal_path: str,
     tasks_path: str,
+    medium_arg: str | None,
     output_model: str | None,
     output_report: str | None,
     skip_evaluation: bool,
@@ -332,7 +502,11 @@ async def async_gapfill_main(
     _eprint(f"Loading metabolic tasks from {Path(tasks_path).name}...")
     task_parser = TaskParser()
     tasks = task_parser.parse(tasks_path)
+    base_medium = load_medium_argument(medium_arg, model_data.cobra_model)
+    tasks = apply_base_medium_to_tasks(tasks, base_medium)
+    medium_source = medium_arg if medium_arg else "draft model default medium"
     _eprint(f"  {len(tasks)} tasks loaded")
+    _eprint(f"  Base medium: {len(base_medium)} exchanges from {medium_source}")
 
     # Step 4: Evidence evaluation (optional)
     evidence_results: dict[str, ReactionEvidence] = {}
@@ -492,6 +666,7 @@ def _save_gapfill_report(
         writer.writerow(["Gap-Fill Summary"])
         writer.writerow(["Reactions Added", len(result.added_reactions)])
         writer.writerow(["Tasks Fixed", result.tasks_fixed])
+        writer.writerow(["Tasks Broken", result.tasks_broken])
         writer.writerow(["Total Tasks", result.total_tasks])
         writer.writerow(["Iterations", result.iterations])
         writer.writerow(["Infeasible Tasks", ";".join(result.infeasible_tasks)])
@@ -622,6 +797,7 @@ def main(argv: list[str] | None = None) -> None:
                 model_data=model_data,
                 universal_path=universal_path,
                 tasks_path=tasks_path,
+                medium_arg=args.medium,
                 output_model=args.output_model,
                 output_report=args.output_report,
                 skip_evaluation=args.skip_evaluation,

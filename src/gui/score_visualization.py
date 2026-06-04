@@ -17,7 +17,7 @@ except ImportError:
 
 
 def _add_value_labels(
-    plot_widget: "pg.PlotWidget",
+    plot_widget: pg.PlotWidget,
     x_vals: list[float],
     y_vals: list[float],
     fmt: str = "{:.2f}",
@@ -25,7 +25,7 @@ def _add_value_labels(
     offset_y: float = 0.0,
 ) -> None:
     """Add text labels above each bar showing the numeric value."""
-    for xv, yv in zip(x_vals, y_vals):
+    for xv, yv in zip(x_vals, y_vals, strict=False):
         if yv == 0:
             continue
         label = pg.TextItem(
@@ -78,11 +78,37 @@ class ScoreVisualizationWidget(QWidget):
 
         # Per-subsystem chart
         self._subsystem_widget = pg.PlotWidget(title="Average Score by Subsystem")
-        self._subsystem_widget.setLabel("bottom", "Subsystem")
-        self._subsystem_widget.setLabel("left", "Average Score")
+        self._subsystem_widget.setLabel("bottom", "Average Score")
+        self._subsystem_widget.setLabel("left", "Subsystem")
         self._tabs.addTab(self._subsystem_widget, "By Subsystem")
 
+        self._chart_titles = {
+            self._hist_widget: "Score Distribution",
+            self._match_widget: "Database Match Ratios",
+            self._source_widget: "Average Score by Source",
+            self._subsystem_widget: "Average Score by Subsystem",
+        }
+        for widget in self._chart_titles:
+            self._style_plot(widget)
+
         layout.addWidget(self._tabs)
+
+    def _style_plot(self, widget: pg.PlotWidget) -> None:
+        """Apply shared chart styling for consistent export/screenshot output."""
+        widget.showGrid(x=True, y=True, alpha=0.22)
+        widget.setMenuEnabled(False)
+        widget.hideButtons()
+        widget.getAxis("bottom").setPen(pg.mkPen(THEME.chart_pen))
+        widget.getAxis("left").setPen(pg.mkPen(THEME.chart_pen))
+        widget.getAxis("bottom").setTextPen(pg.mkPen(THEME.chart_fg))
+        widget.getAxis("left").setTextPen(pg.mkPen(THEME.chart_fg))
+
+    def _clear_plots(self, empty: bool = False) -> None:
+        """Clear all plots and optionally mark them as empty."""
+        for widget, title in self._chart_titles.items():
+            widget.clear()
+            suffix = " (no data)" if empty else ""
+            widget.setTitle(f"{title}{suffix}")
 
     def update_charts(
         self,
@@ -94,17 +120,17 @@ class ScoreVisualizationWidget(QWidget):
 
         scores = [ev.confidence_score for ev in evidence.values() if ev.confidence_score >= 0]
         if not scores:
+            self._clear_plots(empty=True)
             return
+
+        self._clear_plots()
 
         self._update_histogram(scores)
         self._update_match_chart(evidence)
         self._update_source_chart(evidence)
-        if subsystem_map:
-            self._update_subsystem_chart(evidence, subsystem_map)
+        self._update_subsystem_chart(evidence, subsystem_map or {})
 
     def _update_histogram(self, scores: list[float]) -> None:
-        self._hist_widget.clear()
-
         import numpy as np
 
         bins = np.linspace(0, 1, 21)
@@ -140,11 +166,11 @@ class ScoreVisualizationWidget(QWidget):
             color=THEME.chart_fg,
             offset_y=max_count * 0.02,
         )
+        self._hist_widget.setXRange(0, 1, padding=0.01)
+        self._hist_widget.setYRange(0, max(max_count * 1.18, 1), padding=0)
 
     def _update_match_chart(self, evidence: dict[str, ReactionEvidence]) -> None:
         """Show distribution of substrate/product match ratios."""
-        self._match_widget.clear()
-
         import numpy as np
 
         sub_ratios = [ev.substrate_match_ratio for ev in evidence.values()]
@@ -189,13 +215,18 @@ class ScoreVisualizationWidget(QWidget):
             fmt="{:.0f}", color=THEME.chart_fg, offset_y=max_count * 0.02,
         )
 
-        # Add legend
-        self._match_widget.addLegend()
+        legend_y = max(max_count * 1.12, 1.0)
+        sub_label = pg.TextItem("Substrates", color=THEME.chart_primary, anchor=(0, 1))
+        sub_label.setPos(0.02, legend_y)
+        prod_label = pg.TextItem("Products", color=THEME.chart_secondary, anchor=(0, 1))
+        prod_label.setPos(0.22, legend_y)
+        self._match_widget.addItem(sub_label)
+        self._match_widget.addItem(prod_label)
+        self._match_widget.setXRange(0, 1, padding=0.01)
+        self._match_widget.setYRange(0, max(max_count * 1.25, 1), padding=0)
 
     def _update_source_chart(self, evidence: dict[str, ReactionEvidence]) -> None:
         """Show average score per evidence source."""
-        self._source_widget.clear()
-
         ordered = get_ordered_sources()
         names = []
         averages = []
@@ -230,15 +261,15 @@ class ScoreVisualizationWidget(QWidget):
         )
 
         ax = self._source_widget.getAxis("bottom")
-        ax.setTicks([list(zip(x, names))])
+        ax.setTicks([list(zip(x, names, strict=False))])
+        self._source_widget.setXRange(-0.6, max(len(names) - 0.4, 0.5), padding=0)
+        self._source_widget.setYRange(0, 1.05, padding=0)
 
     def _update_subsystem_chart(
         self,
         evidence: dict[str, ReactionEvidence],
         subsystem_map: dict[str, str],
     ) -> None:
-        self._subsystem_widget.clear()
-
         sub_scores: dict[str, list[float]] = {}
         for rxn_id, ev in evidence.items():
             sub = subsystem_map.get(rxn_id, "Unknown")
@@ -253,28 +284,35 @@ class ScoreVisualizationWidget(QWidget):
         # Limit to top 20 subsystems
         sorted_subs = sorted_subs[-20:]
 
-        names = [s[0][:25] for s in sorted_subs]
+        names = [self._format_subsystem_label(s[0], len(s[1])) for s in sorted_subs]
         averages = [sum(s[1]) / len(s[1]) if s[1] else 0 for s in sorted_subs]
 
-        x = list(range(len(names)))
+        y = list(range(len(names)))
         bar = pg.BarGraphItem(
-            x=x,
-            height=averages,
-            width=0.6,
+            x0=0,
+            y=y,
+            width=averages,
+            height=0.6,
             brush=pg.mkBrush(THEME.chart_secondary),
             pen=pg.mkPen(THEME.chart_pen, width=1),
         )
         self._subsystem_widget.addItem(bar)
 
-        # Value labels on bars
-        _add_value_labels(
-            self._subsystem_widget,
-            [float(v) for v in x],
-            averages,
-            fmt="{:.2f}",
-            color=THEME.chart_fg,
-            offset_y=0.01,
-        )
+        for ypos, avg in zip(y, averages, strict=False):
+            label = pg.TextItem(f"{avg:.2f}", color=THEME.chart_fg, anchor=(0, 0.5))
+            label.setPos(min(avg + 0.015, 1.02), ypos)
+            self._subsystem_widget.addItem(label)
 
-        ax = self._subsystem_widget.getAxis("bottom")
-        ax.setTicks([list(zip(x, names))])
+        ax = self._subsystem_widget.getAxis("left")
+        ax.setTicks([list(zip(y, names, strict=False))])
+        ax.setWidth(280)
+        ax.setStyle(tickTextOffset=8, autoExpandTextSpace=True)
+        self._subsystem_widget.setXRange(0, 1.05, padding=0)
+        self._subsystem_widget.setYRange(-0.6, max(len(names) - 0.4, 0.5), padding=0)
+
+    @staticmethod
+    def _format_subsystem_label(name: str, count: int) -> str:
+        """Keep subsystem labels readable on a horizontal axis."""
+        max_chars = 38
+        label = name if len(name) <= max_chars else f"{name[:max_chars - 3]}..."
+        return f"{label} (n={count})"

@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from src.core.models import ModelData, Reaction, ReactionEvidence
 from src.gui.theme import THEME
 
-logger = logging.getLogger("gem_evaluator.gui.reaction_detail")
+logger = logging.getLogger("metataskgapfill.gui.reaction_detail")
 
 
 class ReactionDetailWidget(QWidget):
