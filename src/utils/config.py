@@ -1,4 +1,4 @@
-"""Configuration management for the GEM Evaluator."""
+"""Configuration management for the MetaTaskGapFill."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ class Config:
     enable_versioning: bool = True
     max_versions: int = 20
     auto_save_on_edit: bool = True
-    version_dir: str = ""  # default: ~/.gem_evaluator/versions/
+    version_dir: str = ""  # default: ~/.metataskgapfill/versions/
 
     # UI settings
     recent_files: list[str] = field(default_factory=list)

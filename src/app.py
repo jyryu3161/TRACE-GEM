@@ -1,4 +1,4 @@
-"""GEM Evaluator — Application entry point."""
+"""MetaTaskGapFill — Application entry point."""
 
 from __future__ import annotations
 

@@ -1,1 +1,1 @@
-"""GEM Evaluator — Genome-Scale Metabolic Model Evidence Evaluator."""
+"""MetaTaskGapFill — Genome-Scale Metabolic Model Evidence Evaluator."""

@@ -1,4 +1,4 @@
-"""Centralized theme system for GEM Evaluator GUI.
+"""Centralized theme system for MetaTaskGapFill GUI.
 
 Strategy: Fusion style + QPalette + minimal QSS.
 1. Fusion style — identical rendering on Windows/Mac/Linux.

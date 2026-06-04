@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from src.cache.cache_manager import CacheManager
     from src.core.mapping_data import MappingData
 
-logger = logging.getLogger("gem_evaluator.workers")
+logger = logging.getLogger("metataskgapfill.workers")
 
 
 def _safe_emit(signal, *args) -> None:

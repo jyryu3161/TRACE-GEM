@@ -14,7 +14,7 @@ import cobra
 from src.core.cobra_utils import convert_cobra_reaction
 from src.core.models import CandidateReaction, ModelData
 
-logger = logging.getLogger("gem_evaluator.universal_loader")
+logger = logging.getLogger("metataskgapfill.universal_loader")
 
 # Prefixes for utility reactions to exclude from candidates
 _UTILITY_PREFIXES = ("EX_", "DM_", "SK_", "sink_")

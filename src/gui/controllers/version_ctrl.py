@@ -15,7 +15,7 @@ from src.gui.save_dialog import SaveDialog
 if TYPE_CHECKING:
     from src.gui.main_window import MainWindow
 
-logger = logging.getLogger("gem_evaluator.gui.version")
+logger = logging.getLogger("metataskgapfill.gui.version")
 
 
 class VersionController:

@@ -1,12 +1,12 @@
-"""Constants for the GEM Evaluator."""
+"""Constants for MetaTaskGapFill."""
 
 from pathlib import Path
 
-APP_NAME = "GEM Evaluator"
+APP_NAME = "MetaTaskGapFill"
 APP_VERSION = "0.2.0"
 
 # Default directories
-CONFIG_DIR = Path.home() / ".gem_evaluator"
+CONFIG_DIR = Path.home() / ".metataskgapfill"
 CACHE_DB_PATH = CONFIG_DIR / "cache.db"
 CONFIG_FILE_PATH = CONFIG_DIR / "config.json"
 LOG_DIR = CONFIG_DIR / "logs"

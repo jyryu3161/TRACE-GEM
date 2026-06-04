@@ -18,7 +18,7 @@ from src.utils.constants import (
     RATE_LIMITS,
 )
 
-logger = logging.getLogger("gem_evaluator.gapfill.organism_filter")
+logger = logging.getLogger("metataskgapfill.gapfill.organism_filter")
 
 
 class _KEGGLinkClient(BaseAPIClient):

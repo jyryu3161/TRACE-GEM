@@ -1,4 +1,4 @@
-"""QSS stylesheet for the GEM Evaluator GUI.
+"""QSS stylesheet for the MetaTaskGapFill GUI.
 
 All colors are defined in theme.py. This module just re-exports the
 generated stylesheet for backward compatibility.

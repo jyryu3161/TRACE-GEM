@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QThreadPool, Qt, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog,
@@ -18,16 +19,15 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from PySide6.QtCore import QRunnable
-
 from src.core.models import Reaction, TaskResult
 from src.gui.theme import THEME
 
 if TYPE_CHECKING:
     import cobra
+
     from src.core.models import MetabolicTask
 
-logger = logging.getLogger("gem_evaluator.gui.reaction_removal")
+logger = logging.getLogger("metataskgapfill.gui.reaction_removal")
 
 # Transition colors
 _COLOR_PASS_FAIL = "#e74c3c"  # red: regression
@@ -35,10 +35,8 @@ _COLOR_FAIL_PASS = "#3498db"  # blue: improvement
 
 
 def _safe_emit(signal, *args) -> None:
-    try:
+    with suppress(RuntimeError):
         signal.emit(*args)
-    except RuntimeError:
-        pass
 
 
 class _TaskSimSignals(QObject):
@@ -232,6 +230,6 @@ class ReactionRemovalDialog(QDialog):
     def _on_simulation_error(self, error_msg: str) -> None:
         self._progress.setVisible(False)
         self._summary_label.setText(f"Simulation error: {error_msg}")
-        self._summary_label.setStyleSheet(f"color: #e74c3c; padding: 8px;")
+        self._summary_label.setStyleSheet("color: #e74c3c; padding: 8px;")
         self._summary_label.setVisible(True)
         # Keep remove button disabled on error

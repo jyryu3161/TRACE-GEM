@@ -6,13 +6,14 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
+from contextlib import suppress
 
 import aiohttp
 
 from src.api.rate_limiter import RateLimiter
 from src.core.models import EvidenceItem, Reaction
 
-logger = logging.getLogger("gem_evaluator.api")
+logger = logging.getLogger("metataskgapfill.api")
 
 
 class BaseAPIClient(ABC):
@@ -51,10 +52,8 @@ class BaseAPIClient(ABC):
             )
         ):
             if self._session and not self._session.closed:
-                try:
+                with suppress(Exception):
                     await self._session.close()
-                except Exception:
-                    pass
             timeout = aiohttp.ClientTimeout(total=30, connect=10)
             self._session = aiohttp.ClientSession(timeout=timeout)
             self._session_loop = current_loop

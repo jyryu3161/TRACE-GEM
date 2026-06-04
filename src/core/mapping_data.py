@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-logger = logging.getLogger("gem_evaluator.mapping_data")
+logger = logging.getLogger("metataskgapfill.mapping_data")
 
 # Default data directory relative to project root
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"

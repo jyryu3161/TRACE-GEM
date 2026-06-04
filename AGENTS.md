@@ -9,6 +9,9 @@ evidence sources.
 
 ```bash
 python -m src.app
+metatask-gapfill
+python -m src.cli --help
+metatask-gapfill-cli --help
 pytest
 ruff check src/ tests/
 ruff format src/ tests/
@@ -26,6 +29,10 @@ mypy src/ --ignore-missing-imports
   `candidate_evidence_eager_limit` to a positive threshold. In that mode, large
   candidate sets skip full pre-gap-fill evidence and evaluate only gap-filled
   reactions.
+- CLI gap-fill mode takes a draft model, universal model, metabolic task CSV,
+  and optional `--medium`. If medium is omitted, use the draft COBRA model's
+  default medium; otherwise accept JSON, CSV/TSV, or inline specs like
+  `glc__D_e(-10);o2_e(-1000)`.
 
 ## Gap-Filling Behavior
 

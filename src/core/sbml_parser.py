@@ -16,7 +16,7 @@ from src.core.models import ModelData
 from src.utils.constants import KEGG_CODE_TO_NAME, ORGANISM_MAP
 from src.utils.subsystem_loader import get_subsystem_map, lookup_subsystem
 
-logger = logging.getLogger("gem_evaluator.sbml_parser")
+logger = logging.getLogger("metataskgapfill.sbml_parser")
 
 
 class SBMLParser:

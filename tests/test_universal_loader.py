@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 import cobra
+import pytest
 
 from src.core.models import CandidateReaction, ModelData, Reaction
 from src.core.universal_loader import UniversalLoader

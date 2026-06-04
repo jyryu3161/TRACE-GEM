@@ -7,7 +7,7 @@ import logging
 from src.core.models import ModelDiff
 from src.utils.config import Config
 
-logger = logging.getLogger("gem_evaluator.versioning.change_summarizer")
+logger = logging.getLogger("metataskgapfill.versioning.change_summarizer")
 
 
 class ChangeSummarizer:

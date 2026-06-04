@@ -224,9 +224,7 @@ class TaskRunner:
             if norm == rxn.id:
                 continue
             existing = rxn_map.get(norm)
-            if existing is None:
-                rxn_map[norm] = rxn.id
-            elif existing.endswith("_boundary") and not rxn.id.endswith("_boundary"):
+            if existing is None or existing.endswith("_boundary") and not rxn.id.endswith("_boundary"):
                 rxn_map[norm] = rxn.id
 
             # Collect all actual IDs that normalise to the same exchange ID
@@ -274,9 +272,7 @@ class TaskRunner:
             if norm == met.id:
                 continue
             existing = met_map.get(norm)
-            if existing is None:
-                met_map[norm] = met.id
-            elif existing.endswith("_boundary") and not met.id.endswith("_boundary"):
+            if existing is None or existing.endswith("_boundary") and not met.id.endswith("_boundary"):
                 met_map[norm] = met.id
 
         return rxn_map, met_map, exchange_groups

@@ -24,7 +24,7 @@ from src.gapfill.organism_filter import OrganismFilter
 from src.gapfill.penalty_calculator import PenaltyCalculator
 from src.utils.config import Config
 
-logger = logging.getLogger("gem_evaluator.gapfill.engine")
+logger = logging.getLogger("metataskgapfill.gapfill.engine")
 
 
 class _CancelEvent(Protocol):

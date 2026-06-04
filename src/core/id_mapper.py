@@ -7,7 +7,7 @@ import logging
 from src.core.mapping_data import MappingData
 from src.core.models import ExternalIDs, Reaction
 
-logger = logging.getLogger("gem_evaluator.id_mapper")
+logger = logging.getLogger("metataskgapfill.id_mapper")
 
 
 class IdentifierMapper:

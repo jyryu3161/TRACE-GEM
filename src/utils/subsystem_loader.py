@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.core.models import Reaction
 
-logger = logging.getLogger("gem_evaluator.subsystem_loader")
+logger = logging.getLogger("metataskgapfill.subsystem_loader")
 
 _BIGG_MODEL_URL = "http://bigg.ucsd.edu/static/models/{model_id}.json"
 _DOWNLOAD_TIMEOUT = 10.0
@@ -74,9 +74,8 @@ def get_subsystem_map(model_id: str, cache_dir: Path) -> dict[str, str]:
     if not model_id:
         return {}
     cache_path = cache_dir / f"{model_id}.json"
-    if not cache_path.exists():
-        if download_bigg_model_json(model_id, cache_dir) is None:
-            return {}
+    if not cache_path.exists() and download_bigg_model_json(model_id, cache_dir) is None:
+        return {}
     return build_subsystem_map(cache_path)
 
 

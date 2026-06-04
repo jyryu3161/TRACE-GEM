@@ -1,4 +1,4 @@
-"""Data models for the GEM Evaluator."""
+"""Data models for the MetaTaskGapFill."""
 
 from __future__ import annotations
 

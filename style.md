@@ -1,4 +1,4 @@
-# GEM Evaluator — Style Guide
+# MetaTaskGapFill — Style Guide
 
 ## Python Conventions
 

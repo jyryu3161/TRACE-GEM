@@ -14,7 +14,7 @@ from src.versioning.change_summarizer import ChangeSummarizer
 from src.versioning.diff_engine import DiffEngine
 from src.versioning.storage import VersionStorage
 
-logger = logging.getLogger("gem_evaluator.versioning.version_manager")
+logger = logging.getLogger("metataskgapfill.versioning.version_manager")
 
 
 class VersionManager:

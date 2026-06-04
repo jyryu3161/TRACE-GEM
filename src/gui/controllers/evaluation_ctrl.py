@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from src.core.models import Reaction
     from src.gui.main_window import MainWindow
 
-logger = logging.getLogger("gem_evaluator.gui.evaluation")
+logger = logging.getLogger("metataskgapfill.gui.evaluation")
 
 
 class EvaluationController:

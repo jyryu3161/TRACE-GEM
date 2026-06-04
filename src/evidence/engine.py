@@ -24,7 +24,7 @@ from src.evidence.scoring import ConfidenceScorer
 from src.utils.config import Config
 from src.utils.constants import BATCH_SIZE
 
-logger = logging.getLogger("gem_evaluator.evidence")
+logger = logging.getLogger("metataskgapfill.evidence")
 
 
 class EvidenceEngine:

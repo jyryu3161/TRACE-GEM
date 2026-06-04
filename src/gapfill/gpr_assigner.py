@@ -13,7 +13,7 @@ from src.cache.cache_manager import CacheManager
 from src.core.models import CandidateReaction
 from src.utils.constants import KEGG_API_BASE, ORGANISM_FILTER_CACHE_TTL
 
-logger = logging.getLogger("gem_evaluator.gapfill.gpr")
+logger = logging.getLogger("metataskgapfill.gapfill.gpr")
 
 
 class GPRAssigner:

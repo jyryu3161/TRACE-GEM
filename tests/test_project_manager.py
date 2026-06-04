@@ -187,7 +187,7 @@ class TestProjectManager:
             universal_path="/path/to/universal.json",
             tasks_path="/path/to/tasks.csv",
             current_version_id="v003",
-            version_dir="~/.gem_evaluator/versions/e_coli_core",
+            version_dir="~/.metataskgapfill/versions/e_coli_core",
             scoring_weights={"kegg": 0.3, "bigg": 0.15},
         )
 

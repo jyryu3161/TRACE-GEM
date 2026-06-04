@@ -1,4 +1,4 @@
-# GEM Evaluator
+# MetaTaskGapFill
 
 Genome-scale metabolic model evidence evaluator and task-aware gap-filling
 platform. The application loads SBML/COBRA models, evaluates reaction evidence
@@ -19,6 +19,11 @@ pre-commit install
 ```bash
 # Run the app
 python -m src.app
+metatask-gapfill
+
+# CLI
+python -m src.cli --help
+metatask-gapfill-cli --help
 
 # Run tests
 pytest
@@ -45,6 +50,10 @@ mypy src/ --ignore-missing-imports
   reactions are evaluated before gap-filling. `Config.candidate_evidence_eager_limit`
   is `0` by default; set it to a positive threshold to defer evidence for large
   universals and evaluate only gap-filled reactions.
+- CLI gap-fill mode accepts draft model, universal model, metabolic task CSV,
+  and optional base medium. If `--medium` is omitted, use the draft COBRA
+  model's default medium. If provided, medium may be JSON, CSV/TSV, or inline
+  spec such as `glc__D_e(-10);o2_e(-1000)`.
 - Gap-filling is metabolic-task-aware. Task evaluation and gap-fill setup share
   `TaskRunner.prepare_task_model()` so medium, free exchanges, trace elements,
   cofactor turnover, constraints, and ID normalization stay consistent.

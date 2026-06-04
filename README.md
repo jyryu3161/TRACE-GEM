@@ -1,6 +1,6 @@
-# GEM Evaluator
+# MetaTaskGapFill
 
-Genome-Scale Metabolic Model Evidence Evaluator — SBML 모델의 반응(reaction)을 KEGG와 BiGG evidence로 검증하고 confidence score를 산출하는 도구.
+Metabolic-task-aware gap-filling tool — draft SBML 모델, universal 모델, medium, metabolic task를 입력받아 KEGG/BiGG evidence 기반으로 누락 반응을 탐색하고 모델을 복구하는 도구.
 
 ## 주요 기능
 
@@ -9,14 +9,14 @@ Genome-Scale Metabolic Model Evidence Evaluator — SBML 모델의 반응(reacti
   - **KEGG**: BiGG ID → KEGG 매핑을 통한 반응 존재 여부 및 기질/산물 일치도 확인
   - **BiGG Models**: 범용 반응 데이터베이스 검증
 - **Confidence Scoring**: KEGG/BiGG 가중 점수 산출
-- **Gap-Filling**: BiGG universal model 기반 자동 gap-filling (MILP 최적화)
+- **Gap-Filling**: metabolic task 기반 자동 gap-filling (MILP 최적화)
   - Metabolic task 기반 모델 검증 (before/after 비교)
   - Organism-specific 유전자 필터링 (KEGG API)
   - GPR 규칙 자동 할당
 - **반응 관리**: 반응 편집, 제거 (task impact preview 포함)
 - **버전 관리**: 모델 변경 이력 추적 및 복원
 - **GUI**: PySide6(Qt6) 기반 데스크톱 UI (반응 테이블, evidence 패널, 점수 시각화)
-- **CLI 배치 평가**: 서버/자동화 환경에서 전체 반응 평가 및 결과 파일 내보내기
+- **CLI 모드**: 서버/자동화 환경에서 evidence 평가와 task-aware gap-filling 실행
 - **Export**: CSV / JSON 형식으로 평가 결과 내보내기
 - **캐싱**: SQLite 기반 API 응답 캐시 (TTL 설정 가능)
 
@@ -87,8 +87,8 @@ git lfs install
 ### 2. 저장소 클론
 
 ```bash
-git clone https://github.com/jyryu3161/model_evaluator.git
-cd model_evaluator
+git clone https://github.com/jyryu3161/model_evaluator.git MetaTaskGapFill
+cd MetaTaskGapFill
 ```
 
 > Git LFS가 설치된 상태에서 클론하면 `data/` 파일이 자동으로 다운로드됩니다.
@@ -142,7 +142,7 @@ pre-commit install
 
 앱 실행 후 **Settings** 대화상자에서 organism/evidence 설정을 조정하거나, 설정 파일을 직접 편집할 수 있습니다.
 
-설정 파일 경로: `~/.gem_evaluator/config.json`
+설정 파일 경로: `~/.metataskgapfill/config.json`
 
 ```json
 {
@@ -167,6 +167,9 @@ pre-commit install
 | `weight_bigg` | `0.30` | BiGG 검증 가중치 |
 | `batch_size` | `10` | 배치 평가 크기 |
 | `max_concurrent` | `5` | 최대 동시 평가 수 |
+| `default_universal_model` | `data/bigg_universal_model_fixed.json` | CLI/GUI gap-fill 기본 universal 모델 |
+| `default_task_file` | `data/universal_essential_tasks.csv` | CLI/GUI gap-fill 기본 metabolic task CSV |
+| `candidate_evidence_eager_limit` | `0` | `0`이면 모든 후보 반응 evidence를 gap-fill 전에 계산 |
 
 ### Headless 환경 (서버)
 
@@ -188,10 +191,17 @@ python -m src.app
 또는 (editable 설치 시):
 
 ```bash
-gem-evaluator
+metatask-gapfill
 ```
 
-### CLI 배치 평가
+### CLI 모드
+
+CLI는 두 가지 방식으로 사용할 수 있습니다.
+
+1. **Evidence 평가 모드**: draft 모델의 기존 반응을 KEGG/BiGG로 평가하고 CSV/JSON으로 저장
+2. **Gap-fill 모드**: draft 모델, universal 모델, medium, metabolic task를 입력받아 task-aware gap-filling 수행
+
+#### Evidence 평가 모드
 
 서버/자동화 환경에서 전체 반응을 평가하고 결과를 파일로 내보냅니다.
 
@@ -216,7 +226,116 @@ python -m src.cli --help
 또는 (editable 설치 시):
 
 ```bash
-gem-evaluator-cli input/iJO1366.xml -o output.csv
+metatask-gapfill-cli input/iJO1366.xml -o output.csv
+```
+
+#### Gap-fill 모드
+
+기본 입력은 다음 네 가지입니다.
+
+| 입력 | CLI 옵션 | 필수 여부 | 설명 |
+|------|----------|-----------|------|
+| Draft 모델 | positional `MODEL.xml` | 필수 | 복구할 SBML/COBRA draft 모델 |
+| Universal 모델 | `--universal PATH` | 선택 | JSON 또는 SBML universal 모델. 생략 시 설정값 또는 `data/bigg_universal_model_fixed.json` 사용 |
+| Medium | `--medium PATH_OR_SPEC` | 선택 | 기본 배지. 생략 시 draft 모델의 COBRA `model.medium` 사용 |
+| Metabolic task | `--tasks PATH` | 선택 | task CSV. 생략 시 설정값 또는 `data/universal_essential_tasks.csv` 사용 |
+
+가장 일반적인 실행:
+
+```bash
+python -m src.cli data/iML1515.xml \
+  --gap-fill \
+  --universal data/bigg_universal_model_fixed.json \
+  --tasks data/universal_essential_tasks.csv \
+  --output-model output/iML1515_gapfilled.xml \
+  --output-report output/iML1515_gapfill_report.csv
+```
+
+editable 설치 후:
+
+```bash
+metatask-gapfill-cli data/iML1515.xml \
+  --gap-fill \
+  --universal data/bigg_universal_model_fixed.json \
+  --tasks data/universal_essential_tasks.csv \
+  --output-model output/iML1515_gapfilled.xml \
+  --output-report output/iML1515_gapfill_report.csv
+```
+
+medium을 생략하면 draft 모델의 default medium을 사용합니다.
+
+```bash
+python -m src.cli draft.xml \
+  --gap-fill \
+  --universal universal.json \
+  --tasks tasks.csv \
+  --output-model repaired.xml
+```
+
+medium을 inline spec으로 지정할 수 있습니다. 값은 exchange lower bound입니다.
+
+```bash
+python -m src.cli draft.xml \
+  --gap-fill \
+  --medium "glc__D_e(-10);o2_e(-1000);nh4_e(-1000)" \
+  --tasks tasks.csv \
+  --output-model repaired.xml
+```
+
+medium JSON 파일도 사용할 수 있습니다. 양수 값은 COBRA `model.medium` 스타일의 uptake capacity로 보고 음수 lower bound로 변환합니다.
+
+```json
+{
+  "EX_glc__D_e": 10,
+  "EX_o2_e": 1000,
+  "EX_nh4_e": 1000
+}
+```
+
+```bash
+python -m src.cli draft.xml \
+  --gap-fill \
+  --medium medium.json \
+  --tasks tasks.csv \
+  --output-model repaired.xml
+```
+
+medium CSV 파일도 사용할 수 있습니다.
+
+```csv
+reaction_id,lower_bound
+EX_glc__D_e,-10
+EX_o2_e,-1000
+EX_nh4_e,-1000
+```
+
+또는 uptake column을 양수로 줄 수 있습니다.
+
+```csv
+reaction_id,uptake
+EX_glc__D_e,10
+EX_o2_e,1000
+EX_nh4_e,1000
+```
+
+task CSV의 `Medium` 컬럼은 CLI/model base medium 위에 적용되는 task-specific override입니다. 예를 들어 base medium에서 `EX_o2_e=-1000`이어도 특정 task가 `o2_e(0.0)`을 지정하면 해당 task에서는 산소 uptake가 닫힙니다.
+
+evidence 계산을 건너뛰고 순수 task gap-fill만 실행하려면:
+
+```bash
+python -m src.cli draft.xml \
+  --gap-fill \
+  --universal universal.json \
+  --tasks tasks.csv \
+  --skip-evaluation \
+  --output-model repaired.xml
+```
+
+gap-fill report CSV에는 요약, 추가된 반응, before/after task 결과가 포함됩니다.
+
+```bash
+python -m src.cli --help
+metatask-gapfill-cli --help
 ```
 
 ### GUI 사용 순서
