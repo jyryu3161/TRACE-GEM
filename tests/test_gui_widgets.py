@@ -516,6 +516,30 @@ class TestVersionGraphWidget:
         assert widget._positions["v006"][1] != widget._positions["v005"][1]
         assert widget._positions["v007"][1] == widget._positions["v006"][1]
 
+    def test_legacy_restore_description_creates_branch_lane(self):
+        from src.gui.version_graph import VersionGraphWidget
+
+        versions = [
+            ModelVersion("v001", "2026-06-08T00:00:00+00:00", None),
+            ModelVersion("v002", "2026-06-08T00:01:00+00:00", "v001"),
+            ModelVersion("v003", "2026-06-08T00:02:00+00:00", "v002"),
+            ModelVersion("v004", "2026-06-08T00:03:00+00:00", "v003"),
+            ModelVersion("v005", "2026-06-08T00:04:00+00:00", "v004"),
+            ModelVersion(
+                "v006",
+                "2026-06-08T00:05:00+00:00",
+                "v005",
+                description="Restored to version v003",
+            ),
+            ModelVersion("v007", "2026-06-08T00:06:00+00:00", "v006"),
+        ]
+
+        widget = VersionGraphWidget()
+        widget.set_versions(versions, current_version_id="v007")
+
+        assert widget._positions["v006"][1] != widget._positions["v005"][1]
+        assert widget._positions["v007"][1] == widget._positions["v006"][1]
+
     def test_graph_set_versions_empty(self):
         from src.gui.version_graph import VersionGraphWidget
 

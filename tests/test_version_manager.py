@@ -92,6 +92,19 @@ class TestVersionStorageSaveLoad:
         assert len(loaded.diff.reactions_modified) == 1
         assert loaded.diff.genes_added == ["g1"]
 
+    def test_legacy_restore_description_infers_source(self) -> None:
+        version = VersionStorage._dict_to_version(
+            {
+                "version_id": "v006",
+                "timestamp": "2026-06-08T00:05:00+00:00",
+                "parent_version_id": "v005",
+                "description": "Restored to version v003",
+            }
+        )
+
+        assert version.change_type == "restore"
+        assert version.restore_source_version_id == "v003"
+
     def test_load_missing_version_raises(
         self, tmp_storage: VersionStorage
     ) -> None:

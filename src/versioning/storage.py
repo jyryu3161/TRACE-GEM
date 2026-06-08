@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 from dataclasses import asdict
 from pathlib import Path
@@ -14,6 +15,8 @@ from src.core.models import ModelDiff, ModelVersion, ReactionChange
 from src.utils.constants import VERSION_DIR
 
 logger = logging.getLogger("metataskgapfill.versioning.storage")
+
+_RESTORE_DESC_RE = re.compile(r"\bRestored\s+to\s+version\s+([^\s,;]+)", re.IGNORECASE)
 
 
 class VersionStorage:
@@ -299,15 +302,25 @@ class VersionStorage:
                 metabolites_removed=diff_data.get("metabolites_removed", []),
             )
 
+        description = d.get("description", "")
+        change_type = d.get("change_type", "initial_load")
+        restore_source_version_id = d.get("restore_source_version_id")
+        if not restore_source_version_id:
+            match = _RESTORE_DESC_RE.search(description)
+            if match:
+                restore_source_version_id = match.group(1)
+                if "change_type" not in d:
+                    change_type = "restore"
+
         return ModelVersion(
             version_id=d["version_id"],
             timestamp=d["timestamp"],
             parent_version_id=d.get("parent_version_id"),
             model_id=d.get("model_id", ""),
-            description=d.get("description", ""),
-            change_type=d.get("change_type", "initial_load"),
+            description=description,
+            change_type=change_type,
             diff=diff,
             task_pass_rate=d.get("task_pass_rate"),
             sbml_filename=d.get("sbml_filename", "model.xml"),
-            restore_source_version_id=d.get("restore_source_version_id"),
+            restore_source_version_id=restore_source_version_id,
         )

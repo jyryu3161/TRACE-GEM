@@ -32,6 +32,8 @@ _TYPE_COLORS: dict[str, str] = {
     "restore": THEME.version_type_restore,
 }
 
+_RESTORE_DESC_PREFIX = "restored to version "
+
 
 class VersionGraphWidget(QWidget):
     """PyQtGraph-based version history graph visualization.
@@ -198,11 +200,7 @@ class VersionGraphWidget(QWidget):
                 px, py = self._positions[parent_id]
                 cx, cy = self._positions[v.version_id]
                 restore_source_id = self._restore_source_id(v, set(self._positions))
-                is_restore_edge = (
-                    v.change_type == "restore"
-                    and restore_source_id is not None
-                    and parent_id == restore_source_id
-                )
+                is_restore_edge = restore_source_id is not None and parent_id == restore_source_id
                 pen = pg.mkPen(
                     THEME.graph_edge_restore if is_restore_edge else THEME.graph_edge,
                     width=1 if is_restore_edge else 2,
@@ -232,7 +230,8 @@ class VersionGraphWidget(QWidget):
             is_current = v.version_id == self._current_version_id
             is_highlighted = v.version_id == highlight_id
 
-            color = _TYPE_COLORS.get(v.change_type, THEME.version_type_initial)
+            display_type = self._display_change_type(v, set(self._positions))
+            color = _TYPE_COLORS.get(display_type, THEME.version_type_initial)
             size = _CURRENT_NODE_SIZE if is_current else _NODE_SIZE
 
             if is_current or is_highlighted:
@@ -279,15 +278,30 @@ class VersionGraphWidget(QWidget):
         known_ids: set[str],
     ) -> str | None:
         """Return the version restored by a restore node, if known."""
-        if version.change_type != "restore":
-            return None
         if version.restore_source_version_id in known_ids:
             return version.restore_source_version_id
-        if version.description:
-            for version_id in known_ids:
-                if version_id != version.version_id and version_id in version.description:
-                    return version_id
+        if version.change_type != "restore" and not version.description:
+            return None
+        description = version.description.lower()
+        if _RESTORE_DESC_PREFIX not in description:
+            return None
+        for version_id in known_ids:
+            if (
+                version_id != version.version_id
+                and f"{_RESTORE_DESC_PREFIX}{version_id.lower()}" in description
+            ):
+                return version_id
         return None
+
+    def _display_change_type(
+        self,
+        version: ModelVersion,
+        known_ids: set[str],
+    ) -> str:
+        """Return change type used for node styling."""
+        if self._restore_source_id(version, known_ids):
+            return "restore"
+        return version.change_type
 
     def _graph_parent_id(
         self,
