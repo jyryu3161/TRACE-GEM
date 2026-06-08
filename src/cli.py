@@ -123,6 +123,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip evidence evaluation of model and candidates",
     )
+    gf_group.add_argument(
+        "--include-exchange-gapfill",
+        action="store_true",
+        help=(
+            "Allow exchange/demand/sink reactions from the universal model as "
+            "gap-fill candidates. Default: excluded."
+        ),
+    )
 
     return parser
 
@@ -475,6 +483,7 @@ async def async_gapfill_main(
     output_model: str | None,
     output_report: str | None,
     skip_evaluation: bool,
+    include_exchange_gapfill: bool = False,
 ) -> None:
     """Run the async gap-filling pipeline."""
     from src.core.task_parser import TaskParser
@@ -488,14 +497,23 @@ async def async_gapfill_main(
     _eprint("Loading universal model...")
     loader = UniversalLoader()
     universal_model = loader.load(universal_path)
+    config.gapfill_exclude_exchange_reactions = not include_exchange_gapfill
     _eprint(
         f"  Universal model: {len(universal_model.reactions)} reactions, "
         f"{len(universal_model.metabolites)} metabolites"
     )
+    if config.gapfill_exclude_exchange_reactions:
+        _eprint("  Gap-fill candidates: exchange/demand/sink reactions excluded")
+    else:
+        _eprint("  Gap-fill candidates: exchange/demand/sink reactions included")
 
     # Step 2: Extract candidates
     _eprint("Extracting candidate reactions...")
-    candidates = loader.extract_candidates(universal_model, model_data)
+    candidates = loader.extract_candidates(
+        universal_model,
+        model_data,
+        exclude_exchange_reactions=config.gapfill_exclude_exchange_reactions,
+    )
     _eprint(f"  {len(candidates)} candidate reactions extracted")
 
     # Step 3: Parse metabolic tasks
@@ -801,6 +819,7 @@ def main(argv: list[str] | None = None) -> None:
                 output_model=args.output_model,
                 output_report=args.output_report,
                 skip_evaluation=args.skip_evaluation,
+                include_exchange_gapfill=args.include_exchange_gapfill,
             )
         )
         return

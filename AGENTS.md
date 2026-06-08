@@ -50,6 +50,10 @@ mypy src/ --ignore-missing-imports
 - `GapFillEngine` must use the same task environment as task evaluation.
 - Only lower-bound production tasks (`>` and `>=`) are gap-fillable. Negative,
   equality, and upper-bound tasks cannot generally be fixed by adding reactions.
+- Exchange/demand/sink boundary reactions are excluded from gap-fill candidates
+  and from the COBRApy solver universal by default:
+  `Config.gapfill_exclude_exchange_reactions = True`. CLI/GUI may explicitly
+  opt into including them for specialized workflows.
 - Previously passing tasks are protected during gap-fill. Candidate reaction
   sets that regress those tasks should be discarded, and applied iterations
   that still cause regressions should be rolled back.

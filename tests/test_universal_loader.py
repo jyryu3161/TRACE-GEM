@@ -209,6 +209,24 @@ class TestExtractCandidates:
         assert "SK_h2o_c" not in candidate_ids
         assert "sink_coa_c" not in candidate_ids
 
+    def test_extract_candidates_can_include_exchange_when_requested(
+        self,
+        loader: UniversalLoader,
+        mock_cobra_model: MagicMock,
+        user_model_data: ModelData,
+    ) -> None:
+        """Exchange exclusion is the default, but can be disabled explicitly."""
+        candidates = loader.extract_candidates(
+            mock_cobra_model,
+            user_model_data,
+            exclude_exchange_reactions=False,
+        )
+        candidate_ids = {c.reaction.id for c in candidates}
+
+        assert "DM_atp_c" in candidate_ids
+        assert "SK_h2o_c" in candidate_ids
+        assert "sink_coa_c" in candidate_ids
+
     def test_extract_candidates_normalizes_r_prefix(
         self,
         loader: UniversalLoader,

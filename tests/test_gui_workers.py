@@ -154,7 +154,7 @@ class TestGapFillWorkflowWorker:
             def load(self, path):
                 return object()
 
-            def extract_candidates(self, universal_model, model_data):
+            def extract_candidates(self, universal_model, model_data, **kwargs):
                 return candidates
 
         class FakeGapFillEngine:
@@ -223,7 +223,7 @@ class TestGapFillWorkflowWorker:
             def load(self, path):
                 return object()
 
-            def extract_candidates(self, universal_model, model_data):
+            def extract_candidates(self, universal_model, model_data, **kwargs):
                 return candidates
 
         class FakeParser:

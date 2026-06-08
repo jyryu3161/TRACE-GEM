@@ -92,17 +92,19 @@ class UniversalLoader:
         self,
         universal: cobra.Model,
         user_model: ModelData,
+        *,
+        exclude_exchange_reactions: bool = True,
     ) -> list[CandidateReaction]:
         """Extract reactions from universal model not present in user model.
 
         Normalizes IDs (R_ prefix, case-insensitive) and excludes
-        exchange/demand/sink utility reactions.
+        exchange/demand/sink utility reactions by default.
         """
         model_ids = self._build_model_reaction_ids(user_model)
         candidates: list[CandidateReaction] = []
 
         for rxn in universal.reactions:
-            if self._is_utility_reaction(rxn.id):
+            if exclude_exchange_reactions and self.is_exchange_or_utility_reaction(rxn.id):
                 continue
 
             normalized = rxn.id.lower()
@@ -123,10 +125,11 @@ class UniversalLoader:
 
         logger.info(
             "Extracted %d candidate reactions from universal model "
-            "(%d total, %d in user model, utility excluded)",
+            "(%d total, %d in user model, utility excluded=%s)",
             len(candidates),
             len(universal.reactions),
             len(user_model.reactions),
+            exclude_exchange_reactions,
         )
         return candidates
 
@@ -141,7 +144,8 @@ class UniversalLoader:
                 ids.add(f"R_{rxn.id}".lower())
         return ids
 
-    def _is_utility_reaction(self, rxn_id: str) -> bool:
+    @staticmethod
+    def is_exchange_or_utility_reaction(rxn_id: str) -> bool:
         """Check if reaction is an exchange, demand, or sink reaction."""
         return any(rxn_id.startswith(p) for p in _UTILITY_PREFIXES)
 

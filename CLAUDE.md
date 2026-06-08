@@ -67,6 +67,10 @@ mypy src/ --ignore-missing-imports
   cofactor turnover, constraints, and ID normalization stay consistent.
 - Negative or upper-bound tasks are not gap-fillable and are skipped by the
   reaction-addition repair step.
+- Exchange/demand/sink boundary reactions are excluded from gap-fill candidates
+  and from the COBRApy solver universal by default
+  (`Config.gapfill_exclude_exchange_reactions = True`). CLI/GUI controls can
+  explicitly include them for specialized workflows.
 - Previously passing tasks are protected during gap-fill. Candidate sets that
   would break them are discarded, and an applied iteration is rolled back if
   final task retesting still shows protected-task regressions.

@@ -277,6 +277,10 @@ class GapFillWorkflowWorker(QRunnable):
         on_progress("loading", 0, 1, "Loading universal model...")
         loader = UniversalLoader()
         universal_model = loader.load(self.universal_path)
+        exclude_exchange_gapfill = bool(
+            self.options.get("exclude_exchange_gapfill", True)
+        )
+        self.config.gapfill_exclude_exchange_reactions = exclude_exchange_gapfill
         on_progress("loading", 1, 1, "Universal model loaded")
 
         if self._is_cancelled():
@@ -288,7 +292,11 @@ class GapFillWorkflowWorker(QRunnable):
             on_progress("extracting", 1, 1, f"{len(candidates)} candidates (resumed)")
         else:
             on_progress("extracting", 0, 1, "Extracting candidates...")
-            candidates = loader.extract_candidates(universal_model, self.model_data)
+            candidates = loader.extract_candidates(
+                universal_model,
+                self.model_data,
+                exclude_exchange_reactions=exclude_exchange_gapfill,
+            )
             on_progress("extracting", 1, 1, f"{len(candidates)} candidates extracted")
 
         if self._is_cancelled():

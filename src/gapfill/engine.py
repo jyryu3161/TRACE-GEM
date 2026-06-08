@@ -19,6 +19,7 @@ from src.core.models import (
     TaskResult,
 )
 from src.core.task_parser import TaskRunner
+from src.core.universal_loader import UniversalLoader
 from src.gapfill.gpr_assigner import GPRAssigner
 from src.gapfill.organism_filter import OrganismFilter
 from src.gapfill.penalty_calculator import PenaltyCalculator
@@ -187,8 +188,12 @@ class GapFillEngine:
                     candidate.penalty = penalties[candidate.reaction.id]
 
         latest_after_results: list[TaskResult] | None = None
-        gapfill_universal = self._prune_universal_for_gapfill(
+        gapfill_universal = self._exclude_exchange_reactions_from_universal(
             universal_model,
+            tasks,
+        )
+        gapfill_universal = self._prune_universal_for_gapfill(
+            gapfill_universal,
             user_model,
             tasks,
         )
@@ -881,6 +886,45 @@ class GapFillEngine:
             len(pruned.reactions),
         )
         return pruned
+
+    def _exclude_exchange_reactions_from_universal(
+        self,
+        universal: cobra.Model,
+        tasks: list[MetabolicTask],
+    ) -> cobra.Model:
+        """Remove exchange/demand/sink reactions from solver candidates by default."""
+        if not self._config.gapfill_exclude_exchange_reactions:
+            return universal
+
+        keep_reaction_ids: set[str] = set()
+        universal_rxn_map, _, _ = self._task_runner._build_id_maps(universal)
+        for task in tasks:
+            if task.task_type != "Reaction":
+                continue
+            rxn_id = self._task_runner._resolve_reaction(task.target_id, universal_rxn_map)
+            if rxn_id and not UniversalLoader.is_exchange_or_utility_reaction(rxn_id):
+                keep_reaction_ids.add(rxn_id)
+
+        filtered = cobra.Model(f"{universal.id}_no_exchange")
+        filtered.name = f"{universal.name or universal.id} (exchange excluded)"
+        filtered.compartments = dict(universal.compartments)
+        filtered.add_reactions(
+            [
+                rxn.copy()
+                for rxn in universal.reactions
+                if rxn.id in keep_reaction_ids
+                or not UniversalLoader.is_exchange_or_utility_reaction(rxn.id)
+            ]
+        )
+
+        if len(filtered.reactions) == len(universal.reactions):
+            return universal
+
+        logger.info(
+            "Excluded %d exchange/utility reaction(s) from gap-fill universal",
+            len(universal.reactions) - len(filtered.reactions),
+        )
+        return filtered
 
     def _apply_gapfill_results(
         self,

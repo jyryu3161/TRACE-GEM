@@ -210,6 +210,12 @@ class WorkflowWizard(QDialog):
         self._opt_gap_fill.setChecked(True)
         vlayout.addWidget(self._opt_gap_fill)
 
+        self._opt_exclude_exchange_gapfill = QCheckBox(
+            "Exclude exchange reactions from gap-filling"
+        )
+        self._opt_exclude_exchange_gapfill.setChecked(True)
+        vlayout.addWidget(self._opt_exclude_exchange_gapfill)
+
         self._opt_assign_gpr = QCheckBox("Assign GPR from KEGG")
         self._opt_assign_gpr.setChecked(True)
         vlayout.addWidget(self._opt_assign_gpr)
@@ -298,6 +304,7 @@ class WorkflowWizard(QDialog):
             "evaluate_candidates": self._opt_evaluate_candidates.isChecked(),
             "filter_organism": self._opt_filter_organism.isChecked(),
             "gap_fill": self._opt_gap_fill.isChecked(),
+            "exclude_exchange_gapfill": self._opt_exclude_exchange_gapfill.isChecked(),
             "assign_gpr": self._opt_assign_gpr.isChecked(),
         }
 

@@ -449,6 +449,43 @@ class TestGapFillEngine:
         assert result == []
         assert mock_gapfill.call_args.kwargs["demand_reactions"] is False
 
+    def test_solver_universal_excludes_exchange_reactions_by_default(
+        self, engine: GapFillEngine
+    ) -> None:
+        """The universal passed to COBRApy gap-fill excludes boundary reactions."""
+        universal = cobra.Model("universal")
+        a = cobra.Metabolite("a_c", compartment="c")
+        b = cobra.Metabolite("b_c", compartment="c")
+        r1 = cobra.Reaction("R1")
+        r1.add_metabolites({a: -1, b: 1})
+        ex = cobra.Reaction("EX_a_e")
+        dm = cobra.Reaction("DM_b_c")
+        sk = cobra.Reaction("SK_a_c")
+        sink = cobra.Reaction("sink_b_c")
+        universal.add_reactions([r1, ex, dm, sk, sink])
+
+        filtered = engine._exclude_exchange_reactions_from_universal(universal, [])
+        filtered_ids = set(filtered.reactions.list_attr("id"))
+
+        assert filtered is not universal
+        assert filtered_ids == {"R1"}
+
+    def test_solver_universal_can_include_exchange_reactions(
+        self,
+        sample_tasks: list[MetabolicTask],
+    ) -> None:
+        """The default can be overridden for specialized workflows."""
+        engine = GapFillEngine(Config(gapfill_exclude_exchange_reactions=False))
+        universal = cobra.Model("universal")
+        universal.add_reactions([cobra.Reaction("R1"), cobra.Reaction("EX_a_e")])
+
+        filtered = engine._exclude_exchange_reactions_from_universal(
+            universal,
+            sample_tasks,
+        )
+
+        assert filtered is universal
+
     def test_missing_reaction_task_target_is_preseeded_from_universal(
         self, engine: GapFillEngine
     ) -> None:
