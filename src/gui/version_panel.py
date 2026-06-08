@@ -42,6 +42,8 @@ _TYPE_CONFIG: dict[str, tuple[str, str]] = {
     "restore": ("Restore", THEME.version_type_restore),
 }
 
+_RESTORE_DESC_PREFIX = "restored to version "
+
 
 class VersionPanelWidget(QWidget):
     """Panel displaying version history as a table with git-style change tracking.
@@ -210,7 +212,8 @@ class VersionPanelWidget(QWidget):
         active_filter = self._type_filter.currentData()
 
         for version in reversed(self._versions):
-            if active_filter and version.change_type != active_filter:
+            display_type = self._display_change_type(version)
+            if active_filter and display_type != active_filter:
                 continue
             item = self._make_item(version)
             self._tree.addTopLevelItem(item)
@@ -235,8 +238,9 @@ class VersionPanelWidget(QWidget):
             date_text = ts[:16]
 
         # Type column
+        display_type = self._display_change_type(version)
         type_label, _type_color = _TYPE_CONFIG.get(
-            version.change_type, (version.change_type, THEME.muted_text)
+            display_type, (display_type, THEME.muted_text)
         )
 
         # Changes column
@@ -266,7 +270,7 @@ class VersionPanelWidget(QWidget):
 
         # Type badge color
         _label, type_color = _TYPE_CONFIG.get(
-            version.change_type, (version.change_type, THEME.muted_text)
+            display_type, (display_type, THEME.muted_text)
         )
         item.setForeground(COL_TYPE, QBrush(QColor(type_color)))
         type_font = item.font(COL_TYPE)
@@ -309,6 +313,17 @@ class VersionPanelWidget(QWidget):
         if diff is None or diff.is_empty:
             return "\u2014"
         return diff.compact_summary
+
+    @staticmethod
+    def _display_change_type(version: ModelVersion) -> str:
+        """Return change type used for table display and filtering."""
+        if (
+            version.change_type == "restore"
+            or version.restore_source_version_id
+            or _RESTORE_DESC_PREFIX in (version.description or "").lower()
+        ):
+            return "restore"
+        return version.change_type
 
     @staticmethod
     def _style_changes_cell(
@@ -362,7 +377,7 @@ class VersionPanelWidget(QWidget):
         lines = [
             f"<b>Version:</b> {version.version_id}",
             f"<b>Date:</b> {version.timestamp}",
-            f"<b>Type:</b> {version.change_type}",
+            f"<b>Type:</b> {VersionPanelWidget._display_change_type(version)}",
         ]
         if version.parent_version_id:
             lines.append(f"<b>Parent:</b> {version.parent_version_id}")

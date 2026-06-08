@@ -441,6 +441,33 @@ class TestVersionPanelWidget:
         # Graph should have positions for all 3 versions
         assert len(widget._graph._positions) == 3
 
+    def test_legacy_restore_type_display(self):
+        from src.gui.version_panel import VersionPanelWidget
+
+        widget = VersionPanelWidget()
+        versions = [
+            ModelVersion("v001", "2026-06-08T00:00:00+00:00", None),
+            ModelVersion("v002", "2026-06-08T00:01:00+00:00", "v001"),
+            ModelVersion("v003", "2026-06-08T00:02:00+00:00", "v002"),
+            ModelVersion(
+                "v004",
+                "2026-06-08T00:03:00+00:00",
+                "v003",
+                description="Restored to version v001",
+            ),
+        ]
+        widget.set_history(versions, current_version_id="v004")
+
+        item = widget._tree.topLevelItem(0)
+        assert item is not None
+        assert item.text(0).strip().endswith("v004")
+        assert item.text(2) == "Restore"
+
+        restore_index = widget._type_filter.findData("restore")
+        widget._type_filter.setCurrentIndex(restore_index)
+        assert widget._tree.topLevelItemCount() == 1
+        assert widget._tree.topLevelItem(0).text(0).strip().endswith("v004")
+
 
 class TestVersionGraphWidget:
     def _make_versions(self):
