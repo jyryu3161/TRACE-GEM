@@ -52,6 +52,8 @@ mypy src/ --ignore-missing-imports
 - KEGG IDs whose entries exist but whose substrates/products do not match the
   model reaction should remain explicit absent KEGG evidence with mismatch
   details, not a generic "not found" result.
+- KEGG substrate/product matching excludes common currency metabolites when
+  informative non-currency compounds remain on both sides.
 - Default candidate evidence behavior is eager: all extracted candidate
   reactions are evaluated before gap-filling. `Config.candidate_evidence_eager_limit`
   is `0` by default; set it to a positive threshold to defer evidence for large
@@ -69,8 +71,10 @@ mypy src/ --ignore-missing-imports
   would break them are discarded, and an applied iteration is rolled back if
   final task retesting still shows protected-task regressions.
 - The gap-fill workflow has an outer convergence loop controlled by
-  `Config.gapfill_iterations`. This is not the same as alternative solution
-  enumeration; each task currently keeps the first COBRApy gap-fill solution.
+  `Config.gapfill_iterations`.
+- `Config.gapfill_alternatives` controls per-task alternative solution search.
+  If an alternative breaks a protected task, the next alternative is tried; if
+  no alternative preserves protected tasks, that task's gap-fill attempt fails.
 - Large universal models are pruned for MILP solving when above
   `Config.gapfill_universal_prune_threshold`, keeping reactions compatible with
   the draft model metabolite set plus explicit task targets.

@@ -7,6 +7,7 @@ import pytest
 from src.api.kegg_client import (
     KEGGClient,
     KEGGReactionData,
+    compute_informative_match,
     compute_match_ratio,
     parse_kegg_reaction,
 )
@@ -96,6 +97,28 @@ class TestComputeMatchRatio:
         # Intersection: {C00001}, Union: {C00001, C00002}
         assert ratio == pytest.approx(0.5)
 
+    def test_informative_match_filters_currency_metabolites(self):
+        ratio, model_ids, kegg_ids, filtered = compute_informative_match(
+            ["C00001", "C00031"],
+            ["C00001", "C00092"],
+        )
+
+        assert ratio == 0.0
+        assert model_ids == ["C00031"]
+        assert kegg_ids == ["C00092"]
+        assert filtered is True
+
+    def test_informative_match_falls_back_for_currency_only_side(self):
+        ratio, model_ids, kegg_ids, filtered = compute_informative_match(
+            ["C00001"],
+            ["C00001"],
+        )
+
+        assert ratio == 1.0
+        assert model_ids == ["C00001"]
+        assert kegg_ids == ["C00001"]
+        assert filtered is False
+
 
 class TestKEGGClient:
     @pytest.fixture
@@ -123,7 +146,10 @@ class TestKEGGClient:
         assert items[0].raw_data["substrate_match"] == 1.0
         assert items[0].raw_data["product_match"] == 1.0
         assert items[0].raw_data["model_substrates"] == ["C00631"]
-        assert items[0].raw_data["model_products"] == ["C00074", "C00001"]
+        assert items[0].raw_data["model_products"] == ["C00074"]
+        assert items[0].raw_data["raw_model_products"] == ["C00074", "C00001"]
+        assert items[0].raw_data["raw_kegg_products"] == ["C00074", "C00001"]
+        assert items[0].raw_data["currency_filtered"] is True
 
     @pytest.mark.asyncio
     async def test_check_evidence_absent(self, client):

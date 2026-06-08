@@ -27,6 +27,8 @@ mypy src/ --ignore-missing-imports
   evidence must not be redistributed into a 1.0 BiGG-only score.
 - KEGG entries with metabolite mismatches should be reported as explicit absent
   KEGG evidence with mismatch details, not as generic "not found".
+- KEGG substrate/product matching excludes common currency metabolites when
+  informative non-currency compounds remain on both sides.
 - Default candidate evidence evaluation is eager for all candidates:
   `Config.candidate_evidence_eager_limit = 0`.
 - Deferred evidence mode is still available by setting
@@ -53,9 +55,10 @@ mypy src/ --ignore-missing-imports
   that still cause regressions should be rolled back.
 - `Config.gapfill_iterations` controls the outer repair/retest convergence loop.
   It does not enumerate multiple alternative reaction sets.
-- Current COBRApy gap-fill usage keeps the first solution per failed task. If
-  alternative solution review is added, model the alternatives explicitly and
-  surface their evidence separately.
+- `Config.gapfill_alternatives` controls how many COBRApy alternative solution
+  sets are tried per failed task. If an alternative breaks a protected task,
+  try the next alternative; if none preserve protected tasks, that task's
+  gap-fill attempt is infeasible.
 - Large universals are pruned for MILP solving above
   `Config.gapfill_universal_prune_threshold`, keeping model-compatible
   reactions and explicit task targets.

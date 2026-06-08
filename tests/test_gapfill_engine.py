@@ -197,7 +197,11 @@ class TestGapFillEngine:
             raise RuntimeError("Infeasible")
 
         with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
-             patch.object(engine, "_gapfill_for_task", side_effect=mock_gapfill_for_task):
+             patch.object(
+                 engine,
+                 "_gapfill_solutions_for_task",
+                 side_effect=mock_gapfill_for_task,
+             ):
             result = await engine.run(
                 mock_model,
                 mock_universal,
@@ -582,7 +586,7 @@ class TestGapFillEngine:
         mock_rxn = MagicMock()
         mock_rxn.id = "R1"
 
-        with patch.object(engine, "_gapfill_for_task", return_value=[mock_rxn]), \
+        with patch.object(engine, "_gapfill_solutions_for_task", return_value=[[mock_rxn]]), \
              patch.object(engine, "_reactions_satisfy_task", return_value=False):
             out = engine._retry_gapfill(
                 MagicMock(), MagicMock(), task, {}, required=1.0, result=result
@@ -604,13 +608,13 @@ class TestGapFillEngine:
         mock_rxn = MagicMock()
         mock_rxn.id = "R1"
 
-        with patch.object(engine, "_gapfill_for_task", return_value=[mock_rxn]), \
+        with patch.object(engine, "_gapfill_solutions_for_task", return_value=[[mock_rxn]]), \
              patch.object(engine, "_reactions_satisfy_task", return_value=True):
             out = engine._retry_gapfill(
                 MagicMock(), MagicMock(), task, {}, required=1.0, result=result
             )
 
-        assert out == [mock_rxn]
+        assert out == [[mock_rxn]]
         assert "HI" not in result.infeasible_tasks
 
     def test_retry_skips_when_no_relaxation_room(
@@ -626,7 +630,7 @@ class TestGapFillEngine:
         )
         result = GapFillResult(total_tasks=1)
 
-        with patch.object(engine, "_gapfill_for_task") as mock_gapfill:
+        with patch.object(engine, "_gapfill_solutions_for_task") as mock_gapfill:
             out = engine._retry_gapfill(
                 MagicMock(), MagicMock(), task, {}, required=0.01, result=result
             )
@@ -681,19 +685,56 @@ class TestGapFillEngine:
         assert result.tasks_broken == 0
 
     @pytest.mark.asyncio
-    async def test_run_gapfill_discards_solution_that_breaks_protected_task(
+    async def test_run_gapfill_uses_alternative_that_preserves_protected_task(
         self,
         engine: GapFillEngine,
         sample_tasks: list[MetabolicTask],
     ) -> None:
-        """Per-task gap-fill candidates are rejected if protected tasks fail."""
+        """A regressing first solution is skipped in favor of a safe alternative."""
         task_to_fix = sample_tasks[0]
         protected = [sample_tasks[1]]
         result = GapFillResult(total_tasks=2)
-        mock_rxn = cobra.Reaction("NH4t")
+        bad_rxn = cobra.Reaction("NH4t")
+        safe_rxn = cobra.Reaction("SAFE")
 
-        with patch.object(engine, "_gapfill_for_task", return_value=[mock_rxn]), \
-             patch.object(engine, "_reactions_preserve_tasks", return_value=False):
+        with patch.object(
+            engine,
+            "_gapfill_solutions_for_task",
+            return_value=[[bad_rxn], [safe_rxn]],
+        ), patch.object(
+            engine,
+            "_reactions_preserve_tasks",
+            side_effect=[False, True],
+        ):
+            added = await engine._run_gapfill(
+                cobra.Model("draft"),
+                cobra.Model("universal"),
+                [task_to_fix],
+                penalties={},
+                result=result,
+                protected_tasks=protected,
+            )
+
+        assert added == [safe_rxn]
+        assert task_to_fix.task_id not in result.infeasible_tasks
+
+    @pytest.mark.asyncio
+    async def test_run_gapfill_fails_when_all_alternatives_break_protected_task(
+        self,
+        engine: GapFillEngine,
+        sample_tasks: list[MetabolicTask],
+    ) -> None:
+        """A task is infeasible if no alternative preserves protected tasks."""
+        task_to_fix = sample_tasks[0]
+        protected = [sample_tasks[1]]
+        result = GapFillResult(total_tasks=2)
+        bad_rxn = cobra.Reaction("NH4t")
+
+        with patch.object(
+            engine,
+            "_gapfill_solutions_for_task",
+            return_value=[[bad_rxn]],
+        ), patch.object(engine, "_reactions_preserve_tasks", return_value=False):
             added = await engine._run_gapfill(
                 cobra.Model("draft"),
                 cobra.Model("universal"),

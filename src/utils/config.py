@@ -37,6 +37,7 @@ class Config:
     default_task_file: str = "data/universal_essential_tasks.csv"
     gapfill_lower_bound: float = 0.05
     gapfill_iterations: int = 5
+    gapfill_alternatives: int = 5
     gapfill_universal_prune_threshold: int = 5000
     gapfill_prune_to_model_metabolites: bool = True
     organism_filter_cache_ttl: int = 30 * 24 * 3600

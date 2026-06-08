@@ -240,7 +240,7 @@ class TestE2EWithMiniModel:
 
         with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
              patch.object(
-                 engine, "_gapfill_for_task", return_value=[mock_rxn]
+                 engine, "_gapfill_solutions_for_task", return_value=[[mock_rxn]]
              ), \
              patch.object(
                  engine, "_apply_gapfill_results",

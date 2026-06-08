@@ -17,6 +17,32 @@ from src.utils.constants import KEGG_API_BASE, RATE_LIMITS
 
 logger = logging.getLogger("metataskgapfill.api.kegg")
 
+# KEGG compounds that commonly act as reaction currency/cofactors. These can
+# dominate Jaccard matching while adding little evidence about reaction identity.
+_CURRENCY_COMPOUND_IDS = {
+    "C00001",  # H2O
+    "C00002",  # ATP
+    "C00003",  # NAD+
+    "C00004",  # NADH
+    "C00005",  # NADPH
+    "C00006",  # NADP+
+    "C00007",  # O2
+    "C00008",  # ADP
+    "C00009",  # phosphate
+    "C00010",  # CoA
+    "C00011",  # CO2
+    "C00013",  # diphosphate
+    "C00014",  # ammonia
+    "C00015",  # UDP
+    "C00016",  # FAD
+    "C00019",  # S-adenosyl-L-methionine
+    "C00020",  # AMP
+    "C00035",  # GDP
+    "C00044",  # GTP
+    "C00075",  # UTP
+    "C00080",  # H+
+}
+
 
 @dataclass
 class KEGGReactionData:
@@ -140,6 +166,34 @@ def compute_match_ratio(model_ids: list[str], kegg_ids: list[str]) -> float:
     return len(intersection) / len(union) if union else 0.0
 
 
+def _filter_currency(ids: list[str]) -> list[str]:
+    """Return KEGG compound IDs excluding common currency metabolites."""
+    return [cid for cid in ids if cid not in _CURRENCY_COMPOUND_IDS]
+
+
+def compute_informative_match(
+    model_ids: list[str],
+    kegg_ids: list[str],
+) -> tuple[float, list[str], list[str], bool]:
+    """Compute match ratio after removing currency metabolites when possible.
+
+    Returns:
+        ``(ratio, filtered_model_ids, filtered_kegg_ids, used_filter)``.
+        If filtering would leave one side empty, falls back to the original
+        lists so currency-only reactions can still be evaluated.
+    """
+    filtered_model = _filter_currency(model_ids)
+    filtered_kegg = _filter_currency(kegg_ids)
+    if filtered_model and filtered_kegg:
+        return (
+            compute_match_ratio(filtered_model, filtered_kegg),
+            filtered_model,
+            filtered_kegg,
+            True,
+        )
+    return compute_match_ratio(model_ids, kegg_ids), model_ids, kegg_ids, False
+
+
 class KEGGClient(BaseAPIClient):
     """Client for the KEGG REST API with 3-stage reaction verification."""
 
@@ -246,21 +300,25 @@ class KEGGClient(BaseAPIClient):
         url = f"https://www.kegg.jp/entry/{kegg_id}"
 
         # Stage 2: Substrate/product matching
-        sub_ratio = compute_match_ratio(model_substrates, parsed.substrates)
-        prod_ratio = compute_match_ratio(model_products, parsed.products)
+        sub_ratio, matched_model_substrates, matched_kegg_substrates, sub_filtered = (
+            compute_informative_match(model_substrates, parsed.substrates)
+        )
+        prod_ratio, matched_model_products, matched_kegg_products, prod_filtered = (
+            compute_informative_match(model_products, parsed.products)
+        )
         avg_match = (sub_ratio + prod_ratio) / 2
 
         # Reject as supporting evidence if overlap is too low, but keep an
         # explicit ABSENT item so the UI can distinguish "entry mismatch" from
         # "no KEGG entry was found".
         if avg_match < 0.2:
-            model_sub_set = set(model_substrates)
-            kegg_sub_set = set(parsed.substrates)
+            model_sub_set = set(matched_model_substrates)
+            kegg_sub_set = set(matched_kegg_substrates)
             sub_overlap = len(model_sub_set & kegg_sub_set)
             sub_total = len(model_sub_set | kegg_sub_set)
 
-            model_prod_set = set(model_products)
-            kegg_prod_set = set(parsed.products)
+            model_prod_set = set(matched_model_products)
+            kegg_prod_set = set(matched_kegg_products)
             prod_overlap = len(model_prod_set & kegg_prod_set)
             prod_total = len(model_prod_set | kegg_prod_set)
 
@@ -279,10 +337,15 @@ class KEGGClient(BaseAPIClient):
                         "kegg_id": kegg_id,
                         "substrate_match": sub_ratio,
                         "product_match": prod_ratio,
-                        "model_substrates": model_substrates,
-                        "model_products": model_products,
-                        "kegg_substrates": parsed.substrates,
-                        "kegg_products": parsed.products,
+                        "currency_filtered": sub_filtered or prod_filtered,
+                        "model_substrates": matched_model_substrates,
+                        "model_products": matched_model_products,
+                        "kegg_substrates": matched_kegg_substrates,
+                        "kegg_products": matched_kegg_products,
+                        "raw_model_substrates": model_substrates,
+                        "raw_model_products": model_products,
+                        "raw_kegg_substrates": parsed.substrates,
+                        "raw_kegg_products": parsed.products,
                         "enzyme": parsed.enzyme,
                         "pathway_ids": parsed.pathway_ids,
                     },
@@ -305,13 +368,13 @@ class KEGGClient(BaseAPIClient):
             rank = 1
 
         # Compute overlap counts for description
-        model_sub_set = set(model_substrates)
-        kegg_sub_set = set(parsed.substrates)
+        model_sub_set = set(matched_model_substrates)
+        kegg_sub_set = set(matched_kegg_substrates)
         sub_overlap = len(model_sub_set & kegg_sub_set)
         sub_total = len(model_sub_set | kegg_sub_set)
 
-        model_prod_set = set(model_products)
-        kegg_prod_set = set(parsed.products)
+        model_prod_set = set(matched_model_products)
+        kegg_prod_set = set(matched_kegg_products)
         prod_overlap = len(model_prod_set & kegg_prod_set)
         prod_total = len(model_prod_set | kegg_prod_set)
 
@@ -340,10 +403,15 @@ class KEGGClient(BaseAPIClient):
                     "kegg_id": kegg_id,
                     "substrate_match": sub_ratio,
                     "product_match": prod_ratio,
-                    "model_substrates": model_substrates,
-                    "model_products": model_products,
-                    "kegg_substrates": parsed.substrates,
-                    "kegg_products": parsed.products,
+                    "currency_filtered": sub_filtered or prod_filtered,
+                    "model_substrates": matched_model_substrates,
+                    "model_products": matched_model_products,
+                    "kegg_substrates": matched_kegg_substrates,
+                    "kegg_products": matched_kegg_products,
+                    "raw_model_substrates": model_substrates,
+                    "raw_model_products": model_products,
+                    "raw_kegg_substrates": parsed.substrates,
+                    "raw_kegg_products": parsed.products,
                     "enzyme": parsed.enzyme,
                     "pathway_ids": parsed.pathway_ids,
                     "kegg_parsed": parsed,

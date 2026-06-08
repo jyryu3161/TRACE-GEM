@@ -463,39 +463,59 @@ class GapFillEngine:
 
             required = self._lower_bound_for_task(task)
             try:
-                reactions = self._gapfill_for_task(
-                    model, universal, task, penalties, required
+                solution_sets = self._gapfill_solutions_for_task(
+                    model,
+                    universal,
+                    task,
+                    penalties,
+                    required,
+                    alternatives=max(1, self._config.gapfill_alternatives),
                 )
             except RuntimeError:
                 # Solver infeasibility near the requested bound: retry at a
                 # relaxed bound, but only keep reactions that genuinely satisfy
                 # the task's real threshold (see _retry_gapfill).
-                reactions = self._retry_gapfill(
+                solution_sets = self._retry_gapfill(
                     model, universal, task, penalties, required, result
                 )
             except Exception as e:
                 logger.warning("Gap-fill failed for task %s: %s", task.task_id, e)
-                result.infeasible_tasks.append(task.task_id)
+                self._mark_infeasible(result, task)
                 continue
 
-            proposed = list(all_added.values())
-            proposed.extend(r for r in reactions if r.id not in all_added)
-            if proposed and protected_tasks and not self._reactions_preserve_tasks(
-                model,
-                universal,
-                protected_tasks,
-                proposed,
-            ):
+            if not solution_sets:
+                self._mark_infeasible(result, task)
+                continue
+
+            accepted: list[cobra.Reaction] | None = None
+            for alt_idx, reactions in enumerate(solution_sets, start=1):
+                proposed = list(all_added.values())
+                proposed.extend(r for r in reactions if r.id not in all_added)
+                if proposed and protected_tasks and not self._reactions_preserve_tasks(
+                    model,
+                    universal,
+                    protected_tasks,
+                    proposed,
+                ):
+                    logger.info(
+                        "Gap-fill solution %d for task %s would regress an "
+                        "already passing task; trying next alternative",
+                        alt_idx,
+                        task.task_id,
+                    )
+                    continue
+                accepted = reactions
+                break
+
+            if accepted is None:
                 logger.info(
-                    "Gap-fill solution for task %s would regress an already "
-                    "passing task; discarding %d reaction(s)",
+                    "No gap-fill alternative for task %s preserves protected tasks",
                     task.task_id,
-                    len(reactions),
                 )
-                result.infeasible_tasks.append(task.task_id)
+                self._mark_infeasible(result, task)
                 continue
 
-            for rxn in reactions:
+            for rxn in accepted:
                 if rxn.id not in all_added:
                     all_added[rxn.id] = rxn
 
@@ -521,7 +541,7 @@ class GapFillEngine:
         penalties: dict[str, float],
         required: float,
         result: GapFillResult,
-    ) -> list[cobra.Reaction]:
+    ) -> list[list[cobra.Reaction]]:
         """Retry gap-fill at a relaxed bound after a solver infeasibility.
 
         The relaxed bound scales with the task requirement so a high-threshold
@@ -533,32 +553,44 @@ class GapFillEngine:
         retry_bound = max(self._RETRY_MIN_BOUND, required * self._RETRY_RELAX_FACTOR)
         if retry_bound >= required:
             # Nothing meaningful to relax (requirement already at/below floor).
-            result.infeasible_tasks.append(task.task_id)
+            self._mark_infeasible(result, task)
             return []
 
         try:
-            reactions = self._gapfill_for_task(
-                model, universal, task, penalties, retry_bound
+            solution_sets = self._gapfill_solutions_for_task(
+                model,
+                universal,
+                task,
+                penalties,
+                retry_bound,
+                alternatives=max(1, self._config.gapfill_alternatives),
             )
         except Exception as e:
             logger.warning("Task %s infeasible: %s", task.task_id, e)
-            result.infeasible_tasks.append(task.task_id)
+            self._mark_infeasible(result, task)
             return []
 
-        if reactions and not self._reactions_satisfy_task(
-            model, universal, task, reactions
-        ):
+        valid_sets = [
+            reactions
+            for reactions in solution_sets
+            if self._reactions_satisfy_task(model, universal, task, reactions)
+        ]
+        if not valid_sets:
             logger.info(
                 "Task %s only reached relaxed bound %.4g (< required %.4g); "
-                "discarding %d spurious reaction(s)",
+                "discarding spurious alternative solution(s)",
                 task.task_id,
                 retry_bound,
                 required,
-                len(reactions),
             )
+            self._mark_infeasible(result, task)
+        return valid_sets
+
+    @staticmethod
+    def _mark_infeasible(result: GapFillResult, task: MetabolicTask) -> None:
+        """Record a task as infeasible once."""
+        if task.task_id not in result.infeasible_tasks:
             result.infeasible_tasks.append(task.task_id)
-            return []
-        return reactions
 
     def _reactions_satisfy_task(
         self,
@@ -684,6 +716,26 @@ class GapFillEngine:
 
         Returns list of reactions that need to be added.
         """
+        solutions = self._gapfill_solutions_for_task(
+            model,
+            universal,
+            task,
+            penalties,
+            lower_bound,
+            alternatives=1,
+        )
+        return solutions[0] if solutions else []
+
+    def _gapfill_solutions_for_task(
+        self,
+        model: cobra.Model,
+        universal: cobra.Model,
+        task: MetabolicTask,
+        penalties: dict[str, float],
+        lower_bound: float,
+        alternatives: int = 1,
+    ) -> list[list[cobra.Reaction]]:
+        """Run gap-fill for a task and return alternative reaction sets."""
         test_model = model.copy()
         preseeded = self._preseed_missing_task_target(test_model, universal, task)
         try:
@@ -693,22 +745,27 @@ class GapFillEngine:
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 
-        # Run gap-fill
         result = cobra.flux_analysis.gapfilling.gapfill(
             test_model,
             universal,
             lower_bound=lower_bound,
             penalties=penalties,
             demand_reactions=False,
+            iterations=max(1, alternatives),
         )
 
-        if not result or not result[0]:
-            return preseeded
+        if not result:
+            return [preseeded] if preseeded else []
 
-        reactions_by_id = {rxn.id: rxn for rxn in preseeded}
-        for rxn in result[0]:
-            reactions_by_id.setdefault(rxn.id, rxn)
-        return list(reactions_by_id.values())
+        solutions: list[list[cobra.Reaction]] = []
+        for solution in result:
+            reactions_by_id = {rxn.id: rxn for rxn in preseeded}
+            for rxn in solution:
+                reactions_by_id.setdefault(rxn.id, rxn)
+            reactions = list(reactions_by_id.values())
+            if reactions:
+                solutions.append(reactions)
+        return solutions
 
     def _preseed_missing_task_target(
         self,
