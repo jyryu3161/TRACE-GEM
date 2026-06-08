@@ -23,6 +23,10 @@ mypy src/ --ignore-missing-imports
 - Evidence is KEGG and BiGG only.
 - PubMed, Gemini, Perplexity, UniProt, MetaCyc, and LLM evidence workflows are
   intentionally removed from active code and tests.
+- KEGG and BiGG confidence scores use fixed configured weights. Missing/absent KEGG
+  evidence must not be redistributed into a 1.0 BiGG-only score.
+- KEGG entries with metabolite mismatches should be reported as explicit absent
+  KEGG evidence with mismatch details, not as generic "not found".
 - Default candidate evidence evaluation is eager for all candidates:
   `Config.candidate_evidence_eager_limit = 0`.
 - Deferred evidence mode is still available by setting
@@ -44,6 +48,9 @@ mypy src/ --ignore-missing-imports
 - `GapFillEngine` must use the same task environment as task evaluation.
 - Only lower-bound production tasks (`>` and `>=`) are gap-fillable. Negative,
   equality, and upper-bound tasks cannot generally be fixed by adding reactions.
+- Previously passing tasks are protected during gap-fill. Candidate reaction
+  sets that regress those tasks should be discarded, and applied iterations
+  that still cause regressions should be rolled back.
 - `Config.gapfill_iterations` controls the outer repair/retest convergence loop.
   It does not enumerate multiple alternative reaction sets.
 - Current COBRApy gap-fill usage keeps the first solution per failed task. If
@@ -94,6 +101,9 @@ data/bigg_models_metabolites.txt
   via `src/core/cobra_utils.py`.
 - Copy reactions before adding universal reactions to a user model.
 - Preserve version history for user-visible model edits.
+- Restore versions should store `restore_source_version_id` so the graph can
+  render restore branches from the restored source instead of inferring from
+  descriptions only.
 - Keep async API work out of the GUI thread; use GUI workers.
 - Mock external APIs in tests.
 - Do not stage unrelated local files. The untracked diagnostic report

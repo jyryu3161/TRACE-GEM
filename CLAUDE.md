@@ -46,6 +46,12 @@ mypy src/ --ignore-missing-imports
 - Evidence sources are KEGG and BiGG only.
 - PubMed, Gemini, Perplexity, UniProt, MetaCyc, and LLM-based evidence paths are
   intentionally not part of the active codebase.
+- KEGG and BiGG confidence scores use their configured fixed weights. Do not
+  redistribute a missing/absent source's weight into the remaining source; a
+  BiGG match with absent KEGG evidence must not become confidence `1.0`.
+- KEGG IDs whose entries exist but whose substrates/products do not match the
+  model reaction should remain explicit absent KEGG evidence with mismatch
+  details, not a generic "not found" result.
 - Default candidate evidence behavior is eager: all extracted candidate
   reactions are evaluated before gap-filling. `Config.candidate_evidence_eager_limit`
   is `0` by default; set it to a positive threshold to defer evidence for large
@@ -59,6 +65,9 @@ mypy src/ --ignore-missing-imports
   cofactor turnover, constraints, and ID normalization stay consistent.
 - Negative or upper-bound tasks are not gap-fillable and are skipped by the
   reaction-addition repair step.
+- Previously passing tasks are protected during gap-fill. Candidate sets that
+  would break them are discarded, and an applied iteration is rolled back if
+  final task retesting still shows protected-task regressions.
 - The gap-fill workflow has an outer convergence loop controlled by
   `Config.gapfill_iterations`. This is not the same as alternative solution
   enumeration; each task currently keeps the first COBRApy gap-fill solution.
@@ -144,6 +153,9 @@ src/
 - When adding reactions from a universal model, copy COBRA reactions before
   inserting them into the user model.
 - Preserve model version history when user-visible model edits occur.
+- Restore versions store `restore_source_version_id`; graph rendering should use
+  that source for restore branch layout while retaining chronological parent
+  history.
 
 ## Testing
 
@@ -152,6 +164,7 @@ src/
 - Gap-fill changes should cover:
   - task pass/fail before and after repair,
   - rollback of no-progress iterations,
+  - rollback of protected-task regressions,
   - negative/upper-bound task skipping,
   - reaction copy semantics,
   - large universal pruning,

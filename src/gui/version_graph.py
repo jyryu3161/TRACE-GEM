@@ -137,15 +137,24 @@ class VersionGraphWidget(QWidget):
         # 1. Sort by timestamp (oldest first)
         sorted_versions = sorted(self._versions, key=lambda v: v.timestamp)
 
-        # 2. Build parent→children map and assign coordinates
+        # 2. Build parent→children map and assign coordinates. Restore nodes
+        # use the restored source as their graph parent so the layout shows the
+        # branch that was restored, while ModelVersion.parent_version_id keeps
+        # the chronological action history.
         self._positions = {}
         vid_to_version: dict[str, ModelVersion] = {}
         parent_children: dict[str, list[str]] = {}
+        graph_parent: dict[str, str] = {}
 
         for v in sorted_versions:
             vid_to_version[v.version_id] = v
-            if v.parent_version_id:
-                parent_children.setdefault(v.parent_version_id, []).append(v.version_id)
+
+        known_ids = set(vid_to_version)
+        for v in sorted_versions:
+            parent_id = self._graph_parent_id(v, known_ids)
+            if parent_id:
+                graph_parent[v.version_id] = parent_id
+                parent_children.setdefault(parent_id, []).append(v.version_id)
 
         # 3. Assign X (time index) and Y (lane) coordinates
         lane_counter = 0
@@ -154,12 +163,13 @@ class VersionGraphWidget(QWidget):
         for i, v in enumerate(sorted_versions):
             x = float(i)
 
-            if v.change_type == "initial_load" or v.parent_version_id is None:
+            parent_id = graph_parent.get(v.version_id)
+
+            if parent_id is None:
                 # Main branch or orphan
                 if v.version_id not in vid_lane:
                     vid_lane[v.version_id] = 0
             else:
-                parent_id = v.parent_version_id
                 parent_lane = vid_lane.get(parent_id, 0)
                 children_of_parent = parent_children.get(parent_id, [])
 
@@ -183,16 +193,28 @@ class VersionGraphWidget(QWidget):
 
         # 4. Draw edges (parent → child)
         for v in sorted_versions:
-            if v.parent_version_id and v.parent_version_id in self._positions:
-                px, py = self._positions[v.parent_version_id]
+            parent_id = graph_parent.get(v.version_id)
+            if parent_id and parent_id in self._positions:
+                px, py = self._positions[parent_id]
                 cx, cy = self._positions[v.version_id]
+                restore_source_id = self._restore_source_id(v, set(self._positions))
+                is_restore_edge = (
+                    v.change_type == "restore"
+                    and restore_source_id is not None
+                    and parent_id == restore_source_id
+                )
+                pen = pg.mkPen(
+                    THEME.graph_edge_restore if is_restore_edge else THEME.graph_edge,
+                    width=1 if is_restore_edge else 2,
+                    style=Qt.PenStyle.DashLine if is_restore_edge else Qt.PenStyle.SolidLine,
+                )
 
                 if py == cy:
                     # Same lane — straight line
                     self._plot.plot(
                         [px, cx],
                         [py, cy],
-                        pen=pg.mkPen(THEME.graph_edge, width=2),
+                        pen=pen,
                     )
                 else:
                     # Different lane — L-shaped connector
@@ -200,30 +222,8 @@ class VersionGraphWidget(QWidget):
                     self._plot.plot(
                         [px, mid_x, mid_x, cx],
                         [py, py, cy, cy],
-                        pen=pg.mkPen(THEME.graph_edge, width=2),
+                        pen=pen,
                     )
-
-            # Restore dotted line (restore node → source version it restores from)
-            if v.change_type == "restore" and v.description:
-                # Try to find restored version reference in description
-                for other_v in sorted_versions:
-                    if (
-                        other_v.version_id != v.version_id
-                        and other_v.version_id in v.description
-                        and other_v.version_id in self._positions
-                    ):
-                        rx, ry = self._positions[other_v.version_id]
-                        vx, vy = self._positions[v.version_id]
-                        self._plot.plot(
-                            [vx, rx],
-                            [vy, ry],
-                            pen=pg.mkPen(
-                                THEME.graph_edge_restore,
-                                width=1,
-                                style=Qt.PenStyle.DashLine,
-                            ),
-                        )
-                        break
 
         # 5. Draw nodes (ScatterPlotItem)
         spots = []
@@ -272,6 +272,35 @@ class VersionGraphWidget(QWidget):
     # ------------------------------------------------------------------
     # Interaction
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _restore_source_id(
+        version: ModelVersion,
+        known_ids: set[str],
+    ) -> str | None:
+        """Return the version restored by a restore node, if known."""
+        if version.change_type != "restore":
+            return None
+        if version.restore_source_version_id in known_ids:
+            return version.restore_source_version_id
+        if version.description:
+            for version_id in known_ids:
+                if version_id != version.version_id and version_id in version.description:
+                    return version_id
+        return None
+
+    def _graph_parent_id(
+        self,
+        version: ModelVersion,
+        known_ids: set[str],
+    ) -> str | None:
+        """Return parent used for graph layout and edge drawing."""
+        restore_source_id = self._restore_source_id(version, known_ids)
+        if restore_source_id:
+            return restore_source_id
+        if version.parent_version_id in known_ids:
+            return version.parent_version_id
+        return None
 
     def _on_node_clicked(self, _scatter: object, points: list, ev: object = None) -> None:
         """Handle scatter node click."""
@@ -322,6 +351,8 @@ class VersionGraphWidget(QWidget):
         ]
         if version.parent_version_id:
             lines.append(f"Parent: {version.parent_version_id}")
+        if version.restore_source_version_id:
+            lines.append(f"Restored from: {version.restore_source_version_id}")
 
         diff = version.diff
         if diff and not diff.is_empty:

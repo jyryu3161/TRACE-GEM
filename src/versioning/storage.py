@@ -272,6 +272,7 @@ class VersionStorage:
             "change_type": version.change_type,
             "task_pass_rate": version.task_pass_rate,
             "sbml_filename": version.sbml_filename,
+            "restore_source_version_id": version.restore_source_version_id,
         }
         if version.diff is not None:
             d["diff"] = asdict(version.diff)
@@ -308,4 +309,5 @@ class VersionStorage:
             diff=diff,
             task_pass_rate=d.get("task_pass_rate"),
             sbml_filename=d.get("sbml_filename", "model.xml"),
+            restore_source_version_id=d.get("restore_source_version_id"),
         )

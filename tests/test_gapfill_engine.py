@@ -636,14 +636,14 @@ class TestGapFillEngine:
         assert "LO" in result.infeasible_tasks
 
     @pytest.mark.asyncio
-    async def test_tasks_broken_regression_reported(
+    async def test_protected_task_regression_rolls_back_iteration(
         self,
         engine: GapFillEngine,
         sample_tasks: list[MetabolicTask],
         sample_candidates: list[CandidateReaction],
         sample_evidence: dict[str, ReactionEvidence],
     ) -> None:
-        """A previously-passing task that fails after gap-fill is counted."""
+        """A previously-passing task that fails after gap-fill is rolled back."""
         before_results = [
             TaskResult(task=sample_tasks[0], passed=False, actual_value=0.0),
             TaskResult(task=sample_tasks[1], passed=True, actual_value=1.0),
@@ -652,28 +652,59 @@ class TestGapFillEngine:
             TaskResult(task=sample_tasks[0], passed=True, actual_value=1.0),
             TaskResult(task=sample_tasks[1], passed=False, actual_value=0.0),
         ]
-        call_count = [0]
+        after_rollback = [
+            TaskResult(task=sample_tasks[0], passed=False, actual_value=0.0),
+            TaskResult(task=sample_tasks[1], passed=True, actual_value=1.0),
+        ]
+        run_results = [before_results, after_results, after_rollback]
 
         def mock_run_all(model, tasks, progress_callback=None):
-            call_count[0] += 1
-            return before_results if call_count[0] == 1 else after_results
+            return run_results.pop(0)
 
-        mock_rxn = MagicMock()
-        mock_rxn.id = "GLNS"
+        model = cobra.Model("draft")
+        mock_rxn = cobra.Reaction("GLNS")
 
         with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
              patch.object(engine, "_run_gapfill", new_callable=AsyncMock, return_value=[mock_rxn]), \
-             patch.object(engine, "_apply_gapfill_results", return_value=[sample_candidates[0]]):
+             patch.object(engine, "_reactions_preserve_tasks", return_value=True):
             result = await engine.run(
-                MagicMock(),
+                model,
                 MagicMock(),
                 sample_candidates,
                 sample_tasks,
                 sample_evidence,
             )
 
-        assert result.tasks_fixed == 1
-        assert result.tasks_broken == 1
+        assert "GLNS" not in model.reactions
+        assert result.added_reactions == []
+        assert result.tasks_fixed == 0
+        assert result.tasks_broken == 0
+
+    @pytest.mark.asyncio
+    async def test_run_gapfill_discards_solution_that_breaks_protected_task(
+        self,
+        engine: GapFillEngine,
+        sample_tasks: list[MetabolicTask],
+    ) -> None:
+        """Per-task gap-fill candidates are rejected if protected tasks fail."""
+        task_to_fix = sample_tasks[0]
+        protected = [sample_tasks[1]]
+        result = GapFillResult(total_tasks=2)
+        mock_rxn = cobra.Reaction("NH4t")
+
+        with patch.object(engine, "_gapfill_for_task", return_value=[mock_rxn]), \
+             patch.object(engine, "_reactions_preserve_tasks", return_value=False):
+            added = await engine._run_gapfill(
+                cobra.Model("draft"),
+                cobra.Model("universal"),
+                [task_to_fix],
+                penalties={},
+                result=result,
+                protected_tasks=protected,
+            )
+
+        assert added == []
+        assert task_to_fix.task_id in result.infeasible_tasks
 
     @pytest.mark.asyncio
     async def test_loop_stops_without_net_progress(

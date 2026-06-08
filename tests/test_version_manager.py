@@ -315,6 +315,7 @@ class TestVersionManagerRestore:
         assert vm.current_version.version_id == "v003"
         assert vm.current_version.change_type == "restore"
         assert "Restored to version v001" in vm.current_version.description
+        assert vm.current_version.restore_source_version_id == "v001"
 
         rxn_ids = {r.id for r in restored_model.reactions}
         assert "PFK" in rxn_ids

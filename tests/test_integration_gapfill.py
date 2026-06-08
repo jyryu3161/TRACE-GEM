@@ -245,7 +245,8 @@ class TestE2EWithMiniModel:
              patch.object(
                  engine, "_apply_gapfill_results",
                  return_value=[sample_candidates[0]],
-             ):
+             ), \
+             patch.object(engine, "_reactions_preserve_tasks", return_value=True):
             result = await engine.run(
                 user_model=sample_model_data.cobra_model,
                 universal_model=MagicMock(),

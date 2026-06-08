@@ -533,3 +533,4 @@ class ModelVersion:
     diff: ModelDiff | None = None
     task_pass_rate: str | None = None  # "35/52"
     sbml_filename: str = "model.xml"
+    restore_source_version_id: str | None = None

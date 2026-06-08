@@ -21,6 +21,7 @@ env/
 .pytest_cache/
 .omc/
 tmp/
+tmp_figures/
 htmlcov/
 .coverage
 *.log

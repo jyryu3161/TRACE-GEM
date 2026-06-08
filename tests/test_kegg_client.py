@@ -204,6 +204,34 @@ class TestKEGGClient:
         assert items[0].strength == EvidenceStrength.STRONG
 
     @pytest.mark.asyncio
+    async def test_ec_fallback_can_replace_direct_mismatch(self, client):
+        """A mismatched direct KEGG ID should not block a better EC-derived match."""
+
+        async def mock_get(path, **kwargs):
+            if "link/reaction" in path:
+                return "ec:4.2.1.11\trn:R00658\n"
+            if "R01359" in path:
+                return IRREVERSIBLE_KEGG_REACTION
+            if "R00658" in path:
+                return SAMPLE_KEGG_REACTION
+            return None
+
+        client.get = AsyncMock(side_effect=mock_get)
+
+        items = await client.check_evidence(
+            reaction=None,
+            kegg_reaction_ids=["R01359"],
+            ec_numbers=["4.2.1.11"],
+            model_substrates_kegg=["C00631"],
+            model_products_kegg=["C00074", "C00001"],
+        )
+
+        assert len(items) == 1
+        assert items[0].strength == EvidenceStrength.STRONG
+        assert items[0].raw_data is not None
+        assert items[0].raw_data["kegg_id"] == "R00658"
+
+    @pytest.mark.asyncio
     async def test_check_evidence_raw_data_has_kegg_parsed(self, client):
         """Raw data should contain kegg_parsed for downstream evidence checks."""
         client.get = AsyncMock(return_value=SAMPLE_KEGG_REACTION)
@@ -235,6 +263,8 @@ class TestKEGGClient:
         )
         assert len(items) == 1
         assert items[0].strength == EvidenceStrength.ABSENT
+        assert "metabolite match failed" in items[0].description
+        assert "KEGG reaction R00658 found" in items[0].description
 
     @pytest.mark.asyncio
     async def test_description_has_overlap_counts(self, client):

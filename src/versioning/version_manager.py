@@ -156,6 +156,7 @@ class VersionManager:
             description=description,
             change_type="restore",
             diff=diff,
+            restore_source_version_id=version_id,
         )
 
         self._storage.save_version(self._model_id, version, model)

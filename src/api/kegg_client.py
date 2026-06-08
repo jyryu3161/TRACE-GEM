@@ -191,23 +191,18 @@ class KEGGClient(BaseAPIClient):
 
         for kid in kegg_ids:
             result = await self._verify_reaction(kid, substrates, products)
-            if result is not None and (
-                best_result is None or result["strength_rank"] > best_result["strength_rank"]
-            ):
+            if self._is_better_kegg_result(result, best_result):
                 best_result = result
 
-        # If no match from direct IDs, try EC number lookup
-        if best_result is None and ec_nums:
+        # If direct IDs are absent or only mismatched, try EC number lookup.
+        if (best_result is None or best_result["strength_rank"] == 0) and ec_nums:
             for ec in ec_nums[:3]:
                 ec_rxn_ids = await self._find_reactions_by_ec(ec)
                 for kid in ec_rxn_ids[:3]:
                     result = await self._verify_reaction(kid, substrates, products)
                     if result is not None:
                         result["via_ec"] = ec
-                        if (
-                            best_result is None
-                            or result["strength_rank"] > best_result["strength_rank"]
-                        ):
+                        if self._is_better_kegg_result(result, best_result):
                             best_result = result
 
         if best_result:
@@ -222,6 +217,19 @@ class KEGGClient(BaseAPIClient):
             )
 
         return items
+
+    @staticmethod
+    def _is_better_kegg_result(result: dict | None, current: dict | None) -> bool:
+        """Return True when ``result`` is a better KEGG verification candidate."""
+        if result is None:
+            return False
+        if current is None:
+            return True
+        result_rank = result.get("strength_rank", 0)
+        current_rank = current.get("strength_rank", 0)
+        if result_rank != current_rank:
+            return result_rank > current_rank
+        return result.get("average_match", 0.0) > current.get("average_match", 0.0)
 
     async def _verify_reaction(
         self,
@@ -242,9 +250,48 @@ class KEGGClient(BaseAPIClient):
         prod_ratio = compute_match_ratio(model_products, parsed.products)
         avg_match = (sub_ratio + prod_ratio) / 2
 
-        # Reject if no metabolite overlap at all — ID mapping is likely wrong
+        # Reject as supporting evidence if overlap is too low, but keep an
+        # explicit ABSENT item so the UI can distinguish "entry mismatch" from
+        # "no KEGG entry was found".
         if avg_match < 0.2:
-            return None
+            model_sub_set = set(model_substrates)
+            kegg_sub_set = set(parsed.substrates)
+            sub_overlap = len(model_sub_set & kegg_sub_set)
+            sub_total = len(model_sub_set | kegg_sub_set)
+
+            model_prod_set = set(model_products)
+            kegg_prod_set = set(parsed.products)
+            prod_overlap = len(model_prod_set & kegg_prod_set)
+            prod_total = len(model_prod_set | kegg_prod_set)
+
+            description = (
+                f"KEGG reaction {kegg_id} found but metabolite match failed "
+                f"(substrates: {sub_overlap}/{sub_total} matched, "
+                f"products: {prod_overlap}/{prod_total} matched)"
+            )
+            return {
+                "evidence_item": EvidenceItem(
+                    source=EvidenceSource.KEGG,
+                    strength=EvidenceStrength.ABSENT,
+                    description=description,
+                    url=url,
+                    raw_data={
+                        "kegg_id": kegg_id,
+                        "substrate_match": sub_ratio,
+                        "product_match": prod_ratio,
+                        "model_substrates": model_substrates,
+                        "model_products": model_products,
+                        "kegg_substrates": parsed.substrates,
+                        "kegg_products": parsed.products,
+                        "enzyme": parsed.enzyme,
+                        "pathway_ids": parsed.pathway_ids,
+                    },
+                ),
+                "strength_rank": 0,
+                "substrate_match": sub_ratio,
+                "product_match": prod_ratio,
+                "average_match": avg_match,
+            }
 
         # Determine strength
         if avg_match >= 0.8:
@@ -305,6 +352,7 @@ class KEGGClient(BaseAPIClient):
             "strength_rank": rank,
             "substrate_match": sub_ratio,
             "product_match": prod_ratio,
+            "average_match": avg_match,
         }
 
     async def _find_reactions_by_ec(self, ec_number: str) -> list[str]:

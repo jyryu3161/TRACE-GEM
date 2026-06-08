@@ -209,6 +209,8 @@ class GapFillEngine:
             added_by_id: dict[str, CandidateReaction] = {}
             max_iterations = max(1, self._config.gapfill_iterations)
             prev_passed = sum(1 for r in current_results if r.passed)
+            protected_task_ids = {r.task.task_id for r in current_results if r.passed}
+            protected_tasks = [r.task for r in current_results if r.passed]
 
             for iteration in range(max_iterations):
                 failed_tasks = [r.task for r in current_results if not r.passed]
@@ -240,6 +242,7 @@ class GapFillEngine:
                     result,
                     progress_callback=lambda c, t, d: _progress("gap_filling", c, t, d),
                     cancel_event=cancel_event,
+                    protected_tasks=protected_tasks,
                 )
 
                 if not added_reactions:
@@ -272,6 +275,33 @@ class GapFillEngine:
                 )
                 latest_after_results = current_results
                 passed_now = sum(1 for r in current_results if r.passed)
+                protected_regressions = self._regressed_protected_tasks(
+                    current_results,
+                    protected_task_ids,
+                )
+
+                if protected_regressions:
+                    logger.info(
+                        "Gap-fill iteration %d regressed protected task(s) %s; "
+                        "rolling back %d reaction(s) and stopping",
+                        iteration + 1,
+                        ", ".join(sorted(protected_regressions)),
+                        len(iteration_new_ids),
+                    )
+                    self._rollback_gapfill_results(
+                        user_model,
+                        added_candidates,
+                        iteration_new_ids,
+                        added_by_id,
+                    )
+                    current_results = self._run_tasks(
+                        user_model,
+                        tasks,
+                        phase="after",
+                        progress_callback=lambda c, t, d: _progress("testing_after", c, t, d),
+                    )
+                    latest_after_results = current_results
+                    break
 
                 if all(r.passed for r in current_results):
                     logger.info("All tasks pass after gap-fill iteration %d", iteration + 1)
@@ -407,6 +437,7 @@ class GapFillEngine:
         result: GapFillResult,
         progress_callback: Callable[[int, int, str], None] | None = None,
         cancel_event: _CancelEvent | None = None,
+        protected_tasks: list[MetabolicTask] | None = None,
     ) -> list[cobra.Reaction]:
         """Run task-driven gap-filling for each failed task.
 
@@ -444,6 +475,23 @@ class GapFillEngine:
                 )
             except Exception as e:
                 logger.warning("Gap-fill failed for task %s: %s", task.task_id, e)
+                result.infeasible_tasks.append(task.task_id)
+                continue
+
+            proposed = list(all_added.values())
+            proposed.extend(r for r in reactions if r.id not in all_added)
+            if proposed and protected_tasks and not self._reactions_preserve_tasks(
+                model,
+                universal,
+                protected_tasks,
+                proposed,
+            ):
+                logger.info(
+                    "Gap-fill solution for task %s would regress an already "
+                    "passing task; discarding %d reaction(s)",
+                    task.task_id,
+                    len(reactions),
+                )
                 result.infeasible_tasks.append(task.task_id)
                 continue
 
@@ -549,6 +597,59 @@ class GapFillEngine:
         return self._task_runner._check_expected(
             actual, task.expected_operator, task.expected_value
         )
+
+    def _reactions_preserve_tasks(
+        self,
+        model: cobra.Model,
+        universal: cobra.Model,
+        protected_tasks: list[MetabolicTask],
+        reactions: list[cobra.Reaction],
+    ) -> bool:
+        """Return True if adding ``reactions`` keeps protected tasks passing."""
+        if not protected_tasks:
+            return True
+
+        try:
+            test_model = model.copy()
+            for task in protected_tasks:
+                self._preseed_missing_task_target(test_model, universal, task)
+            existing = set(test_model.reactions.list_attr("id"))
+            to_add = [r.copy() for r in reactions if r.id not in existing]
+            if to_add:
+                test_model.add_reactions(to_add)
+        except Exception as e:
+            logger.debug("Protected-task validation setup failed: %s", e)
+            return False
+
+        for task in protected_tasks:
+            try:
+                check = self._task_runner.run_task(test_model, task)
+            except Exception as e:
+                logger.debug(
+                    "Protected-task validation failed for %s: %s",
+                    task.task_id,
+                    e,
+                )
+                return False
+            if not check.passed:
+                logger.debug(
+                    "Protected task %s would regress after gap-fill additions",
+                    task.task_id,
+                )
+                return False
+        return True
+
+    @staticmethod
+    def _regressed_protected_tasks(
+        results: list[TaskResult],
+        protected_task_ids: set[str],
+    ) -> set[str]:
+        """Return protected task IDs that are no longer passing."""
+        return {
+            result.task.task_id
+            for result in results
+            if result.task.task_id in protected_task_ids and not result.passed
+        }
 
     def _is_gapfillable_task(self, task: MetabolicTask) -> bool:
         """Return True if adding reactions can plausibly fix ``task``."""

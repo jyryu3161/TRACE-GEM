@@ -17,7 +17,7 @@ class TestConfidenceScorer:
         return ConfidenceScorer()
 
     def test_strong_kegg_only(self, scorer):
-        """KEGG-only evidence: weight normalized to 1.0."""
+        """KEGG-only evidence keeps the configured KEGG weight."""
         ev = ReactionEvidence(reaction_id="ENO")
         ev.items = [
             EvidenceItem(
@@ -27,7 +27,7 @@ class TestConfidenceScorer:
             ),
         ]
         score = scorer.score(ev)
-        assert score == pytest.approx(1.0)
+        assert score == pytest.approx(0.7)
 
     def test_all_absent(self, scorer):
         ev = ReactionEvidence(reaction_id="FAKE")
@@ -51,7 +51,7 @@ class TestConfidenceScorer:
             ),
         ]
         score = scorer.score(ev)
-        assert score == pytest.approx(0.6)
+        assert score == pytest.approx(0.42)
 
     def test_weak_evidence(self, scorer):
         ev = ReactionEvidence(reaction_id="WEAK")
@@ -63,7 +63,7 @@ class TestConfidenceScorer:
             ),
         ]
         score = scorer.score(ev)
-        assert score == pytest.approx(0.3)
+        assert score == pytest.approx(0.21)
 
     def test_custom_weights(self):
         weights = {"kegg": 0.5, "bigg": 0.5}
@@ -77,7 +77,7 @@ class TestConfidenceScorer:
             ),
         ]
         score = scorer.score(ev)
-        assert score == pytest.approx(1.0)
+        assert score == pytest.approx(0.5)
 
     def test_two_source_scoring(self):
         weights = {"kegg": 0.70, "bigg": 0.30}
@@ -98,7 +98,7 @@ class TestConfidenceScorer:
         score = scorer.score(ev)
         assert score == pytest.approx(0.88)
 
-    def test_weight_redistribution(self):
+    def test_missing_source_weight_not_redistributed(self):
         weights = {"kegg": 0.70, "bigg": 0.30}
         scorer = ConfidenceScorer(weights)
         ev = ReactionEvidence(reaction_id="ONE")
@@ -110,7 +110,7 @@ class TestConfidenceScorer:
             ),
         ]
         score = scorer.score(ev)
-        assert score == pytest.approx(0.6)
+        assert score == pytest.approx(0.18)
 
     def test_per_source_scores(self, scorer):
         ev = ReactionEvidence(reaction_id="TEST")
@@ -160,7 +160,7 @@ class TestConfidenceScorer:
             ),
         ]
         score = scorer.score(ev)
-        assert score == pytest.approx(1.0)
+        assert score == pytest.approx(0.7)
 
     def test_no_items(self, scorer):
         ev = ReactionEvidence(reaction_id="EMPTY")

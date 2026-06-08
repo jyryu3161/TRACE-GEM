@@ -82,7 +82,7 @@ class TestMultiSourceScoring:
             )
         )
         score = scorer.score(ev)
-        assert score == pytest.approx(1.0)
+        assert score == pytest.approx(0.7)
 
     def test_all_sources_absent(self, scorer: ConfidenceScorer) -> None:
         ev = ReactionEvidence(reaction_id="TEST")

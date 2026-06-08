@@ -13,9 +13,9 @@ from src.utils.constants import SOURCE_WEIGHTS
 class ConfidenceScorer:
     """Calculate confidence scores from multi-source evidence.
 
-    Supports KEGG and BiGG sources with configurable weights.
-    When a source is absent (no items), its weight is redistributed to
-    sources that have evidence.
+    Supports KEGG and BiGG sources with configurable weights. Enabled sources
+    keep their configured weights even when a source is absent, so a strong
+    BiGG match cannot become 1.0 if KEGG verification failed or found no match.
     """
 
     def __init__(self, weights: dict[str, float] | None = None) -> None:
@@ -29,14 +29,15 @@ class ConfidenceScorer:
         evidence.kegg_score = source_scores.get(EvidenceSource.KEGG, 0.0)
         evidence.bigg_score = source_scores.get(EvidenceSource.BIGG, 0.0)
 
-        # Determine which sources have evidence
+        # Score all configured sources. Missing or ABSENT source evidence is
+        # treated as a zero for that source, not redistributed to other sources.
         active_sources: dict[str, float] = {}
         for source_key, weight in self._weights.items():
             try:
-                source_enum = EvidenceSource(source_key)
+                EvidenceSource(source_key)
             except ValueError:
                 continue
-            if source_enum in source_scores:
+            if weight > 0:
                 active_sources[source_key] = weight
 
         # If no active sources, score is 0
@@ -54,7 +55,7 @@ class ConfidenceScorer:
         for source_key, weight in active_sources.items():
             source_enum = EvidenceSource(source_key)
             normalized_weight = weight / total_weight
-            total += source_scores[source_enum] * normalized_weight
+            total += source_scores.get(source_enum, 0.0) * normalized_weight
 
         # Clamp to [0, 1]
         evidence.confidence_score = max(0.0, min(1.0, total))
