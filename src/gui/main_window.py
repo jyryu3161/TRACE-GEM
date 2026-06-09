@@ -259,8 +259,10 @@ class MainWindow(QMainWindow):
 
         # Set delegates
         self._score_delegate = ScoreBarDelegate(self._reaction_table)
+        self._candidate_score_delegate = ScoreBarDelegate(self._universal_table)
         self._status_delegate = StatusDelegate(self._reaction_table)
         self._reaction_table.set_delegates(self._score_delegate, self._status_delegate)
+        self._universal_table.set_score_delegate(self._candidate_score_delegate)
 
     def _setup_statusbar(self) -> None:
         self._statusbar = QStatusBar()

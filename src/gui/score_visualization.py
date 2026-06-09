@@ -1,10 +1,10 @@
-"""Score visualization charts using PyQtGraph."""
+"""Evidence tier visualization charts using PyQtGraph."""
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 
-from src.core.models import ReactionEvidence
+from src.core.models import EvidenceTier, ReactionEvidence
 from src.evidence.evidence_types import get_ordered_sources
 from src.gui.theme import THEME
 
@@ -38,7 +38,7 @@ def _add_value_labels(
 
 
 class ScoreVisualizationWidget(QWidget):
-    """Charts showing score distribution, match ratios, by-source, and subsystem breakdown."""
+    """Charts showing tier distribution, match ratios, by-source, and subsystem breakdown."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -58,9 +58,9 @@ class ScoreVisualizationWidget(QWidget):
 
         self._tabs = QTabWidget()
 
-        # Histogram tab
-        self._hist_widget = pg.PlotWidget(title="Score Distribution")
-        self._hist_widget.setLabel("bottom", "Confidence Score")
+        # Evidence tier distribution tab
+        self._hist_widget = pg.PlotWidget(title="Evidence Tier Distribution")
+        self._hist_widget.setLabel("bottom", "Evidence Tier")
         self._hist_widget.setLabel("left", "Reaction Count")
         self._tabs.addTab(self._hist_widget, "Distribution")
 
@@ -70,23 +70,23 @@ class ScoreVisualizationWidget(QWidget):
         self._match_widget.setLabel("left", "Reaction Count")
         self._tabs.addTab(self._match_widget, "Match Ratios")
 
-        # By Source chart (new)
-        self._source_widget = pg.PlotWidget(title="Average Score by Source")
+        # By Source chart
+        self._source_widget = pg.PlotWidget(title="Average Source Strength")
         self._source_widget.setLabel("bottom", "Source")
-        self._source_widget.setLabel("left", "Average Score")
+        self._source_widget.setLabel("left", "Average Strength")
         self._tabs.addTab(self._source_widget, "By Source")
 
         # Per-subsystem chart
-        self._subsystem_widget = pg.PlotWidget(title="Average Score by Subsystem")
-        self._subsystem_widget.setLabel("bottom", "Average Score")
+        self._subsystem_widget = pg.PlotWidget(title="Evidence Tier by Subsystem")
+        self._subsystem_widget.setLabel("bottom", "Reaction Count")
         self._subsystem_widget.setLabel("left", "Subsystem")
         self._tabs.addTab(self._subsystem_widget, "By Subsystem")
 
         self._chart_titles = {
-            self._hist_widget: "Score Distribution",
+            self._hist_widget: "Evidence Tier Distribution",
             self._match_widget: "Database Match Ratios",
-            self._source_widget: "Average Score by Source",
-            self._subsystem_widget: "Average Score by Subsystem",
+            self._source_widget: "Average Source Strength",
+            self._subsystem_widget: "Evidence Tier by Subsystem",
         }
         for widget in self._chart_titles:
             self._style_plot(widget)
@@ -118,55 +118,47 @@ class ScoreVisualizationWidget(QWidget):
         if not HAS_PYQTGRAPH:
             return
 
-        scores = [ev.confidence_score for ev in evidence.values() if ev.confidence_score >= 0]
-        if not scores:
+        evaluated = list(evidence.values())
+        if not evaluated:
             self._clear_plots(empty=True)
             return
 
         self._clear_plots()
 
-        self._update_histogram(scores)
+        self._update_tier_distribution(evaluated)
         self._update_match_chart(evidence)
         self._update_source_chart(evidence)
         self._update_subsystem_chart(evidence, subsystem_map or {})
 
-    def _update_histogram(self, scores: list[float]) -> None:
-        import numpy as np
+    def _update_tier_distribution(self, evidence: list[ReactionEvidence]) -> None:
+        tiers = [EvidenceTier.HIGH, EvidenceTier.MODERATE, EvidenceTier.LOW]
+        counts = [sum(1 for ev in evidence if ev.evidence_tier == tier) for tier in tiers]
+        labels = [tier.label for tier in tiers]
+        colors = [pg.mkBrush(self._tier_color(tier)) for tier in tiers]
 
-        bins = np.linspace(0, 1, 21)
-        counts, edges = np.histogram(scores, bins=bins)
-
-        colors = []
-        for edge in edges[:-1]:
-            mid = edge + 0.025
-            if mid >= 0.7:
-                colors.append(pg.mkBrush(THEME.score_high))
-            elif mid >= 0.4:
-                colors.append(pg.mkBrush(THEME.score_mid))
-            else:
-                colors.append(pg.mkBrush(THEME.score_low))
-
-        x_centers = list(edges[:-1] + 0.025)
+        x_centers = list(range(len(tiers)))
         bar = pg.BarGraphItem(
             x=x_centers,
             height=counts,
-            width=0.045,
+            width=0.62,
             brushes=colors,
             pen=pg.mkPen(THEME.chart_pen, width=1),
         )
         self._hist_widget.addItem(bar)
 
-        # Value labels on bars
-        max_count = max(counts) if len(counts) else 1
+        max_count = max(counts) if counts else 1
         _add_value_labels(
             self._hist_widget,
-            x_centers,
+            [float(x) for x in x_centers],
             [int(c) for c in counts],
             fmt="{:.0f}",
             color=THEME.chart_fg,
             offset_y=max_count * 0.02,
         )
-        self._hist_widget.setXRange(0, 1, padding=0.01)
+
+        ax = self._hist_widget.getAxis("bottom")
+        ax.setTicks([list(zip(x_centers, labels, strict=False))])
+        self._hist_widget.setXRange(-0.6, len(tiers) - 0.4, padding=0)
         self._hist_widget.setYRange(0, max(max_count * 1.18, 1), padding=0)
 
     def _update_match_chart(self, evidence: dict[str, ReactionEvidence]) -> None:
@@ -226,7 +218,7 @@ class ScoreVisualizationWidget(QWidget):
         self._match_widget.setYRange(0, max(max_count * 1.25, 1), padding=0)
 
     def _update_source_chart(self, evidence: dict[str, ReactionEvidence]) -> None:
-        """Show average score per evidence source."""
+        """Show average source strength per evidence source."""
         ordered = get_ordered_sources()
         names = []
         averages = []
@@ -234,8 +226,8 @@ class ScoreVisualizationWidget(QWidget):
 
         for source, sc in ordered:
             attr = f"{source.value}_score"
-            scores = [getattr(ev, attr, 0.0) for ev in evidence.values()]
-            avg = sum(scores) / len(scores) if scores else 0.0
+            source_scores = [getattr(ev, attr, 0.0) for ev in evidence.values()]
+            avg = sum(source_scores) / len(source_scores) if source_scores else 0.0
             names.append(sc.display_name)
             averages.append(avg)
             brushes.append(pg.mkBrush(sc.color))
@@ -270,45 +262,62 @@ class ScoreVisualizationWidget(QWidget):
         evidence: dict[str, ReactionEvidence],
         subsystem_map: dict[str, str],
     ) -> None:
-        sub_scores: dict[str, list[float]] = {}
+        sub_counts: dict[str, dict[EvidenceTier, int]] = {}
         for rxn_id, ev in evidence.items():
             sub = subsystem_map.get(rxn_id, "Unknown")
-            sub_scores.setdefault(sub, []).append(ev.confidence_score)
+            counts = sub_counts.setdefault(
+                sub,
+                {EvidenceTier.HIGH: 0, EvidenceTier.MODERATE: 0, EvidenceTier.LOW: 0},
+            )
+            counts[ev.evidence_tier] += 1
 
-        # Sort by average score
+        # Sort by total high/moderate/low tier rank, then limit to top 20 subsystems
         sorted_subs = sorted(
-            sub_scores.items(),
-            key=lambda x: sum(x[1]) / len(x[1]) if x[1] else 0,
+            sub_counts.items(),
+            key=lambda x: (
+                x[1][EvidenceTier.HIGH] * 3
+                + x[1][EvidenceTier.MODERATE] * 2
+                + x[1][EvidenceTier.LOW]
+            ),
         )
-
-        # Limit to top 20 subsystems
         sorted_subs = sorted_subs[-20:]
 
-        names = [self._format_subsystem_label(s[0], len(s[1])) for s in sorted_subs]
-        averages = [sum(s[1]) / len(s[1]) if s[1] else 0 for s in sorted_subs]
+        totals = [sum(counts.values()) for _, counts in sorted_subs]
+        names = [
+            self._format_subsystem_label(name, total)
+            for (name, _counts), total in zip(sorted_subs, totals, strict=False)
+        ]
 
         y = list(range(len(names)))
-        bar = pg.BarGraphItem(
-            x0=0,
-            y=y,
-            width=averages,
-            height=0.6,
-            brush=pg.mkBrush(THEME.chart_secondary),
-            pen=pg.mkPen(THEME.chart_pen, width=1),
-        )
-        self._subsystem_widget.addItem(bar)
-
-        for ypos, avg in zip(y, averages, strict=False):
-            label = pg.TextItem(f"{avg:.2f}", color=THEME.chart_fg, anchor=(0, 0.5))
-            label.setPos(min(avg + 0.015, 1.02), ypos)
-            self._subsystem_widget.addItem(label)
+        left = [0] * len(names)
+        for tier in (EvidenceTier.HIGH, EvidenceTier.MODERATE, EvidenceTier.LOW):
+            widths = [counts[tier] for _, counts in sorted_subs]
+            if any(widths):
+                bar = pg.BarGraphItem(
+                    x0=left,
+                    y=y,
+                    width=widths,
+                    height=0.6,
+                    brush=pg.mkBrush(self._tier_color(tier)),
+                    pen=pg.mkPen(THEME.chart_pen, width=1),
+                )
+                self._subsystem_widget.addItem(bar)
+            left = [offset + width for offset, width in zip(left, widths, strict=False)]
 
         ax = self._subsystem_widget.getAxis("left")
         ax.setTicks([list(zip(y, names, strict=False))])
         ax.setWidth(280)
         ax.setStyle(tickTextOffset=8, autoExpandTextSpace=True)
-        self._subsystem_widget.setXRange(0, 1.05, padding=0)
+        max_total = max(totals) if totals else 1
+        self._subsystem_widget.setXRange(0, max(max_total * 1.08, 1), padding=0)
         self._subsystem_widget.setYRange(-0.6, max(len(names) - 0.4, 0.5), padding=0)
+
+        legend_y = max(len(names) - 0.1, 0.5)
+        legend_x = max(max_total * 0.04, 0.05)
+        for i, tier in enumerate((EvidenceTier.HIGH, EvidenceTier.MODERATE, EvidenceTier.LOW)):
+            label = pg.TextItem(tier.label, color=self._tier_color(tier), anchor=(0, 1))
+            label.setPos(legend_x + i * max(max_total * 0.22, 1.2), legend_y)
+            self._subsystem_widget.addItem(label)
 
     @staticmethod
     def _format_subsystem_label(name: str, count: int) -> str:
@@ -316,3 +325,11 @@ class ScoreVisualizationWidget(QWidget):
         max_chars = 38
         label = name if len(name) <= max_chars else f"{name[:max_chars - 3]}..."
         return f"{label} (n={count})"
+
+    @staticmethod
+    def _tier_color(tier: EvidenceTier) -> str:
+        if tier == EvidenceTier.HIGH:
+            return THEME.score_high
+        if tier == EvidenceTier.MODERATE:
+            return THEME.score_mid
+        return THEME.score_low

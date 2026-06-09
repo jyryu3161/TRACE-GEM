@@ -94,7 +94,7 @@ class EvaluationController:
 
         self._w._update_eval_count()
         self._w._statusbar.showMessage(
-            f"Evaluated {evidence.reaction_id} — Score: {evidence.confidence_score:.3f}"
+            f"Evaluated {evidence.reaction_id} — Evidence: {evidence.evidence_tier.label}"
         )
 
     def evaluate_all(self) -> None:

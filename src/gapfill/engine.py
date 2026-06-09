@@ -347,9 +347,12 @@ class GapFillEngine:
             result.added_reactions = list(added_by_id.values())
             result.added_reactions.sort(
                 key=lambda c: (
-                    evidence_results[c.reaction.id].confidence_score
+                    (
+                        evidence_results[c.reaction.id].evidence_tier.rank,
+                        evidence_results[c.reaction.id].confidence_score,
+                    )
                     if c.reaction.id in evidence_results
-                    else 0.0
+                    else (0, 0.0)
                 ),
                 reverse=True,
             )

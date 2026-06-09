@@ -47,7 +47,7 @@ class GapFillPanelWidget(QWidget):
         self._reaction_table = QTableWidget()
         self._reaction_table.setColumnCount(5)
         self._reaction_table.setHorizontalHeaderLabels(
-            ["ID", "Name", "Score", "GPR", "Fixing Task"]
+            ["ID", "Name", "Penalty", "GPR", "Fixing Task"]
         )
         self._reaction_table.horizontalHeader().setStretchLastSection(True)
         self._reaction_table.horizontalHeader().setSectionResizeMode(
@@ -105,7 +105,7 @@ class GapFillPanelWidget(QWidget):
             f"{result.iterations} iteration(s)"
         )
 
-        # Added reactions table — sort by Score descending
+        # Added reactions table — sort by penalty descending
         self._reaction_table.setSortingEnabled(False)
         self._reaction_table.setRowCount(added)
         for row, candidate in enumerate(result.added_reactions):

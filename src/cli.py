@@ -14,6 +14,7 @@ from typing import Any
 
 from src.core.models import (
     EvidenceSource,
+    EvidenceTier,
     GapFillResult,
     MetabolicTask,
     ModelData,
@@ -337,7 +338,9 @@ def export_csv(
                 "Subsystem",
                 "Genes",
                 "GPR",
-                "Confidence Score",
+                "Evidence Tier",
+                "Evidence Rationale",
+                "Legacy Confidence Score",
                 *score_headers,
                 "Substrate Match",
                 "Product Match",
@@ -360,6 +363,8 @@ def export_csv(
                     rxn.subsystem or "",
                     ";".join(rxn.genes),
                     rxn.gene_reaction_rule,
+                    ev.evidence_tier.label,
+                    ev.evidence_rationale,
                     f"{ev.confidence_score:.4f}",
                     *per_source,
                     f"{ev.substrate_match_ratio:.4f}",
@@ -393,6 +398,8 @@ def export_json(
             "subsystem": rxn.subsystem,
             "equation": rxn.equation,
             "genes": rxn.genes,
+            "evidence_tier": ev.evidence_tier.value,
+            "evidence_rationale": ev.evidence_rationale,
             "confidence_score": ev.confidence_score,
             "scores": {
                 source.value: getattr(ev, f"{source.value}_score", 0.0) for source in EvidenceSource
@@ -461,12 +468,14 @@ async def async_main(
             export_csv(output_path, model_id, reactions, results)
 
         # Summary statistics
-        high = sum(1 for ev in results.values() if ev.confidence_score >= 0.7)
-        low = sum(1 for ev in results.values() if ev.confidence_score < 0.4)
-        mid = len(results) - high - low
-        _eprint(f"  High (>=0.7):  {high} ({high / total * 100:.1f}%)")
-        _eprint(f"  Medium:        {mid} ({mid / total * 100:.1f}%)")
-        _eprint(f"  Low (<0.4):    {low} ({low / total * 100:.1f}%)")
+        high = sum(1 for ev in results.values() if ev.evidence_tier == EvidenceTier.HIGH)
+        moderate = sum(
+            1 for ev in results.values() if ev.evidence_tier == EvidenceTier.MODERATE
+        )
+        low = sum(1 for ev in results.values() if ev.evidence_tier == EvidenceTier.LOW)
+        _eprint(f"  High:      {high} ({high / total * 100:.1f}%)")
+        _eprint(f"  Moderate:  {moderate} ({moderate / total * 100:.1f}%)")
+        _eprint(f"  Low:       {low} ({low / total * 100:.1f}%)")
         _eprint(f"Results saved to {output_path}")
 
         return results

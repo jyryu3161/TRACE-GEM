@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -140,6 +141,7 @@ class BiGGLookup:
         path = self._data_dir / "bigg_models_reactions.txt"
         if not path.exists():
             logger.warning("BiGG reactions file not found: %s", path)
+            self._load_reactions_from_universal_json()
             return
 
         with open(path, encoding="utf-8") as fh:
@@ -177,6 +179,74 @@ class BiGGLookup:
                     self._reaction_aliases[alias.lower()] = bigg_id
                 # Also index the primary ID in lowercase
                 self._reaction_aliases[bigg_id.lower()] = bigg_id
+
+    def _load_reactions_from_universal_json(self) -> None:
+        """Fallback to the bundled BiGG universal JSON when prevalence TSV is absent."""
+        path = self._data_dir / "bigg_universal_model_fixed.json"
+        if not path.exists():
+            logger.warning("BiGG universal JSON fallback not found: %s", path)
+            return
+
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("Failed to load BiGG universal JSON fallback: %s", e)
+            return
+
+        for raw in data.get("reactions", []):
+            bigg_id = str(raw.get("id", "")).strip()
+            if not bigg_id:
+                continue
+
+            annotation = raw.get("annotation") or {}
+            database_links = {
+                str(key): [str(v) for v in values]
+                for key, values in annotation.items()
+                if isinstance(values, list)
+            }
+            notes = raw.get("notes") or {}
+            old_ids = [
+                str(v)
+                for v in notes.get("original_bigg_ids", [])
+                if str(v).strip()
+            ]
+            reaction_string = self._format_json_reaction(raw.get("metabolites", {}))
+
+            entry = BiGGReactionEntry(
+                bigg_id=bigg_id,
+                name=str(raw.get("name") or bigg_id),
+                reaction_string=reaction_string,
+                models=["bigg_universal"],
+                database_links=database_links,
+                old_bigg_ids=old_ids,
+            )
+            self._reactions[bigg_id] = entry
+            self._reaction_aliases[bigg_id.lower()] = bigg_id
+            for alias in old_ids:
+                self._reaction_aliases[alias.lower()] = bigg_id
+
+        logger.info(
+            "Loaded %d BiGG reactions from universal JSON fallback",
+            len(self._reactions),
+        )
+
+    @staticmethod
+    def _format_json_reaction(metabolites: dict) -> str:
+        """Format JSON stoichiometry into a compact reaction string for display."""
+        reactants: list[str] = []
+        products: list[str] = []
+        for met_id, coeff in metabolites.items():
+            try:
+                value = float(coeff)
+            except (TypeError, ValueError):
+                continue
+            target = products if value > 0 else reactants
+            magnitude = abs(value)
+            if magnitude == 1:
+                target.append(str(met_id))
+            else:
+                target.append(f"{magnitude:g} {met_id}")
+        return " + ".join(reactants) + " <=> " + " + ".join(products)
 
     def _load_metabolites(self) -> None:
         path = self._data_dir / "bigg_models_metabolites.txt"

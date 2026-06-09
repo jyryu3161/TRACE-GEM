@@ -49,7 +49,7 @@ class TaskSimulationWorker(QRunnable):
 
     def __init__(
         self,
-        cobra_model: cobra.Model,
+        cobra_model: cobra.Model | None,
         reaction_id: str,
         tasks: list[MetabolicTask],
     ) -> None:
@@ -155,6 +155,12 @@ class ReactionRemovalDialog(QDialog):
         layout.addWidget(self._buttons)
 
     def _start_simulation(self) -> None:
+        if self._cobra_model is None or not self._tasks:
+            self._progress.setVisible(False)
+            self._summary_label.setText("Task impact analysis is unavailable.")
+            self._summary_label.setVisible(True)
+            return
+
         worker = TaskSimulationWorker(
             self._cobra_model, self._reaction.id, self._tasks
         )

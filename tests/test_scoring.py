@@ -6,6 +6,7 @@ from src.core.models import (
     EvidenceItem,
     EvidenceSource,
     EvidenceStrength,
+    EvidenceTier,
     ReactionEvidence,
 )
 from src.evidence.scoring import ConfidenceScorer
@@ -28,6 +29,7 @@ class TestConfidenceScorer:
         ]
         score = scorer.score(ev)
         assert score == pytest.approx(0.7)
+        assert ev.evidence_tier == EvidenceTier.HIGH
 
     def test_all_absent(self, scorer):
         ev = ReactionEvidence(reaction_id="FAKE")
@@ -40,6 +42,7 @@ class TestConfidenceScorer:
         ]
         score = scorer.score(ev)
         assert score == 0.0
+        assert ev.evidence_tier == EvidenceTier.LOW
 
     def test_moderate_evidence(self, scorer):
         ev = ReactionEvidence(reaction_id="PARTIAL")
@@ -52,6 +55,7 @@ class TestConfidenceScorer:
         ]
         score = scorer.score(ev)
         assert score == pytest.approx(0.42)
+        assert ev.evidence_tier == EvidenceTier.HIGH
 
     def test_weak_evidence(self, scorer):
         ev = ReactionEvidence(reaction_id="WEAK")
@@ -64,6 +68,7 @@ class TestConfidenceScorer:
         ]
         score = scorer.score(ev)
         assert score == pytest.approx(0.21)
+        assert ev.evidence_tier == EvidenceTier.MODERATE
 
     def test_custom_weights(self):
         weights = {"kegg": 0.5, "bigg": 0.5}
@@ -111,6 +116,19 @@ class TestConfidenceScorer:
         ]
         score = scorer.score(ev)
         assert score == pytest.approx(0.18)
+        assert ev.evidence_tier == EvidenceTier.LOW
+
+    def test_bigg_strong_without_kegg_is_moderate(self, scorer):
+        ev = ReactionEvidence(reaction_id="BIGG_ONLY")
+        ev.items = [
+            EvidenceItem(
+                source=EvidenceSource.BIGG,
+                strength=EvidenceStrength.STRONG,
+                description="Found in many BiGG models",
+            ),
+        ]
+        scorer.score(ev)
+        assert ev.evidence_tier == EvidenceTier.MODERATE
 
     def test_per_source_scores(self, scorer):
         ev = ReactionEvidence(reaction_id="TEST")

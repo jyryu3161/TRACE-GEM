@@ -13,6 +13,7 @@ from src.core.models import (
     EvidenceItem,
     EvidenceSource,
     EvidenceStrength,
+    EvidenceTier,
     Gene,
     Metabolite,
     ModelData,
@@ -95,6 +96,8 @@ def sample_evidence() -> ReactionEvidence:
         ),
     ]
     ev.kegg_score = 1.0
+    ev.evidence_tier = EvidenceTier.HIGH
+    ev.evidence_rationale = "KEGG reaction evidence is present for this reaction."
     ev.substrate_match_ratio = 1.0
     ev.product_match_ratio = 1.0
     return ev
@@ -168,6 +171,8 @@ def sample_evidence_map() -> dict[str, ReactionEvidence]:
     """Evidence results for the sample model reactions."""
     ev_eno = ReactionEvidence(reaction_id="ENO")
     ev_eno.confidence_score = 1.0
+    ev_eno.evidence_tier = EvidenceTier.HIGH
+    ev_eno.evidence_rationale = "KEGG reaction evidence is present for this reaction."
     ev_eno.status = EvaluationStatus.EVALUATED
     ev_eno.kegg_score = 1.0
     ev_eno.substrate_match_ratio = 1.0
@@ -185,6 +190,8 @@ def sample_evidence_map() -> dict[str, ReactionEvidence]:
 
     ev_pfk = ReactionEvidence(reaction_id="PFK")
     ev_pfk.confidence_score = 0.6
+    ev_pfk.evidence_tier = EvidenceTier.MODERATE
+    ev_pfk.evidence_rationale = "KEGG evidence is weak or partial."
     ev_pfk.status = EvaluationStatus.EVALUATED
     ev_pfk.kegg_score = 0.6
 

@@ -9,6 +9,7 @@ import pytest
 
 from src.core.models import (
     CandidateReaction,
+    EvidenceTier,
     GapFillResult,
     MetabolicTask,
     Reaction,
@@ -83,6 +84,7 @@ def sample_candidates() -> list[CandidateReaction]:
 def sample_evidence() -> dict[str, ReactionEvidence]:
     ev = ReactionEvidence(reaction_id="GLNS")
     ev.confidence_score = 0.85
+    ev.evidence_tier = EvidenceTier.HIGH
     ev.kegg_reaction_ids = ["R00253"]
     return {"GLNS": ev}
 

@@ -13,6 +13,24 @@ class EvidenceStrength(Enum):
     ABSENT = 0.0
 
 
+class EvidenceTier(Enum):
+    HIGH = "high"
+    MODERATE = "moderate"
+    LOW = "low"
+
+    @property
+    def label(self) -> str:
+        return self.value.title()
+
+    @property
+    def rank(self) -> int:
+        return {
+            EvidenceTier.HIGH: 3,
+            EvidenceTier.MODERATE: 2,
+            EvidenceTier.LOW: 1,
+        }[self]
+
+
 class EvidenceSource(Enum):
     KEGG = "kegg"
     BIGG = "bigg"
@@ -242,6 +260,8 @@ class ReactionEvidence:
     reaction_id: str
     items: list[EvidenceItem] = field(default_factory=list)
     confidence_score: float = 0.0
+    evidence_tier: EvidenceTier = EvidenceTier.LOW
+    evidence_rationale: str = ""
     status: EvaluationStatus = EvaluationStatus.NOT_EVALUATED
     error_message: str | None = None
 
@@ -261,6 +281,8 @@ class ReactionEvidence:
         return {
             "reaction_id": self.reaction_id,
             "confidence_score": self.confidence_score,
+            "evidence_tier": self.evidence_tier.value,
+            "evidence_rationale": self.evidence_rationale,
             "status": self.status.value,
             "error_message": self.error_message,
             "kegg_score": self.kegg_score,
@@ -283,6 +305,8 @@ class ReactionEvidence:
         return cls(
             reaction_id=data["reaction_id"],
             confidence_score=data.get("confidence_score", 0.0),
+            evidence_tier=EvidenceTier(data.get("evidence_tier", EvidenceTier.LOW.value)),
+            evidence_rationale=data.get("evidence_rationale", ""),
             status=EvaluationStatus(data.get("status", "not_evaluated")),
             error_message=data.get("error_message"),
             kegg_score=data.get("kegg_score", 0.0),

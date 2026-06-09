@@ -1,5 +1,6 @@
 """Tests for evidence engine."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,6 +10,7 @@ from src.core.models import (
     EvidenceItem,
     EvidenceSource,
     EvidenceStrength,
+    EvidenceTier,
     ExternalIDs,
     Reaction,
 )
@@ -72,8 +74,46 @@ class TestEvidenceEngine:
         ev = await mock_engine.evaluate_reaction(sample_reaction)
         assert ev.status == EvaluationStatus.EVALUATED
         assert ev.confidence_score > 0
+        assert ev.evidence_tier == EvidenceTier.HIGH
         assert len(ev.items) >= 1
         assert ev.ec_numbers == ["4.2.1.11"]
+
+    @pytest.mark.asyncio
+    async def test_bigg_lookup_falls_back_from_kegg_mapping(
+        self, mock_engine, sample_reaction
+    ):
+        """If direct BiGG lookup misses, KEGG->BiGG mappings are checked."""
+
+        async def check_evidence(reaction, bigg_id=None):
+            if bigg_id == "ENO_mapped":
+                return [
+                    EvidenceItem(
+                        source=EvidenceSource.BIGG,
+                        strength=EvidenceStrength.STRONG,
+                        description="Mapped BiGG evidence",
+                    )
+                ]
+            return [
+                EvidenceItem(
+                    source=EvidenceSource.BIGG,
+                    strength=EvidenceStrength.ABSENT,
+                    description="Direct BiGG lookup miss",
+                )
+            ]
+
+        mock_engine._bigg = MagicMock()
+        mock_engine._bigg.check_evidence = AsyncMock(side_effect=check_evidence)
+        mock_engine._mapping_data = SimpleNamespace(
+            rxn_kegg_to_bigg={"R00658": ["ENO_mapped"]}
+        )
+
+        ev = await mock_engine.evaluate_reaction(sample_reaction)
+
+        bigg_items = [item for item in ev.items if item.source == EvidenceSource.BIGG]
+        assert len(bigg_items) == 1
+        assert bigg_items[0].strength == EvidenceStrength.STRONG
+        assert bigg_items[0].raw_data["match_method"] == "kegg_to_bigg"
+        assert bigg_items[0].raw_data["mapped_bigg_id"] == "ENO_mapped"
 
     @pytest.mark.asyncio
     async def test_evaluate_extracts_match_ratios(self, mock_engine, sample_reaction):

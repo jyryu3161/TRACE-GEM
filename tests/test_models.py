@@ -8,6 +8,7 @@ from src.core.models import (
     EvidenceItem,
     EvidenceSource,
     EvidenceStrength,
+    EvidenceTier,
     ExternalIDs,
     Gene,
     GeneNode,
@@ -32,6 +33,13 @@ class TestEvidenceStrength:
         sorted_vals = sorted(strengths, key=lambda s: s.value, reverse=True)
         assert sorted_vals[0] == EvidenceStrength.STRONG
         assert sorted_vals[-1] == EvidenceStrength.ABSENT
+
+
+class TestEvidenceTier:
+    def test_values_and_rank(self):
+        assert EvidenceTier.HIGH.value == "high"
+        assert EvidenceTier.HIGH.label == "High"
+        assert EvidenceTier.HIGH.rank > EvidenceTier.MODERATE.rank > EvidenceTier.LOW.rank
 
 
 class TestEvidenceSource:
@@ -224,6 +232,8 @@ class TestReactionEvidence:
     def test_defaults(self):
         ev = ReactionEvidence(reaction_id="RXN1")
         assert ev.confidence_score == 0.0
+        assert ev.evidence_tier == EvidenceTier.LOW
+        assert ev.evidence_rationale == ""
         assert ev.status == EvaluationStatus.NOT_EVALUATED
         assert ev.items == []
         assert ev.ec_numbers == []

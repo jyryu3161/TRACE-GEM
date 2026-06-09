@@ -52,7 +52,9 @@ class ExportController:
                     "Subsystem",
                     "Genes",
                     "GPR",
-                    "Confidence Score",
+                    "Evidence Tier",
+                    "Evidence Rationale",
+                    "Legacy Confidence Score",
                     *score_headers,
                     "Substrate Match",
                     "Product Match",
@@ -75,6 +77,8 @@ class ExportController:
                         rxn.subsystem or "",
                         ";".join(rxn.genes),
                         rxn.gene_reaction_rule,
+                        ev.evidence_tier.label,
+                        ev.evidence_rationale,
                         f"{ev.confidence_score:.4f}",
                         *per_source,
                         f"{ev.substrate_match_ratio:.4f}",
@@ -115,6 +119,8 @@ class ExportController:
                 "subsystem": rxn.subsystem,
                 "equation": rxn.equation,
                 "genes": rxn.genes,
+                "evidence_tier": ev.evidence_tier.value,
+                "evidence_rationale": ev.evidence_rationale,
                 "confidence_score": ev.confidence_score,
                 "scores": {
                     source.value: getattr(ev, f"{source.value}_score", 0.0)

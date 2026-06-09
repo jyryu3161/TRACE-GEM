@@ -18,19 +18,18 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
-    QSlider,
     QTableView,
     QVBoxLayout,
     QWidget,
 )
 
-from src.core.models import EvaluationStatus, ModelData, Reaction, ReactionEvidence
+from src.core.models import EvaluationStatus, EvidenceTier, ModelData, Reaction, ReactionEvidence
 
 
 class ReactionTableModel(QAbstractTableModel):
     """Table model for reactions list."""
 
-    COLUMNS = ["ID", "Name", "Equation", "Subsystem", "Genes", "GPR", "Score", "Status"]
+    COLUMNS = ["ID", "Name", "Equation", "Subsystem", "Genes", "GPR", "Evidence", "Status"]
     COL_ID = 0
     COL_NAME = 1
     COL_EQUATION = 2
@@ -117,17 +116,17 @@ class ReactionTableModel(QAbstractTableModel):
             elif col == self.COL_SCORE:
                 ev = self._evidence.get(rxn.id)
                 if ev and ev.status == EvaluationStatus.EVALUATED:
-                    return f"{ev.confidence_score:.2f}"
+                    return ev.evidence_tier.label
                 return ""
             elif col == self.COL_STATUS:
                 ev = self._evidence.get(rxn.id)
                 return ev.status.value if ev else "not_evaluated"
 
         elif role == Qt.ItemDataRole.UserRole:
-            # Return raw score for sorting
+            # Return tier rank for sorting
             if col == self.COL_SCORE:
                 ev = self._evidence.get(rxn.id)
-                return ev.confidence_score if ev else -1.0
+                return ev.evidence_tier.rank if ev else 0
             elif col == self.COL_GENES:
                 return len(rxn.genes)
 
@@ -145,7 +144,7 @@ class ReactionTableModel(QAbstractTableModel):
 
         if column == self.COL_SCORE:
             self._reactions.sort(
-                key=lambda r: self._evidence.get(r.id, ReactionEvidence(r.id)).confidence_score,
+                key=lambda r: self._evidence.get(r.id, ReactionEvidence(r.id)).evidence_tier.rank,
                 reverse=reverse,
             )
         elif column == self.COL_ID:
@@ -167,8 +166,7 @@ class ReactionFilterProxy(QSortFilterProxyModel):
         super().__init__(parent)
         self._text_filter = ""
         self._subsystem_filter = ""
-        self._min_score = -1.0
-        self._max_score = 1.0
+        self._min_tier_rank = 0
         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
     def set_text_filter(self, text: str) -> None:
@@ -179,9 +177,8 @@ class ReactionFilterProxy(QSortFilterProxyModel):
         self._subsystem_filter = subsystem
         self.invalidateFilter()
 
-    def set_score_range(self, min_score: float, max_score: float) -> None:
-        self._min_score = min_score
-        self._max_score = max_score
+    def set_min_tier(self, tier: EvidenceTier | None) -> None:
+        self._min_tier_rank = tier.rank if tier else 0
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # type: ignore[override]
@@ -207,11 +204,11 @@ class ReactionFilterProxy(QSortFilterProxyModel):
         if self._subsystem_filter and (rxn.subsystem or "") != self._subsystem_filter:
             return False
 
-        # Score filter
-        if self._min_score > -1.0:
+        # Evidence tier filter
+        if self._min_tier_rank:
             ev = model.get_evidence(rxn.id)
-            score = ev.confidence_score if ev and ev.status == EvaluationStatus.EVALUATED else -1.0
-            if score >= 0 and (score < self._min_score or score > self._max_score):
+            rank = ev.evidence_tier.rank if ev and ev.status == EvaluationStatus.EVALUATED else 0
+            if rank < self._min_tier_rank:
                 return False
 
         return True
@@ -247,16 +244,15 @@ class ReactionTableWidget(QWidget):
         self._subsystem_combo.currentIndexChanged.connect(self._on_subsystem_changed)
         filter_layout.addWidget(self._subsystem_combo, stretch=1)
 
-        filter_layout.addWidget(QLabel("Score:"))
-        self._score_slider = QSlider(Qt.Orientation.Horizontal)
-        self._score_slider.setRange(0, 100)
-        self._score_slider.setValue(0)
-        self._score_slider.setToolTip("Minimum score filter")
-        self._score_slider.valueChanged.connect(self._on_score_filter_changed)
-        filter_layout.addWidget(self._score_slider)
-
-        self._score_label = QLabel("0.00")
-        filter_layout.addWidget(self._score_label)
+        filter_layout.addWidget(QLabel("Evidence:"))
+        self._evidence_combo = QComboBox()
+        self._evidence_combo.addItem("All", None)
+        self._evidence_combo.addItem("High+", EvidenceTier.HIGH)
+        self._evidence_combo.addItem("Moderate+", EvidenceTier.MODERATE)
+        self._evidence_combo.addItem("Low+", EvidenceTier.LOW)
+        self._evidence_combo.setToolTip("Minimum evidence tier filter")
+        self._evidence_combo.currentIndexChanged.connect(self._on_evidence_filter_changed)
+        filter_layout.addWidget(self._evidence_combo)
 
         layout.addLayout(filter_layout)
 
@@ -280,7 +276,7 @@ class ReactionTableWidget(QWidget):
         header.resizeSection(ReactionTableModel.COL_SUBSYSTEM, 140)
         header.resizeSection(ReactionTableModel.COL_GENES, 50)
         header.resizeSection(ReactionTableModel.COL_GPR, 120)
-        header.resizeSection(ReactionTableModel.COL_SCORE, 70)
+        header.resizeSection(ReactionTableModel.COL_SCORE, 90)
 
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)
@@ -319,10 +315,8 @@ class ReactionTableWidget(QWidget):
         sub = self._subsystem_combo.currentData() or ""
         self._proxy.set_subsystem_filter(sub)
 
-    def _on_score_filter_changed(self, value: int) -> None:
-        min_score = value / 100.0
-        self._score_label.setText(f"{min_score:.2f}")
-        self._proxy.set_score_range(min_score, 1.0)
+    def _on_evidence_filter_changed(self, _index: int) -> None:
+        self._proxy.set_min_tier(self._evidence_combo.currentData())
 
     def _on_row_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
         if current.isValid():

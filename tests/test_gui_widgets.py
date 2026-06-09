@@ -116,7 +116,7 @@ class TestEvidencePanelWidget:
         widget = EvidencePanelWidget()
         sample_evidence.confidence_score = 1.0
         widget.set_evidence(sample_evidence)
-        assert "1.000" in widget._score_label.text()
+        assert widget._score_label.text() == "High"
 
     def test_clear(self):
         from src.gui.evidence_panel import EvidencePanelWidget

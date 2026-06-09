@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.models import CandidateReaction, Reaction, ReactionEvidence
+from src.core.models import CandidateReaction, EvidenceTier, Reaction, ReactionEvidence
 from src.gapfill.penalty_calculator import PenaltyCalculator
 from src.utils.config import Config
 
@@ -15,10 +15,13 @@ def _make_candidate(organism_exists: bool | None = True) -> CandidateReaction:
 
 
 def _make_evidence(
-    score: float, kegg_ids: list[str] | None = None
+    score: float,
+    kegg_ids: list[str] | None = None,
+    tier: EvidenceTier = EvidenceTier.HIGH,
 ) -> ReactionEvidence:
     ev = ReactionEvidence(reaction_id="TEST_RXN")
     ev.confidence_score = score
+    ev.evidence_tier = tier
     ev.kegg_reaction_ids = kegg_ids or []
     return ev
 
@@ -33,57 +36,54 @@ class TestPenaltyCalculator:
         candidate = _make_candidate(organism_exists=True)
         evidence = _make_evidence(0.90, kegg_ids=["R00001"])
         penalty = calc.calculate(candidate, evidence)
-        # 1.0 / (0.90 + 0.01) = ~1.099
-        assert penalty == pytest.approx(1.0 / 0.91, rel=1e-3)
+        assert penalty == pytest.approx(1.0, rel=1e-3)
         assert penalty < 2.0
 
-    def test_low_score_high_penalty(self, calc: PenaltyCalculator) -> None:
-        """Low evidence score -> high penalty."""
+    def test_low_tier_high_penalty(self, calc: PenaltyCalculator) -> None:
+        """Low evidence tier -> high penalty."""
         candidate = _make_candidate(organism_exists=True)
-        evidence = _make_evidence(0.05, kegg_ids=["R00001"])
+        evidence = _make_evidence(0.05, kegg_ids=["R00001"], tier=EvidenceTier.LOW)
         penalty = calc.calculate(candidate, evidence)
-        # 1.0 / (0.05 + 0.01) = ~16.67
-        assert penalty == pytest.approx(1.0 / 0.06, rel=1e-3)
+        assert penalty == pytest.approx(25.0, rel=1e-3)
         assert penalty > 10.0
 
     def test_organism_not_exists_multiplier(self, calc: PenaltyCalculator) -> None:
         """organism_exists=False applies org_mult (10x)."""
         candidate = _make_candidate(organism_exists=False)
-        evidence = _make_evidence(0.50, kegg_ids=["R00001"])
+        evidence = _make_evidence(0.50, kegg_ids=["R00001"], tier=EvidenceTier.MODERATE)
         penalty = calc.calculate(candidate, evidence)
-        # 1.0 / (0.50 + 0.01) * 10.0 = ~19.6
-        expected = (1.0 / 0.51) * 10.0
+        expected = 5.0 * 10.0
         assert penalty == pytest.approx(expected, rel=1e-3)
 
     def test_organism_none_multiplier(self, calc: PenaltyCalculator) -> None:
         """organism_exists=None applies 3x multiplier."""
         candidate = _make_candidate(organism_exists=None)
-        evidence = _make_evidence(0.50, kegg_ids=["R00001"])
+        evidence = _make_evidence(0.50, kegg_ids=["R00001"], tier=EvidenceTier.MODERATE)
         penalty = calc.calculate(candidate, evidence)
-        expected = (1.0 / 0.51) * 3.0
+        expected = 5.0 * 3.0
         assert penalty == pytest.approx(expected, rel=1e-3)
 
     def test_no_kegg_multiplier(self, calc: PenaltyCalculator) -> None:
         """No KEGG reaction IDs applies no_kegg_mult (2x)."""
         candidate = _make_candidate(organism_exists=True)
-        evidence = _make_evidence(0.50, kegg_ids=[])
+        evidence = _make_evidence(0.50, kegg_ids=[], tier=EvidenceTier.MODERATE)
         penalty = calc.calculate(candidate, evidence)
-        expected = (1.0 / 0.51) * 2.0
+        expected = 5.0 * 2.0
         assert penalty == pytest.approx(expected, rel=1e-3)
 
     def test_no_evidence_applies_kegg_multiplier(self, calc: PenaltyCalculator) -> None:
         """None evidence applies no_kegg_mult."""
         candidate = _make_candidate(organism_exists=True)
         penalty = calc.calculate(candidate, None)
-        # 1.0 / (0.0 + 0.01) * 2.0 = 200.0
-        assert penalty == pytest.approx(200.0, rel=1e-3)
+        assert penalty == pytest.approx(50.0, rel=1e-3)
 
     def test_penalty_capped_at_max(self, calc: PenaltyCalculator) -> None:
         """Penalty is capped at max_penalty (1000.0)."""
+        config = Config(gapfill_organism_penalty_multiplier=100.0)
+        calc = PenaltyCalculator(config)
         candidate = _make_candidate(organism_exists=False)
-        evidence = _make_evidence(0.0, kegg_ids=[])
+        evidence = _make_evidence(0.0, kegg_ids=[], tier=EvidenceTier.LOW)
         penalty = calc.calculate(candidate, evidence)
-        # 1.0 / (0.0 + 0.01) * 10.0 * 2.0 = 2000.0 -> capped at 1000.0
         assert penalty == 1000.0
 
     def test_calculate_batch(self, calc: PenaltyCalculator) -> None:
@@ -104,5 +104,5 @@ class TestPenaltyCalculator:
         assert "RXN_B" in penalties
         # RXN_A has good evidence, should be low penalty
         assert penalties["RXN_A"] < penalties["RXN_B"]
-        # RXN_B: no evidence + organism_exists=False -> capped at 1000
-        assert penalties["RXN_B"] == 1000.0
+        # RXN_B: no evidence + organism_exists=False is heavily discouraged.
+        assert penalties["RXN_B"] == 500.0

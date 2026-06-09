@@ -14,7 +14,6 @@ from src.core.mapping_data import MappingData
 from src.core.models import (
     CandidateReaction,
     EvaluationStatus,
-    EvidenceItem,
     EvidenceSource,
     EvidenceStrength,
     Reaction,
@@ -122,14 +121,7 @@ class EvidenceEngine:
 
             # Step 4: BiGG verification
             if self._bigg:
-                try:
-                    bigg_items = await self._bigg.check_evidence(
-                        reaction,
-                        bigg_id=reaction.id,
-                    )
-                    evidence.items.extend(bigg_items)
-                except Exception as e:
-                    logger.warning("BiGG verification failed for %s: %s", reaction.id, e)
+                await self._run_bigg_verification(reaction, ext_ids, evidence)
 
             # Step 5: Score
             self._scorer.score(evidence)
@@ -168,7 +160,8 @@ class EvidenceEngine:
 
         Differences from evaluate_reaction():
         - Uses resolve(universal=True) for annotation format differences
-        - BiGG verification returns STRONG automatically (reaction is from BiGG universal)
+        - BiGG verification still uses the BiGG lookup rather than assuming
+          universal-model membership is always strong evidence
         """
         reaction = candidate.reaction
         evidence = ReactionEvidence(reaction_id=reaction.id)
@@ -186,18 +179,14 @@ class EvidenceEngine:
             # Steps 2-3: KEGG verification + extract match ratios
             await self._run_kegg_verification(reaction, ext_ids, evidence)
 
-            # Step 4: BiGG verification — automatic STRONG for universal model candidates
-            evidence.items.append(
-                EvidenceItem(
-                    source=EvidenceSource.BIGG,
-                    strength=EvidenceStrength.STRONG,
-                    description=(
-                        f"Reaction exists in BiGG universal model "
-                        f"(source: {candidate.source_model})"
-                    ),
-                    url=f"http://bigg.ucsd.edu/universal/reactions/{reaction.id}",
+            # Step 4: BiGG verification
+            if self._bigg:
+                await self._run_bigg_verification(
+                    reaction,
+                    ext_ids,
+                    evidence,
+                    source_model=candidate.source_model,
                 )
-            )
 
             # Step 5: Score
             self._scorer.score(evidence)
@@ -258,6 +247,94 @@ class EvidenceEngine:
                     evidence.substrate_match_ratio = sub_match
                 if prod_match is not None:
                     evidence.product_match_ratio = prod_match
+
+    async def _run_bigg_verification(
+        self,
+        reaction: Reaction,
+        ext_ids: Any,
+        evidence: ReactionEvidence,
+        source_model: str | None = None,
+    ) -> None:
+        """Run BiGG lookup with KEGG-to-BiGG fallback when direct IDs miss."""
+        if not self._bigg:
+            return
+
+        try:
+            direct_items = await self._bigg.check_evidence(
+                reaction,
+                bigg_id=ext_ids.bigg_id or reaction.id,
+            )
+        except Exception as e:
+            logger.warning("BiGG verification failed for %s: %s", reaction.id, e)
+            return
+
+        best_direct = self._best_bigg_item(direct_items)
+        if best_direct and best_direct.strength != EvidenceStrength.ABSENT:
+            self._annotate_bigg_item(best_direct, "direct_bigg_id", source_model)
+            evidence.items.append(best_direct)
+            return
+
+        mapped_items = await self._lookup_bigg_via_kegg(reaction, ext_ids)
+        best_mapped = self._best_bigg_item(mapped_items)
+        if best_mapped and best_mapped.strength != EvidenceStrength.ABSENT:
+            self._annotate_bigg_item(best_mapped, "kegg_to_bigg", source_model)
+            evidence.items.append(best_mapped)
+            return
+
+        if best_direct:
+            self._annotate_bigg_item(best_direct, "direct_bigg_id", source_model)
+            evidence.items.append(best_direct)
+
+    async def _lookup_bigg_via_kegg(
+        self,
+        reaction: Reaction,
+        ext_ids: Any,
+    ) -> list[Any]:
+        """Check BiGG evidence for BiGG IDs mapped from resolved KEGG IDs."""
+        if not self._bigg or not self._mapping_data:
+            return []
+
+        mapped_bigg_ids: list[str] = []
+        for kegg_id in ext_ids.kegg_reaction_ids:
+            mapped_bigg_ids.extend(self._mapping_data.rxn_kegg_to_bigg.get(kegg_id, []))
+
+        items: list[Any] = []
+        for bigg_id in sorted(set(mapped_bigg_ids)):
+            try:
+                for item in await self._bigg.check_evidence(reaction, bigg_id=bigg_id):
+                    raw = dict(item.raw_data or {})
+                    raw["mapped_bigg_id"] = bigg_id
+                    raw["mapped_kegg_ids"] = list(ext_ids.kegg_reaction_ids)
+                    item.raw_data = raw
+                    items.append(item)
+            except Exception as e:
+                logger.debug(
+                    "BiGG KEGG-mapped lookup failed for %s via %s: %s",
+                    reaction.id,
+                    bigg_id,
+                    e,
+                )
+        return items
+
+    @staticmethod
+    def _best_bigg_item(items: list[Any]) -> Any | None:
+        """Return strongest BiGG evidence item from a lookup result."""
+        bigg_items = [item for item in items if item.source == EvidenceSource.BIGG]
+        if not bigg_items:
+            return None
+        return max(bigg_items, key=lambda item: item.strength.value)
+
+    @staticmethod
+    def _annotate_bigg_item(
+        item: Any,
+        match_method: str,
+        source_model: str | None,
+    ) -> None:
+        raw = dict(item.raw_data or {})
+        raw["match_method"] = match_method
+        if source_model:
+            raw["candidate_source_model"] = source_model
+        item.raw_data = raw
 
     async def _run_batch(
         self,

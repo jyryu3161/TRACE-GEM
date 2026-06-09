@@ -342,6 +342,18 @@ def score_color(score: float) -> str:
     return THEME.score_none
 
 
+def evidence_tier_color(tier: str) -> str:
+    """Map an evidence tier to a hex color string."""
+    normalized = tier.lower()
+    if normalized == "high":
+        return THEME.score_high
+    if normalized == "moderate":
+        return THEME.score_mid
+    if normalized == "low":
+        return THEME.score_low
+    return THEME.score_none
+
+
 def apply_theme(app: QApplication) -> None:
     """Apply the full theme: Fusion style + QPalette + QSS.
 

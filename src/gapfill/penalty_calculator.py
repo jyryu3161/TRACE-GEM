@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from src.core.models import CandidateReaction, ReactionEvidence
+from src.core.models import CandidateReaction, EvidenceTier, ReactionEvidence
 from src.utils.config import Config
 from src.utils.constants import GAPFILL_MAX_PENALTY
 
@@ -12,13 +12,21 @@ logger = logging.getLogger("metataskgapfill.gapfill.penalty")
 
 
 class PenaltyCalculator:
-    """Convert evidence scores to COBRApy gap-fill penalties.
+    """Convert categorical evidence tiers to COBRApy gap-fill penalties.
 
-    Higher evidence score -> lower penalty -> gap-filler preferentially selects.
+    Better evidence tier -> lower penalty -> gap-filler preferentially selects.
+    The legacy numeric confidence score is no longer used as the primary
+    penalty signal because the underlying 0.3/0.09 values are not biological
+    probabilities.
     """
 
+    _TIER_BASE_PENALTY = {
+        EvidenceTier.HIGH: 1.0,
+        EvidenceTier.MODERATE: 5.0,
+        EvidenceTier.LOW: 25.0,
+    }
+
     def __init__(self, config: Config) -> None:
-        self._epsilon = config.gapfill_penalty_epsilon  # 0.01
         self._org_mult = config.gapfill_organism_penalty_multiplier  # 10.0
         self._no_kegg_mult = config.gapfill_no_kegg_penalty_multiplier  # 2.0
         self._max_penalty = GAPFILL_MAX_PENALTY  # 1000.0
@@ -31,14 +39,14 @@ class PenaltyCalculator:
         """Calculate penalty for a single candidate reaction.
 
         Formula:
-            base = 1.0 / (confidence_score + epsilon)
+            base = categorical tier penalty
             if organism_exists is False: base *= org_mult
             elif organism_exists is None: base *= 3.0
             if no kegg_reaction_ids: base *= no_kegg_mult
             return min(base, max_penalty)
         """
-        score = evidence.confidence_score if evidence else 0.0
-        base = 1.0 / (score + self._epsilon)
+        tier = evidence.evidence_tier if evidence else EvidenceTier.LOW
+        base = self._TIER_BASE_PENALTY[tier]
 
         if candidate.organism_exists is False:
             base *= self._org_mult
@@ -67,9 +75,10 @@ class PenaltyCalculator:
             penalty = self.calculate(candidate, evidence)
             penalties[rxn_id] = penalty
             logger.debug(
-                "Penalty for %s: %.2f (score=%.2f, org=%s)",
+                "Penalty for %s: %.2f (tier=%s, legacy_score=%.2f, org=%s)",
                 rxn_id,
                 penalty,
+                evidence.evidence_tier.value if evidence else EvidenceTier.LOW.value,
                 evidence.confidence_score if evidence else 0.0,
                 candidate.organism_exists,
             )

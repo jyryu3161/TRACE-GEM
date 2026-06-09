@@ -402,9 +402,12 @@ class GapFillWorkflowWorker(QRunnable):
             )
             result.added_reactions.sort(
                 key=lambda c: (
-                    added_evidence[c.reaction.id].confidence_score
+                    (
+                        added_evidence[c.reaction.id].evidence_tier.rank,
+                        added_evidence[c.reaction.id].confidence_score,
+                    )
                     if c.reaction.id in added_evidence
-                    else 0.0
+                    else (0, 0.0)
                 ),
                 reverse=True,
             )

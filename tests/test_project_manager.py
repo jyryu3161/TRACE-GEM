@@ -11,6 +11,7 @@ from src.core.models import (
     EvidenceItem,
     EvidenceSource,
     EvidenceStrength,
+    EvidenceTier,
     MetabolicTask,
     ReactionEvidence,
     TaskResult,
@@ -66,6 +67,8 @@ class TestReactionEvidenceSerialization:
         ev = ReactionEvidence(
             reaction_id="PFK",
             confidence_score=0.85,
+            evidence_tier=EvidenceTier.HIGH,
+            evidence_rationale="KEGG reaction evidence is present.",
             status=EvaluationStatus.EVALUATED,
             kegg_score=0.9,
             bigg_score=0.8,
@@ -86,6 +89,8 @@ class TestReactionEvidenceSerialization:
 
         assert restored.reaction_id == "PFK"
         assert restored.confidence_score == 0.85
+        assert restored.evidence_tier == EvidenceTier.HIGH
+        assert restored.evidence_rationale == "KEGG reaction evidence is present."
         assert restored.status == EvaluationStatus.EVALUATED
         assert restored.kegg_score == 0.9
         assert restored.ec_numbers == ["2.7.1.11"]
@@ -98,6 +103,7 @@ class TestReactionEvidenceSerialization:
         ev = ReactionEvidence.from_dict(d)
         assert ev.reaction_id == "TEST"
         assert ev.confidence_score == 0.0
+        assert ev.evidence_tier == EvidenceTier.LOW
         assert ev.status == EvaluationStatus.NOT_EVALUATED
         assert ev.items == []
 

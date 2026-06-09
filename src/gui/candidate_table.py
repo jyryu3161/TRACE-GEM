@@ -18,13 +18,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QSlider,
     QTableView,
     QVBoxLayout,
     QWidget,
 )
 
-from src.core.models import CandidateReaction, ReactionEvidence
+from src.core.models import CandidateReaction, EvidenceTier, ReactionEvidence
 
 
 class CandidateTableModel(QAbstractTableModel):
@@ -36,7 +35,7 @@ class CandidateTableModel(QAbstractTableModel):
         "Equation",
         "Subsystem",
         "Organism",
-        "Score",
+        "Evidence",
         "Penalty",
         "KEGG IDs",
         "GPR",
@@ -129,7 +128,7 @@ class CandidateTableModel(QAbstractTableModel):
             elif col == self.COL_SCORE:
                 ev = self._evidence.get(rxn.id)
                 if ev:
-                    return f"{ev.confidence_score:.2f}"
+                    return ev.evidence_tier.label
                 return ""
             elif col == self.COL_PENALTY:
                 return f"{candidate.penalty:.1f}"
@@ -151,7 +150,7 @@ class CandidateTableModel(QAbstractTableModel):
         elif role == Qt.ItemDataRole.UserRole:
             if col == self.COL_SCORE:
                 ev = self._evidence.get(rxn.id)
-                return ev.confidence_score if ev else -1.0
+                return ev.evidence_tier.rank if ev else 0
             elif col == self.COL_PENALTY:
                 return candidate.penalty
             elif col == self.COL_ORGANISM:
@@ -188,7 +187,7 @@ class CandidateTableModel(QAbstractTableModel):
         if column == self.COL_SCORE:
             self._candidates.sort(
                 key=lambda c: (
-                    self._evidence.get(c.reaction.id, ReactionEvidence(c.reaction.id)).confidence_score
+                    self._evidence.get(c.reaction.id, ReactionEvidence(c.reaction.id)).evidence_tier.rank
                 ),
                 reverse=reverse,
             )
@@ -220,7 +219,7 @@ class CandidateFilterProxy(QSortFilterProxyModel):
         super().__init__(parent)
         self._text_filter = ""
         self._organism_filter = ""  # "", "yes", "no", "unknown"
-        self._min_score = -1.0
+        self._min_tier_rank = 0
         self._subsystem_filter = ""
         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
@@ -232,8 +231,8 @@ class CandidateFilterProxy(QSortFilterProxyModel):
         self._organism_filter = value
         self.invalidateFilter()
 
-    def set_min_score(self, min_score: float) -> None:
-        self._min_score = min_score
+    def set_min_tier(self, tier: EvidenceTier | None) -> None:
+        self._min_tier_rank = tier.rank if tier else 0
         self.invalidateFilter()
 
     def set_subsystem_filter(self, subsystem: str) -> None:
@@ -273,11 +272,11 @@ class CandidateFilterProxy(QSortFilterProxyModel):
         if self._subsystem_filter and (rxn.subsystem or "") != self._subsystem_filter:
             return False
 
-        # Score filter
-        if self._min_score > 0:
+        # Evidence tier filter
+        if self._min_tier_rank:
             ev = model.get_evidence(rxn.id)
-            score = ev.confidence_score if ev else 0.0
-            if score < self._min_score:
+            rank = ev.evidence_tier.rank if ev else 0
+            if rank < self._min_tier_rank:
                 return False
 
         return True
@@ -349,17 +348,15 @@ class CandidateTableWidget(QWidget):
         self._subsystem_combo.setVisible(False)
         filter_layout.addWidget(self._subsystem_combo, stretch=1)
 
-        # Score slider
-        filter_layout.addWidget(QLabel("Score:"))
-        self._score_slider = QSlider(Qt.Orientation.Horizontal)
-        self._score_slider.setRange(0, 100)
-        self._score_slider.setValue(0)
-        self._score_slider.setToolTip("Minimum score filter")
-        self._score_slider.valueChanged.connect(self._on_score_filter_changed)
-        filter_layout.addWidget(self._score_slider)
-
-        self._score_label = QLabel("0.00")
-        filter_layout.addWidget(self._score_label)
+        filter_layout.addWidget(QLabel("Evidence:"))
+        self._evidence_combo = QComboBox()
+        self._evidence_combo.addItem("All", None)
+        self._evidence_combo.addItem("High+", EvidenceTier.HIGH)
+        self._evidence_combo.addItem("Moderate+", EvidenceTier.MODERATE)
+        self._evidence_combo.addItem("Low+", EvidenceTier.LOW)
+        self._evidence_combo.setToolTip("Minimum evidence tier filter")
+        self._evidence_combo.currentIndexChanged.connect(self._on_evidence_filter_changed)
+        filter_layout.addWidget(self._evidence_combo)
 
         layout.addLayout(filter_layout)
 
@@ -390,8 +387,8 @@ class CandidateTableWidget(QWidget):
         header.resizeSection(CandidateTableModel.COL_EQUATION, 180)
         header.resizeSection(CandidateTableModel.COL_SUBSYSTEM, 120)
         header.setSectionHidden(CandidateTableModel.COL_SUBSYSTEM, True)
-        header.resizeSection(CandidateTableModel.COL_ORGANISM, 60)
-        header.resizeSection(CandidateTableModel.COL_SCORE, 70)
+        header.resizeSection(CandidateTableModel.COL_ORGANISM, 76)
+        header.resizeSection(CandidateTableModel.COL_SCORE, 90)
         header.resizeSection(CandidateTableModel.COL_PENALTY, 70)
         header.resizeSection(CandidateTableModel.COL_KEGG, 100)
         header.resizeSection(CandidateTableModel.COL_GPR, 120)
@@ -418,7 +415,7 @@ class CandidateTableWidget(QWidget):
         for sub in subsystems:
             self._subsystem_combo.addItem(sub, sub)
 
-        # Default sort by Score descending
+        # Default sort by evidence tier descending
         self._table.sortByColumn(
             CandidateTableModel.COL_SCORE, Qt.SortOrder.DescendingOrder
         )
@@ -444,10 +441,8 @@ class CandidateTableWidget(QWidget):
         sub = self._subsystem_combo.currentData() or ""
         self._proxy.set_subsystem_filter(sub)
 
-    def _on_score_filter_changed(self, value: int) -> None:
-        min_score = value / 100.0
-        self._score_label.setText(f"{min_score:.2f}")
-        self._proxy.set_min_score(min_score)
+    def _on_evidence_filter_changed(self, _index: int) -> None:
+        self._proxy.set_min_tier(self._evidence_combo.currentData())
 
     def _on_row_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
         if current.isValid():

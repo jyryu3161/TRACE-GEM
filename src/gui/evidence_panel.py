@@ -17,7 +17,7 @@ from src.evidence.evidence_types import (
     STRENGTH_COLORS,
     STRENGTH_LABELS,
 )
-from src.gui.theme import THEME, score_color
+from src.gui.theme import THEME, evidence_tier_color
 
 
 class EvidencePanelWidget(QWidget):
@@ -31,9 +31,9 @@ class EvidencePanelWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Score display
+        # Evidence tier display
         score_layout = QHBoxLayout()
-        score_layout.addWidget(QLabel("Confidence Score:"))
+        score_layout.addWidget(QLabel("Evidence Tier:"))
         self._score_label = QLabel("-")
         self._score_label.setObjectName("scoreLabel")
         score_layout.addWidget(self._score_label)
@@ -47,12 +47,20 @@ class EvidencePanelWidget(QWidget):
         layout.addWidget(self._browser)
 
     def set_evidence(self, evidence: ReactionEvidence) -> None:
-        score = evidence.confidence_score
-        color = score_color(score)
-        self._score_label.setText(f"{score:.3f}")
+        tier = evidence.evidence_tier.label
+        color = evidence_tier_color(tier)
+        self._score_label.setText(tier)
         self._score_label.setStyleSheet(f"color: {color}; font-size: 24px; font-weight: bold;")
 
-        html_parts = []
+        html_parts = [
+            f'<div style="margin-bottom: 12px; padding: 10px; '
+            f"border-left: 4px solid {color}; "
+            f"background-color: {THEME.evidence_item_bg}; "
+            f'color: {THEME.text}; border-radius: 4px;">'
+            f"<b>Evidence Tier:</b> {tier}<br>"
+            f"<b>Rationale:</b> {evidence.evidence_rationale or 'Not evaluated'}"
+            f"</div>"
+        ]
 
         # KEGG Verification summary card (special — includes match ratios)
         html_parts.append(self._render_kegg_card(evidence))

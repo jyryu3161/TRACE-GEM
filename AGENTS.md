@@ -23,8 +23,17 @@ mypy src/ --ignore-missing-imports
 - Evidence is KEGG and BiGG only.
 - PubMed, Gemini, Perplexity, UniProt, MetaCyc, and LLM evidence workflows are
   intentionally removed from active code and tests.
-- KEGG and BiGG confidence scores use fixed configured weights. Missing/absent KEGG
-  evidence must not be redistributed into a 1.0 BiGG-only score.
+- User-facing evidence is categorical: High, Moderate, or Low. Numeric
+  confidence remains only as a legacy/export ordering field.
+- KEGG evidence is the primary signal. Confirmed KEGG reaction evidence maps to
+  High; weak/partial KEGG maps to Moderate; BiGG-only support does not override
+  absent or mismatched KEGG evidence.
+- BiGG evidence is used as biological plausibility, not strain specificity. When
+  `bigg_models_reactions.txt` is absent, `BiGGLookup` falls back to
+  `data/bigg_universal_model_fixed.json` and treats universal-only presence as
+  weak BiGG support.
+- Missing/absent KEGG evidence must not be redistributed into a 1.0 BiGG-only
+  score.
 - KEGG entries with metabolite mismatches should be reported as explicit absent
   KEGG evidence with mismatch details, not as generic "not found".
 - KEGG substrate/product matching excludes common currency metabolites when
@@ -63,6 +72,9 @@ mypy src/ --ignore-missing-imports
   sets are tried per failed task. If an alternative breaks a protected task,
   try the next alternative; if none preserve protected tasks, that task's
   gap-fill attempt is infeasible.
+- Gap-fill penalties are based on evidence tier, then adjusted by KEGG organism
+  presence/absence and missing KEGG reaction IDs. Do not use legacy numeric
+  confidence as the primary biological penalty signal.
 - Large universals are pruned for MILP solving above
   `Config.gapfill_universal_prune_threshold`, keeping model-compatible
   reactions and explicit task targets.
@@ -120,7 +132,8 @@ data/bigg_models_metabolites.txt
 ## Test Focus For Changes
 
 - Evidence changes: `tests/test_evidence_engine.py`, `tests/test_scoring.py`,
-  `tests/test_kegg_client.py`, `tests/test_bigg_client.py`.
+  `tests/test_kegg_client.py`, `tests/test_bigg_client.py`,
+  `tests/test_bigg_lookup.py`.
 - Gap-fill changes: `tests/test_gapfill_engine.py`,
   `tests/test_integration_gapfill.py`, `tests/test_gui_workers.py`.
 - Versioning changes: `tests/test_version_manager.py`,

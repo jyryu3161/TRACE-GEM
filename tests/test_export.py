@@ -25,7 +25,9 @@ class TestCSVExport:
                     "Subsystem",
                     "Genes",
                     "GPR",
-                    "Confidence Score",
+                    "Evidence Tier",
+                    "Evidence Rationale",
+                    "Legacy Confidence Score",
                     *score_headers,
                     "Substrate Match",
                     "Product Match",
@@ -47,6 +49,8 @@ class TestCSVExport:
                         rxn.subsystem or "",
                         ";".join(rxn.genes),
                         rxn.gene_reaction_rule,
+                        ev.evidence_tier.label,
+                        ev.evidence_rationale,
                         f"{ev.confidence_score:.4f}",
                         *per_source,
                         f"{ev.substrate_match_ratio:.4f}",
@@ -65,9 +69,10 @@ class TestCSVExport:
             reader = csv.reader(f)
             header = next(reader)
         assert header[0] == "Reaction ID"
-        assert header[5] == "Confidence Score"
-        assert header[6:8] == ["KEGG Score", "BiGG Models Score"]
-        assert len(header) == 13
+        assert header[5] == "Evidence Tier"
+        assert header[7] == "Legacy Confidence Score"
+        assert header[8:10] == ["KEGG Score", "BiGG Models Score"]
+        assert len(header) == 15
 
     def test_csv_data_rows(self, tmp_path, sample_model, sample_evidence_map):
         filepath = tmp_path / "test.csv"
@@ -80,7 +85,8 @@ class TestCSVExport:
         assert len(rows) == 4
         eno_row = rows[1]
         assert eno_row[0] == "ENO"
-        assert float(eno_row[5]) == pytest.approx(1.0, abs=0.01)
+        assert eno_row[5] == "High"
+        assert float(eno_row[7]) == pytest.approx(1.0, abs=0.01)
 
     def test_csv_unevaluated_reaction(self, tmp_path, sample_model):
         filepath = tmp_path / "test.csv"
@@ -91,8 +97,9 @@ class TestCSVExport:
             rows = list(reader)
 
         for row in rows[1:]:
-            assert float(row[5]) == 0.0
-            assert row[12] == "not_evaluated"
+            assert row[5] == "Low"
+            assert float(row[7]) == 0.0
+            assert row[14] == "not_evaluated"
 
     def test_csv_genes_semicolon_separated(self, tmp_path, sample_model, sample_evidence_map):
         filepath = tmp_path / "test.csv"
@@ -133,6 +140,8 @@ class TestJSONExport:
                 "subsystem": rxn.subsystem,
                 "equation": rxn.equation,
                 "genes": rxn.genes,
+                "evidence_tier": ev.evidence_tier.value,
+                "evidence_rationale": ev.evidence_rationale,
                 "confidence_score": ev.confidence_score,
                 "scores": {
                     "kegg": ev.kegg_score,
@@ -181,6 +190,7 @@ class TestJSONExport:
 
         eno = data["reactions"]["ENO"]
         assert eno["name"] == "enolase"
+        assert eno["evidence_tier"] == "high"
         assert eno["confidence_score"] == pytest.approx(1.0, abs=0.01)
         assert eno["scores"]["kegg"] == 1.0
         assert eno["scores"]["bigg"] == 0.0
@@ -196,6 +206,7 @@ class TestJSONExport:
             data = json.load(f)
 
         eno = data["reactions"]["ENO"]
+        assert eno["evidence_tier"] == "low"
         assert eno["confidence_score"] == 0.0
         assert eno["status"] == "not_evaluated"
 

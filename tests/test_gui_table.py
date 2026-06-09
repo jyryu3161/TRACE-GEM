@@ -9,6 +9,7 @@ import pytest
 
 from src.core.models import (
     EvaluationStatus,
+    EvidenceTier,
     ReactionEvidence,
 )
 from tests.conftest import GUI_AVAILABLE
@@ -43,7 +44,7 @@ class TestReactionTableModel:
         from src.gui.reaction_table import ReactionTableModel
 
         model = ReactionTableModel()
-        expected = ["ID", "Name", "Equation", "Subsystem", "Genes", "GPR", "Score", "Status"]
+        expected = ["ID", "Name", "Equation", "Subsystem", "Genes", "GPR", "Evidence", "Status"]
         for i, name in enumerate(expected):
             header = model.headerData(i, Qt.Orientation.Horizontal)
             assert header == name
@@ -87,8 +88,8 @@ class TestReactionTableModel:
         model.update_all_evidence(sample_evidence_map)
 
         idx = model.index(0, ReactionTableModel.COL_SCORE)
-        score_text = model.data(idx)
-        assert score_text == "1.00"
+        tier_text = model.data(idx)
+        assert tier_text == "High"
 
     def test_data_user_role_score(self, sample_model, sample_evidence_map):
         from src.gui.reaction_table import ReactionTableModel
@@ -98,8 +99,8 @@ class TestReactionTableModel:
         model.update_all_evidence(sample_evidence_map)
 
         idx = model.index(0, ReactionTableModel.COL_SCORE)
-        raw_score = model.data(idx, Qt.ItemDataRole.UserRole)
-        assert raw_score == 1.0
+        tier_rank = model.data(idx, Qt.ItemDataRole.UserRole)
+        assert tier_rank == EvidenceTier.HIGH.rank
 
     def test_data_tooltip_role(self, sample_model):
         from src.gui.reaction_table import ReactionTableModel
@@ -137,11 +138,12 @@ class TestReactionTableModel:
 
         ev = ReactionEvidence(reaction_id="ENO")
         ev.confidence_score = 0.75
+        ev.evidence_tier = EvidenceTier.HIGH
         ev.status = EvaluationStatus.EVALUATED
         model.update_evidence("ENO", ev)
 
         idx = model.index(0, ReactionTableModel.COL_SCORE)
-        assert model.data(idx) == "0.75"
+        assert model.data(idx) == "High"
 
     def test_sort_by_id(self, sample_model):
         from src.gui.reaction_table import ReactionTableModel

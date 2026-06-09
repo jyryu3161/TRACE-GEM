@@ -46,9 +46,19 @@ mypy src/ --ignore-missing-imports
 - Evidence sources are KEGG and BiGG only.
 - PubMed, Gemini, Perplexity, UniProt, MetaCyc, and LLM-based evidence paths are
   intentionally not part of the active codebase.
-- KEGG and BiGG confidence scores use their configured fixed weights. Do not
-  redistribute a missing/absent source's weight into the remaining source; a
-  BiGG match with absent KEGG evidence must not become confidence `1.0`.
+- User-facing evidence is categorical: High, Moderate, or Low. Numeric
+  confidence remains as a legacy/export ordering field, not a biological
+  probability.
+- KEGG evidence is the primary signal. Confirmed KEGG reaction evidence maps to
+  High; weak/partial KEGG maps to Moderate; BiGG-only support does not override
+  absent or mismatched KEGG evidence.
+- BiGG evidence is used as biological plausibility, not strain specificity. When
+  `bigg_models_reactions.txt` is absent, `BiGGLookup` falls back to
+  `data/bigg_universal_model_fixed.json` and treats universal-only presence as
+  weak BiGG support.
+- Do not redistribute a missing/absent source's weight into the remaining
+  source; a BiGG match with absent KEGG evidence must not become confidence
+  `1.0`.
 - KEGG IDs whose entries exist but whose substrates/products do not match the
   model reaction should remain explicit absent KEGG evidence with mismatch
   details, not a generic "not found" result.
@@ -79,6 +89,9 @@ mypy src/ --ignore-missing-imports
 - `Config.gapfill_alternatives` controls per-task alternative solution search.
   If an alternative breaks a protected task, the next alternative is tried; if
   no alternative preserves protected tasks, that task's gap-fill attempt fails.
+- Gap-fill penalties are based on evidence tier, then adjusted by KEGG organism
+  presence/absence and missing KEGG reaction IDs. Do not use legacy numeric
+  confidence as the primary biological penalty signal.
 - Large universal models are pruned for MILP solving when above
   `Config.gapfill_universal_prune_threshold`, keeping reactions compatible with
   the draft model metabolite set plus explicit task targets.

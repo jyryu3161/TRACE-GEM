@@ -6,7 +6,7 @@ from PySide6.QtCore import QModelIndex, QRect, Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
-from src.gui.theme import THEME, score_color
+from src.gui.theme import THEME, evidence_tier_color, score_color
 
 
 class ScoreBarDelegate(QStyledItemDelegate):
@@ -26,7 +26,7 @@ class ScoreBarDelegate(QStyledItemDelegate):
         try:
             score = float(value)
         except (ValueError, TypeError):
-            super().paint(painter, option, index)
+            self._paint_tier(painter, option, str(value))
             return
 
         painter.save()
@@ -72,6 +72,34 @@ class ScoreBarDelegate(QStyledItemDelegate):
         painter.setPen(QPen(text_color))
         painter.drawText(bar_rect, Qt.AlignmentFlag.AlignCenter, text)
 
+        painter.restore()
+
+    def _paint_tier(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        value: str,
+    ) -> None:
+        painter.save()
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+        else:
+            painter.fillRect(option.rect, option.palette.base())
+
+        margin = 5
+        badge_rect = QRect(
+            option.rect.left() + margin,
+            option.rect.top() + margin,
+            option.rect.width() - 2 * margin,
+            option.rect.height() - 2 * margin,
+        )
+        color = QColor(evidence_tier_color(value))
+        painter.setPen(QPen(color, 1))
+        painter.setBrush(QBrush(color.lighter(175)))
+        painter.drawRoundedRect(badge_rect, 4, 4)
+
+        painter.setPen(QPen(QColor(THEME.text)))
+        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, value)
         painter.restore()
 
 
