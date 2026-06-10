@@ -11,28 +11,14 @@ from pathlib import Path
 
 import cobra
 
-from src.core.cobra_utils import convert_cobra_reaction
+from src.core.cobra_utils import SOLVER_RESERVED_REACTION_IDS, convert_cobra_reaction
 from src.core.models import CandidateReaction, ModelData
 
 logger = logging.getLogger("metataskgapfill.universal_loader")
 
 # Prefixes for utility reactions to exclude from candidates
 _UTILITY_PREFIXES = ("EX_", "DM_", "SK_", "sink_")
-_SOLVER_RESERVED_REACTION_IDS = {
-    "bounds",
-    "binaries",
-    "binary",
-    "end",
-    "generals",
-    "general",
-    "maximize",
-    "maximise",
-    "minimize",
-    "minimise",
-    "st",
-    "subject",
-    "subjectto",
-}
+_SOLVER_RESERVED_REACTION_IDS = SOLVER_RESERVED_REACTION_IDS
 
 
 class UniversalLoader:

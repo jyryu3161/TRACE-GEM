@@ -46,6 +46,28 @@ class Config:
     gapfill_organism_penalty_multiplier: float = 10.0
     gapfill_no_kegg_penalty_multiplier: float = 2.0
 
+    # Model construction (CarveMe)
+    # CarveMe is invoked as an external subprocess (the `carve` CLI), never
+    # imported, to keep its reframed/python-libsbml deps isolated from cobra.
+    carveme_executable: str = "carve"
+    # Conda env that has `carve` installed. Empty = use carveme_executable on
+    # PATH directly; otherwise the runner invokes `conda run -n <env> carve`.
+    carveme_env: str = ""
+    carveme_diamond_executable: str = "diamond"
+    # MILP solver passed to carve: "gurobi" (default, fastest if licensed),
+    # "cplex", or "scip" (free, slow). Empty uses carve's own default.
+    carveme_solver: str = "gurobi"
+    # CarveMe universe template: "", "gramneg", "grampos", "bacteria", "archaea".
+    carveme_universe: str = ""
+    # CarveMe's own gap-fill media (carve -g), e.g. "M9,LB". Empty = none.
+    carveme_gapfill_media: str = ""
+    # CarveMe init medium (carve -i), e.g. "M9". Empty = none.
+    carveme_init_medium: str = ""
+    carveme_output_dir: str = "built_models"
+    carveme_timeout: int = 1800  # seconds per model
+    carveme_gzip_output: bool = False
+    carveme_max_parallel: int = 1  # batch subprocess parallelism
+
     # Version control settings
     enable_versioning: bool = True
     max_versions: int = 20

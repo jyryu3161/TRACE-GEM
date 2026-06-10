@@ -1,0 +1,23 @@
+# Reproducible environment for MetaTaskGapFill + CarveMe model construction.
+#
+#   conda env create -f environment.yml
+#   conda activate metatask
+#
+# `diamond` is the only piece that is NOT pip-installable (it is a C++ binary
+# distributed via bioconda); everything else — the app, CarveMe, and the MILP
+# solvers — is installed from PyPI in the pip section below so the app and
+# CarveMe share one environment.
+#
+# Gurobi needs a (free academic) license to run; SCIP (pyscipopt) is the free
+# fallback. Carve's own default solver is cplex, so the app always passes
+# --solver explicitly (config default: gurobi).
+name: metatask
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.10
+  - diamond>=2.1          # bioconda binary — the only conda-only dependency
+  - pip
+  - pip:
+      - -e ".[dev,build]"  # app + dev tools + carveme/gurobipy/pyscipopt

@@ -21,6 +21,7 @@ from src.core.models import (
     Reaction,
     ReactionEvidence,
 )
+from src.gapfill.refine import apply_base_medium_to_tasks
 from src.utils.config import Config
 from src.utils.constants import KEGG_CODE_TO_NAME
 
@@ -45,7 +46,12 @@ def _build_parser() -> argparse.ArgumentParser:
             "Evaluate SBML model reactions and run metabolic-task-based gap-filling."
         ),
     )
-    parser.add_argument("model", help="Path to SBML model file (.xml)")
+    parser.add_argument(
+        "model",
+        nargs="?",
+        default=None,
+        help="Path to SBML model file (.xml). Omit when using --build/--batch-build.",
+    )
     parser.add_argument(
         "-o",
         "--output",
@@ -102,9 +108,11 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH_OR_SPEC",
         default=None,
         help=(
-            "Base medium for metabolic tasks. Accepts JSON, CSV, or inline spec "
-            "like 'glc__D_e(-10);o2_e(-1000)'. If omitted, the draft model's "
-            "COBRA medium is used."
+            "Explicit base medium merged into every metabolic task. Accepts JSON, "
+            "CSV, or inline spec like 'glc__D_e(-10);o2_e(-1000)'. If omitted, each "
+            "task uses its own self-contained medium and NO base medium is merged "
+            "(the model's default medium is NOT applied; merging it would break "
+            "negative-constraint tasks)."
         ),
     )
     gf_group.add_argument(
@@ -131,6 +139,115 @@ def _build_parser() -> argparse.ArgumentParser:
             "Allow exchange/demand/sink reactions from the universal model as "
             "gap-fill candidates. Default: excluded."
         ),
+    )
+
+    # Model construction (CarveMe) options
+    build_group = parser.add_argument_group("Model construction (CarveMe)")
+    build_group.add_argument(
+        "--build",
+        metavar="FASTA",
+        default=None,
+        help="Build one model from a protein FASTA using CarveMe",
+    )
+    build_group.add_argument(
+        "--batch-build",
+        metavar="MANIFEST",
+        default=None,
+        help=(
+            "Build multiple models from a manifest CSV/TSV "
+            "(columns: fasta,kegg_code[,universe,gram,medium,label])"
+        ),
+    )
+    build_group.add_argument(
+        "--build-output",
+        metavar="PATH",
+        default=None,
+        help="Output SBML path (single build) or output directory (batch). "
+        "Default: <stem>.xml / built_models/",
+    )
+    build_group.add_argument(
+        "--carveme-solver",
+        choices=("gurobi", "cplex", "scip"),
+        default=None,
+        help="MILP solver for CarveMe (config default: gurobi)",
+    )
+    build_group.add_argument(
+        "--carveme-universe",
+        choices=("bacteria", "grampos", "gramneg", "archaea", "cyanobacteria"),
+        default=None,
+        help="CarveMe universe template (default: carve's own default)",
+    )
+    build_group.add_argument(
+        "--carveme-gapfill-media",
+        metavar="MEDIA",
+        default=None,
+        help="CarveMe's own gap-fill media (carve -g), e.g. 'M9,LB'",
+    )
+    build_group.add_argument(
+        "--carveme-init-medium",
+        metavar="MEDIUM",
+        default=None,
+        help="CarveMe init medium (carve -i), e.g. 'M9'",
+    )
+    build_group.add_argument(
+        "--carveme-env",
+        metavar="NAME",
+        default=None,
+        help="Conda env containing `carve` (invoked via conda run)",
+    )
+    build_group.add_argument(
+        "--carveme-executable",
+        metavar="PATH",
+        default=None,
+        help="Path to the carve executable (default: 'carve' on PATH)",
+    )
+    build_group.add_argument(
+        "--carveme-timeout",
+        type=int,
+        default=None,
+        help="Per-model build timeout in seconds (default: 1800)",
+    )
+    build_group.add_argument(
+        "--carveme-max-parallel",
+        type=int,
+        default=None,
+        help="Batch build subprocess parallelism (default: 1)",
+    )
+    build_group.add_argument(
+        "--gzip-model",
+        action="store_true",
+        help="Write compressed .xml.gz model output",
+    )
+    build_group.add_argument(
+        "--build-dna",
+        action="store_true",
+        help="Treat the build input as a DNA fasta (carve --dna)",
+    )
+    build_group.add_argument(
+        "--refine",
+        action="store_true",
+        help="After building, run task-aware gap-fill on the built model "
+        "(single model at a time)",
+    )
+    build_group.add_argument(
+        "--check-carveme",
+        action="store_true",
+        help="Check the CarveMe toolchain (carve/diamond/solver) and exit",
+    )
+
+    # Pipeline (YAML config) options
+    pipe_group = parser.add_argument_group("Pipeline (YAML config)")
+    pipe_group.add_argument(
+        "--config",
+        metavar="FILE.yaml",
+        default=None,
+        help="Run a full build → refine → evaluate pipeline from a YAML config "
+        "(jobs carry KEGG taxonomy codes). Mutually exclusive with other modes.",
+    )
+    pipe_group.add_argument(
+        "--config-validate",
+        action="store_true",
+        help="Validate the --config YAML and exit without running",
     )
 
     return parser
@@ -228,7 +345,13 @@ def _load_medium_csv(path: Path) -> dict[str, float]:
 
 
 def load_medium_argument(value: str | None, cobra_model: Any | None) -> dict[str, float]:
-    """Load CLI medium input or fall back to the draft model's default medium."""
+    """Parse an explicit medium spec/file into {EX_id: lower_bound}.
+
+    Only called with a truthy ``value`` on the gap-fill path (tasks are otherwise
+    self-contained and no base medium is merged). The ``value is None`` branch
+    that falls back to ``cobra_model.medium`` is retained for callers that
+    explicitly want the model's default medium.
+    """
     if value:
         path = Path(value)
         if path.exists():
@@ -263,34 +386,6 @@ def load_medium_argument(value: str | None, cobra_model: Any | None) -> dict[str
         for rxn in exchanges
         if getattr(rxn, "lower_bound", 0.0) < 0
     }
-
-
-def apply_base_medium_to_tasks(
-    tasks: list[MetabolicTask],
-    base_medium: dict[str, float],
-) -> list[MetabolicTask]:
-    """Merge base medium into tasks, letting task-specific medium override it."""
-    if not base_medium:
-        return tasks
-
-    merged_tasks: list[MetabolicTask] = []
-    for task in tasks:
-        merged_medium = dict(base_medium)
-        merged_medium.update(task.medium)
-        merged_tasks.append(
-            MetabolicTask(
-                task_id=task.task_id,
-                task_type=task.task_type,
-                target_id=task.target_id,
-                medium=merged_medium,
-                constraints=dict(task.constraints),
-                expected_operator=task.expected_operator,
-                expected_value=task.expected_value,
-                description=task.description,
-                category=task.category,
-            )
-        )
-    return merged_tasks
 
 
 def _resolve_format(args: argparse.Namespace) -> str:
@@ -529,11 +624,18 @@ async def async_gapfill_main(
     _eprint(f"Loading metabolic tasks from {Path(tasks_path).name}...")
     task_parser = TaskParser()
     tasks = task_parser.parse(tasks_path)
-    base_medium = load_medium_argument(medium_arg, model_data.cobra_model)
-    tasks = apply_base_medium_to_tasks(tasks, base_medium)
-    medium_source = medium_arg if medium_arg else "draft model default medium"
-    _eprint(f"  {len(tasks)} tasks loaded")
-    _eprint(f"  Base medium: {len(base_medium)} exchanges from {medium_source}")
+    # Tasks are self-contained (each declares its full medium). Only merge an
+    # EXPLICIT --medium; auto-merging the model's default medium would add
+    # nutrients (e.g. glucose) back into negative-constraint tasks that omit them
+    # on purpose ("no X without carbon source"), breaking those tests and making
+    # CLI disagree with the GUI.
+    if medium_arg:
+        base_medium = load_medium_argument(medium_arg, model_data.cobra_model)
+        tasks = apply_base_medium_to_tasks(tasks, base_medium)
+        _eprint(f"  {len(tasks)} tasks loaded")
+        _eprint(f"  Base medium: {len(base_medium)} exchanges from {medium_arg}")
+    else:
+        _eprint(f"  {len(tasks)} tasks loaded (task-specific media; no base medium merged)")
 
     # Step 4: Evidence evaluation (optional)
     evidence_results: dict[str, ReactionEvidence] = {}
@@ -564,26 +666,35 @@ async def async_gapfill_main(
             )
             _eprint(f"\n  Model evaluation complete: {len(evidence_results)} reactions scored")
 
-            # Evaluate candidates
-            _eprint(f"Evaluating {len(candidates)} candidate reactions...")
-            cand_start = time.monotonic()
-
-            def cand_progress(completed: int, total: int, reaction_id: str) -> None:
-                pct = completed / total * 100 if total else 0
-                filled = int(pct / 5)
-                bar = "=" * filled + ">" + " " * (20 - filled - 1)
-                elapsed = time.monotonic() - cand_start
+            # Candidate evidence — honor candidate_evidence_eager_limit so the CLI
+            # matches the GUI: defer (skip) candidate evidence for large universals,
+            # leaving default penalties for those candidates.
+            eager_limit = max(0, config.candidate_evidence_eager_limit)
+            if eager_limit and len(candidates) > eager_limit:
                 _eprint(
-                    f"\r  Candidate eval: [{bar}] {completed}/{total} ({pct:.1f}%) "
-                    f"-- {reaction_id} [{_format_time(elapsed)}]",
-                    end="",
+                    f"Deferring candidate evidence: {len(candidates)} candidates "
+                    f"exceeds eager limit ({eager_limit}); using default penalties"
                 )
+            else:
+                _eprint(f"Evaluating {len(candidates)} candidate reactions...")
+                cand_start = time.monotonic()
 
-            cand_results = await evidence_engine.evaluate_candidates_batch(
-                candidates, progress_callback=cand_progress
-            )
-            evidence_results.update(cand_results)
-            _eprint(f"\n  Candidate evaluation complete: {len(cand_results)} reactions scored")
+                def cand_progress(completed: int, total: int, reaction_id: str) -> None:
+                    pct = completed / total * 100 if total else 0
+                    filled = int(pct / 5)
+                    bar = "=" * filled + ">" + " " * (20 - filled - 1)
+                    elapsed = time.monotonic() - cand_start
+                    _eprint(
+                        f"\r  Candidate eval: [{bar}] {completed}/{total} ({pct:.1f}%) "
+                        f"-- {reaction_id} [{_format_time(elapsed)}]",
+                        end="",
+                    )
+
+                cand_results = await evidence_engine.evaluate_candidates_batch(
+                    candidates, progress_callback=cand_progress
+                )
+                evidence_results.update(cand_results)
+                _eprint(f"\n  Candidate evaluation complete: {len(cand_results)} reactions scored")
         else:
             _eprint("Skipping evidence evaluation (--skip-evaluation)")
 
@@ -750,22 +861,233 @@ def _save_gapfill_report(
             ])
 
 
+def _apply_carveme_overrides(config: Config, args: argparse.Namespace) -> None:
+    """Apply CarveMe CLI flag overrides onto the config (per-invocation)."""
+    if getattr(args, "carveme_solver", None):
+        config.carveme_solver = args.carveme_solver
+    if getattr(args, "carveme_universe", None):
+        config.carveme_universe = args.carveme_universe
+    if getattr(args, "carveme_env", None) is not None:
+        config.carveme_env = args.carveme_env
+    if getattr(args, "carveme_executable", None):
+        config.carveme_executable = args.carveme_executable
+    if getattr(args, "carveme_timeout", None) is not None:
+        config.carveme_timeout = args.carveme_timeout
+    if getattr(args, "carveme_max_parallel", None) is not None:
+        config.carveme_max_parallel = args.carveme_max_parallel
+    if getattr(args, "gzip_model", False):
+        config.carveme_gzip_output = True
+    if getattr(args, "carveme_gapfill_media", None) is not None:
+        config.carveme_gapfill_media = args.carveme_gapfill_media
+    if getattr(args, "carveme_init_medium", None) is not None:
+        config.carveme_init_medium = args.carveme_init_medium
+
+
+def _run_check_carveme(config: Config) -> None:
+    """Print CarveMe toolchain availability and exit non-zero if unusable."""
+    from src.build.carveme_runner import CarveMeRunner
+
+    runner = CarveMeRunner(
+        executable=config.carveme_executable,
+        conda_env=config.carveme_env,
+        diamond_executable=config.carveme_diamond_executable,
+    )
+    avail = runner.check_available(solver=config.carveme_solver)
+    _eprint(avail.message)
+    if not avail.ok:
+        sys.exit(1)
+
+
+def _run_build(args: argparse.Namespace, config: Config) -> None:
+    """Dispatch a single or batch CarveMe build (with optional refinement)."""
+    from src.build.build_engine import BuildEngine
+    from src.build.build_manifest import parse_manifest, validate_kegg_code
+    from src.build.carveme_runner import CarveMeRunError
+
+    engine = BuildEngine(config)
+    avail = engine.runner.check_available(solver=config.carveme_solver)
+    if not avail.ok:
+        _eprint("CarveMe toolchain not ready:\n" + avail.message)
+        sys.exit(1)
+    _eprint(avail.message)
+
+    options = engine.options_from_config(dna=getattr(args, "build_dna", False))
+
+    def on_line(line: str) -> None:
+        _eprint("  " + line)
+
+    # --- Batch build ---
+    if args.batch_build:
+        try:
+            jobs = parse_manifest(args.batch_build)
+        except Exception as exc:  # noqa: BLE001 - surface manifest errors cleanly
+            _eprint(f"Error: {exc}")
+            sys.exit(1)
+
+        out_dir = args.build_output or config.carveme_output_dir
+        _eprint(f"Batch build: {len(jobs)} model(s) -> {out_dir}")
+
+        def on_model_built(index: int, item: object) -> None:
+            if item.ok:  # type: ignore[attr-defined]
+                md = item.built.model_data  # type: ignore[attr-defined]
+                _eprint(
+                    f"[OK] {item.job.label}: {md.id} "  # type: ignore[attr-defined]
+                    f"({md.reaction_count} rxn, {md.metabolite_count} met, "
+                    f"{md.gene_count} gene) -> {item.built.sbml_path}"  # type: ignore[attr-defined]
+                )
+            else:
+                _eprint(f"[FAIL] {item.job.label}: {item.error}")  # type: ignore[attr-defined]
+
+        results = engine.build_batch(
+            jobs,
+            options=options,
+            output_dir=out_dir,
+            on_line=on_line,
+            on_model_built=on_model_built,
+        )
+        ok = sum(1 for r in results if r.ok)
+        _eprint(f"\nBatch complete: {ok}/{len(results)} model(s) built")
+        if args.refine:
+            _eprint(
+                "Note: --refine is single-model only. Refine each built model "
+                "separately (--build <model.xml is not it>; use --build <fasta> "
+                "--refine per genome) or in the GUI."
+            )
+        if ok == 0:
+            sys.exit(1)
+        return
+
+    # --- Single build ---
+    fasta = args.build
+    kegg = args.organism
+    if kegg:
+        _ok, name = validate_kegg_code(kegg)
+        _eprint(f"Organism: {name or kegg} ({kegg})")
+    else:
+        _eprint(
+            "Warning: no --organism (KEGG code) given; organism-based filtering "
+            "and evidence will be generic."
+        )
+
+    _eprint(
+        f"Building model from {fasta} "
+        f"(solver={config.carveme_solver}, "
+        f"universe={config.carveme_universe or 'default'})..."
+    )
+    try:
+        built = engine.build_one(
+            fasta, kegg, options=options, output_path=args.build_output, on_line=on_line
+        )
+    except CarveMeRunError as exc:
+        _eprint(f"Build failed: {exc}")
+        sys.exit(1)
+
+    md = built.model_data
+    _eprint(
+        f"Built model: {md.id} ({md.reaction_count} reactions, "
+        f"{md.metabolite_count} metabolites, {md.gene_count} genes)"
+    )
+    _eprint(f"Saved to {built.sbml_path}")
+
+    # --- Optional refinement (reuses the full gap-fill CLI path) ---
+    if args.refine:
+        from src.utils.constants import DEFAULT_TASK_FILE, DEFAULT_UNIVERSAL_MODEL
+
+        universal_path = (
+            args.universal or config.default_universal_model or DEFAULT_UNIVERSAL_MODEL
+        )
+        tasks_path = args.tasks or config.default_task_file or DEFAULT_TASK_FILE
+        if not Path(universal_path).exists():
+            _eprint(f"Error: Universal model not found: {universal_path}")
+            sys.exit(1)
+        if not Path(tasks_path).exists():
+            _eprint(f"Error: Task file not found: {tasks_path}")
+            sys.exit(1)
+
+        if kegg:
+            config.kegg_organism_code = kegg
+            config.organism_name = KEGG_CODE_TO_NAME.get(kegg, kegg)
+
+        _eprint(f"\nRefining built model with tasks ({Path(tasks_path).name})...")
+        asyncio.run(
+            async_gapfill_main(
+                config=config,
+                model_data=built.model_data,
+                universal_path=universal_path,
+                tasks_path=tasks_path,
+                medium_arg=args.medium,
+                output_model=args.output_model,
+                output_report=args.output_report,
+                skip_evaluation=args.skip_evaluation,
+                include_exchange_gapfill=args.include_exchange_gapfill,
+            )
+        )
+
+
+def _run_pipeline_config(args: argparse.Namespace, config: Config) -> None:
+    """Load and run (or validate) a YAML pipeline config."""
+    from src.pipeline import PipelineError, load_pipeline, run_pipeline
+
+    try:
+        spec = load_pipeline(args.config)
+        if args.config_validate:
+            _eprint(f"Config OK: {args.config}")
+            return
+        result = asyncio.run(run_pipeline(spec, config, log=_eprint))
+    except PipelineError as exc:
+        _eprint(f"Error: {exc}")
+        sys.exit(1)
+
+    if result.models_failed > 0 or result.models_built == 0:
+        _eprint(
+            f"Pipeline finished with failures: {result.models_built} built, "
+            f"{result.models_failed} failed"
+        )
+        sys.exit(1)
+
+
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point."""
     parser = _build_parser()
     args = parser.parse_args(argv)
-
-    # Validate model file
-    model_path = Path(args.model)
-    if not model_path.exists():
-        _eprint(f"Error: SBML file not found: {model_path}")
-        sys.exit(1)
 
     # Load config and apply overrides
     from src.utils.logging_config import setup_logging
 
     setup_logging()
     config = Config.load()
+    _apply_carveme_overrides(config, args)
+
+    # YAML pipeline mode takes a config file instead of a model / FASTA.
+    if args.config_validate and not args.config:
+        parser.error("--config-validate requires --config")
+    if args.config:
+        if args.model is not None or args.build or args.batch_build:
+            parser.error("--config cannot be combined with a model / --build / --batch-build")
+        _run_pipeline_config(args, config)
+        return
+
+    # Model construction (CarveMe) modes are dispatched first: they take a
+    # FASTA/manifest rather than an SBML model, so the positional 'model' is
+    # optional and must not be combined with them.
+    if args.check_carveme:
+        _run_check_carveme(config)
+        return
+    if args.build or args.batch_build:
+        if args.model is not None:
+            parser.error("positional 'model' cannot be combined with --build/--batch-build")
+        if args.build and args.batch_build:
+            parser.error("--build and --batch-build are mutually exclusive")
+        _run_build(args, config)
+        return
+
+    # Evidence-evaluation and gap-fill modes require an SBML model file.
+    if args.model is None:
+        parser.error("a model file is required (or use --build / --batch-build)")
+    model_path = Path(args.model)
+    if not model_path.exists():
+        _eprint(f"Error: SBML file not found: {model_path}")
+        sys.exit(1)
 
     if args.organism:
         config.kegg_organism_code = args.organism

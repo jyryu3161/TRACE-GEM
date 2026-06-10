@@ -1,0 +1,42 @@
+# MetaTaskGapFill pipeline config — build → refine → evaluate in one run.
+#   metatask-gapfill-cli --config examples/pipeline.yaml
+#   metatask-gapfill-cli --config examples/pipeline.yaml --config-validate   # dry run
+#
+# Each build job carries its KEGG taxonomy code (e.g. eco, cgb), which drives
+# organism filtering and evidence in the refine/evaluate steps.
+
+# CarveMe defaults for this run (override the persistent config).
+carveme:
+  solver: gurobi          # gurobi | cplex | scip (free)
+  universe: bacteria      # bacteria | grampos | gramneg | archaea | cyanobacteria
+
+# INPUT — build new models from protein FASTA (mode: single | batch).
+# (Alternatively, replace this whole `build:` block with a `models:` list of
+#  existing SBML files, e.g.  models: [{path: data/iML1515.xml, kegg_code: eco}])
+build:
+  mode: batch
+  output_dir: built_models/
+  jobs:
+    - fasta: data/eco_protein.faa
+      kegg_code: eco        # KEGG taxonomy: Escherichia coli
+      universe: gramneg
+    - fasta: data/cgb_protein.faa
+      kegg_code: cgb        # KEGG taxonomy: Corynebacterium glutamicum
+      universe: grampos
+
+# REFINE — task-aware gap-fill, applied to each built model one at a time.
+refine:
+  enabled: true
+  universal: data/bigg_universal_model_fixed.json
+  tasks: data/universal_essential_tasks.csv
+  # medium: "glc__D_e(-10);o2_e(-1000)"   # optional; else draft model's medium
+  skip_evaluation: true                   # skip KEGG/BiGG evidence during gap-fill
+  include_exchange_gapfill: false
+  output_model: out/{label}_refined.xml
+  output_report: out/{label}_report.csv
+
+# EVALUATE — KEGG/BiGG reaction evidence per model (optional; needs network).
+evaluate:
+  enabled: false
+  skip_exchange: true
+  output: out/{label}_evidence.csv        # .csv or .json

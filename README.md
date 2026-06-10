@@ -1,515 +1,413 @@
 # MetaTaskGapFill
 
-Metabolic-task-aware gap-filling tool — draft SBML 모델, universal 모델, medium, metabolic task를 입력받아 KEGG/BiGG evidence 기반으로 누락 반응을 탐색하고 모델을 복구하는 도구.
+**A task-aware platform for building, evaluating, and gap-filling genome-scale
+metabolic models.**
 
-## 주요 기능
+MetaTaskGapFill turns a protein FASTA into a draft genome-scale metabolic model
+(via [CarveMe](https://carveme.readthedocs.io)), validates and repairs it against
+a curated set of metabolic tasks using COBRApy MILP gap-filling, and scores
+reaction evidence against KEGG and BiGG. Every operation is available through a
+desktop GUI (PySide6/Qt6) and a feature-equivalent command-line interface, and
+can be orchestrated end-to-end from a single YAML configuration file.
 
-- **SBML 모델 로딩**: COBRApy 기반 SBML 파싱 (반응, 유전자, 대사물질 추출)
-- **Evidence 검증**: KEGG/BiGG 기반 반응 검증
-  - **KEGG**: BiGG ID → KEGG 매핑을 통한 반응 존재 여부 및 기질/산물 일치도 확인
-  - **BiGG Models**: 범용 반응 데이터베이스 검증
-- **Confidence Scoring**: KEGG/BiGG 가중 점수 산출
-- **Gap-Filling**: metabolic task 기반 자동 gap-filling (MILP 최적화)
-  - Metabolic task 기반 모델 검증 (before/after 비교)
-  - Organism-specific 유전자 필터링 (KEGG API)
-  - GPR 규칙 자동 할당
-- **반응 관리**: 반응 편집, 제거 (task impact preview 포함)
-- **버전 관리**: 모델 변경 이력 추적 및 복원
-- **GUI**: PySide6(Qt6) 기반 데스크톱 UI (반응 테이블, evidence 패널, 점수 시각화)
-- **CLI 모드**: 서버/자동화 환경에서 evidence 평가와 task-aware gap-filling 실행
-- **Export**: CSV / JSON 형식으로 평가 결과 내보내기
-- **캐싱**: SQLite 기반 API 응답 캐시 (TTL 설정 가능)
+---
 
-## 환경 요구사항
+## Table of contents
 
-| 항목 | 요구사항 |
-|------|----------|
-| Python | 3.10 이상 |
-| OS | macOS, Linux |
-| GUI | 디스플레이 환경 필요 (headless 시 `QT_QPA_PLATFORM=offscreen`) |
+1. [Overview](#overview)
+2. [Requirements](#requirements)
+3. [Installation](#installation)
+4. [Quick start](#quick-start)
+5. [Tutorials](#tutorials)
+6. [Input data](#input-data)
+7. [Metabolic tasks and media](#metabolic-tasks-and-media)
+8. [Configuration](#configuration)
+9. [Important notes and caveats](#important-notes-and-caveats)
+10. [Testing](#testing)
+11. [Project structure](#project-structure)
+12. [Citing](#citing-and-acknowledgements)
 
-### 시스템 의존성
+---
 
-#### macOS
+## Overview
 
-```bash
-# Xcode Command Line Tools (libxml2 등 C 라이브러리 필요)
-xcode-select --install
+The platform implements a reproducible **build → refine → evaluate** workflow:
 
-# Git LFS (데이터 파일 관리)
-brew install git-lfs
-```
+| Stage | What it does | Engine |
+|-------|--------------|--------|
+| **Build** | Reconstruct a draft model from a protein FASTA (single or batch) | CarveMe (`carve`) |
+| **Refine** | Task-aware gap-filling: add the minimal reaction set that lets failing metabolic tasks pass, without breaking passing ones | COBRApy MILP |
+| **Evaluate** | Score each reaction's evidence (High / Moderate / Low) against KEGG and BiGG | Async KEGG/BiGG clients |
 
-#### Ubuntu / Debian
+Key properties:
 
-```bash
-# 빌드 도구 및 Qt 의존성
-sudo apt update
-sudo apt install -y \
-    python3.10-venv \
-    build-essential \
-    libgl1-mesa-glx \
-    libegl1 \
-    libxcb-xinerama0 \
-    libxcb-cursor0 \
-    libxkbcommon0 \
-    libdbus-1-3 \
-    git-lfs
+- **GUI/CLI parity.** Everything available in the desktop app is available on the
+  command line and vice-versa; both share the same engines and produce identical
+  results.
+- **Organism-aware.** A KEGG taxonomy code (e.g. `eco`, `cgb`) drives
+  organism-specific gap-fill penalties and evidence.
+- **Task-protected gap-filling.** Previously passing tasks are protected; candidate
+  reaction sets that would regress them are rejected.
+- **Reproducible environments.** A single `environment.yml` (or `uv`) installs the
+  app together with the CarveMe toolchain.
 
-# Wayland 환경의 경우 추가
-sudo apt install -y libwayland-client0
-```
+---
 
-#### Fedora / RHEL
+## Requirements
 
-```bash
-sudo dnf install -y \
-    python3-devel \
-    gcc gcc-c++ \
-    mesa-libGL \
-    mesa-libEGL \
-    libxcb \
-    libxkbcommon \
-    dbus-libs \
-    git-lfs
-```
+| Component | Requirement |
+|-----------|-------------|
+| Python | 3.10+ |
+| OS | macOS, Linux (Windows untested) |
+| Model construction | `carve` (CarveMe) + `diamond` aligner + an MILP solver |
+| MILP solver | **Gurobi** (academic license, recommended) or **CPLEX**, or the free **SCIP** (slower) |
+| GUI | A display, or `QT_QPA_PLATFORM=offscreen` for headless use |
 
-## 설치
+> **DIAMOND is not pip-installable** (it is a compiled aligner). Install it from
+> bioconda or Homebrew. CarveMe's own default solver is CPLEX, so MetaTaskGapFill
+> always passes `--solver` explicitly (default: `gurobi`).
 
-### 1. Git LFS 설치
+---
 
-`data/` 폴더의 매핑 데이터 파일(최대 77MB)은 Git LFS로 관리됩니다. 클론 전에 Git LFS가 설치되어 있어야 합니다.
+## Installation
 
-```bash
-git lfs install
-```
+The model-construction feature needs `carve`, `diamond`, and a solver in the same
+environment as the app. The recommended path uses conda because it can install the
+`diamond` binary in one step.
 
-### 2. 저장소 클론
+### Option A — conda (recommended, fully reproducible)
 
 ```bash
 git clone https://github.com/jyryu3161/model_evaluator.git MetaTaskGapFill
 cd MetaTaskGapFill
+
+conda env create -f environment.yml     # app + CarveMe + solvers + diamond
+conda activate metatask
 ```
 
-> Git LFS가 설치된 상태에서 클론하면 `data/` 파일이 자동으로 다운로드됩니다.
-> 이미 클론한 경우 `git lfs pull`로 데이터 파일을 받을 수 있습니다.
-
-### 3. 가상환경 생성 및 활성화
+`environment.yml` installs `python=3.10`, `diamond` (bioconda), and—via pip—the
+package itself with the `[dev,build]` extras (CarveMe, gurobipy, pyscipopt). A
+helper script wraps this and runs smoke checks:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+bash scripts/setup_env.sh         # conda path
 ```
 
-### 4. 의존성 설치
+### Option B — uv (fast Python install; install DIAMOND separately)
 
 ```bash
-# 실행만 하는 경우
-pip install -r requirements.txt
-
-# 개발 (테스트, 린트, 타입체크 포함)
-pip install -r requirements-dev.txt
+uv venv && source .venv/bin/activate
+uv pip install -e ".[dev,build]"          # app + CarveMe + gurobipy + pyscipopt
+conda install -c bioconda diamond         # or:  brew install diamond
+# helper:  bash scripts/setup_env.sh uv
 ```
 
-또는 editable 모드로 설치:
+### Option C — evaluation only (no model construction)
+
+If you only need evidence evaluation / gap-filling of existing SBML models:
 
 ```bash
-pip install -e ".[dev]"
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"                   # no CarveMe/diamond/solver needed
 ```
 
-### 5. 설치 확인
+### Solver licenses
+
+- **Gurobi** — free for academics; after installing `gurobipy`, activate a license
+  (`grbgetkey ...`). Verify: `python -c "import gurobipy; gurobipy.Model().optimize()"`.
+- **SCIP** — free, no license (`conda install -c conda-forge pyscipopt`); select with
+  `--carveme-solver scip`. Expect substantially longer build times.
+
+### Verify the installation
 
 ```bash
-# Python 버전 확인
-python --version  # 3.10 이상
-
-# Qt 플러그인 정상 여부 확인
-python -c "from PySide6.QtWidgets import QApplication; print('PySide6 OK')"
-
-# COBRApy 확인
-python -c "import cobra; print(f'COBRApy {cobra.__version__}')"
+metatask-gapfill-cli --check-carveme      # carve / diamond / solver availability
+python -c "import cobra, PySide6; print('OK', cobra.__version__)"
 ```
 
-### 6. Pre-commit 훅 설치 (개발 시)
+> **Large data files** (universal model, mapping tables) are tracked with Git LFS.
+> Run `git lfs install && git lfs pull` if `data/` files appear as text pointers.
+
+---
+
+## Quick start
 
 ```bash
-pre-commit install
-```
+conda activate metatask
 
-## 환경 설정
+# 1. Build a draft E. coli model from its proteome
+metatask-gapfill-cli --build data/eco_protein.faa --organism eco --build-output eco.xml
 
-### 평가 설정
+# 2. Run the full build → refine pipeline for two organisms from one YAML
+metatask-gapfill-cli --config examples/pipeline.yaml
 
-앱 실행 후 **Settings** 대화상자에서 organism/evidence 설정을 조정하거나, 설정 파일을 직접 편집할 수 있습니다.
-
-설정 파일 경로: `~/.metataskgapfill/config.json`
-
-```json
-{
-  "kegg_organism_code": "eco",
-  "organism_name": "Escherichia coli",
-  "enable_bigg": true,
-  "weight_kegg": 0.70,
-  "weight_bigg": 0.30,
-  "batch_size": 10,
-  "max_concurrent": 5
-}
-```
-
-### 주요 설정 항목
-
-| 항목 | 기본값 | 설명 |
-|------|--------|------|
-| `kegg_organism_code` | `eco` | KEGG organism 코드 (예: `eco`, `sce`, `hsa`) |
-| `organism_name` | `Escherichia coli` | organism 표시 이름 |
-| `enable_bigg` | `true` | BiGG local lookup 사용 여부 |
-| `weight_kegg` | `0.70` | KEGG 검증 가중치 |
-| `weight_bigg` | `0.30` | BiGG 검증 가중치 |
-| `batch_size` | `10` | 배치 평가 크기 |
-| `max_concurrent` | `5` | 최대 동시 평가 수 |
-| `default_universal_model` | `data/bigg_universal_model_fixed.json` | CLI/GUI gap-fill 기본 universal 모델 |
-| `default_task_file` | `data/universal_essential_tasks.csv` | CLI/GUI gap-fill 기본 metabolic task CSV |
-| `candidate_evidence_eager_limit` | `0` | `0`이면 모든 후보 반응 evidence를 gap-fill 전에 계산 |
-
-### Headless 환경 (서버)
-
-디스플레이가 없는 환경에서는:
-
-```bash
-export QT_QPA_PLATFORM=offscreen
-```
-
-## 실행
-
-### GUI 애플리케이션
-
-```bash
-source .venv/bin/activate
-python -m src.app
-```
-
-또는 (editable 설치 시):
-
-```bash
+# 3. Launch the desktop GUI
 metatask-gapfill
 ```
 
-### CLI 모드
+---
 
-CLI는 두 가지 방식으로 사용할 수 있습니다.
+## Tutorials
 
-1. **Evidence 평가 모드**: draft 모델의 기존 반응을 KEGG/BiGG로 평가하고 CSV/JSON으로 저장
-2. **Gap-fill 모드**: draft 모델, universal 모델, medium, metabolic task를 입력받아 task-aware gap-filling 수행
+The repository ships two example proteomes — `data/eco_protein.faa`
+(*Escherichia coli*, KEGG `eco`) and `data/cgb_protein.faa`
+(*Corynebacterium glutamicum*, KEGG `cgb`) — plus the BiGG universal model
+(`data/bigg_universal_model_fixed.json`) and a 52-task essential-task set
+(`data/universal_essential_tasks.csv`).
 
-#### Evidence 평가 모드
-
-서버/자동화 환경에서 전체 반응을 평가하고 결과를 파일로 내보냅니다.
-
-```bash
-# 기본 CSV 출력
-python -m src.cli input/iJO1366.xml
-
-# 출력 파일 지정 (확장자로 형식 자동 판별)
-python -m src.cli input/iJO1366.xml -o output.csv
-python -m src.cli input/iJO1366.xml -o output.json
-
-# 형식 강제 지정
-python -m src.cli input/iJO1366.xml -o results.txt -f json
-
-# 옵션
-python -m src.cli input/iJO1366.xml --organism eco --skip-exchange --batch-size 20 --max-concurrent 10
-
-# 도움말
-python -m src.cli --help
-```
-
-또는 (editable 설치 시):
+### Tutorial 1 — Build a single model (CLI)
 
 ```bash
-metatask-gapfill-cli input/iJO1366.xml -o output.csv
+metatask-gapfill-cli --build data/eco_protein.faa \
+    --organism eco \
+    --carveme-solver gurobi \
+    --build-output eco_model.xml
 ```
 
-#### Gap-fill 모드
+This runs `carve` as a subprocess, then loads the resulting SBML and reports the
+reaction/metabolite/gene counts (≈2,600 reactions for *E. coli*). Useful flags:
+`--carveme-universe {bacteria,grampos,gramneg,archaea,cyanobacteria}`,
+`--carveme-gapfill-media M9,LB`, `--gzip-model`, `--build-dna`.
 
-기본 입력은 다음 네 가지입니다.
+### Tutorial 2 — Batch build from a manifest (CLI)
 
-| 입력 | CLI 옵션 | 필수 여부 | 설명 |
-|------|----------|-----------|------|
-| Draft 모델 | positional `MODEL.xml` | 필수 | 복구할 SBML/COBRA draft 모델 |
-| Universal 모델 | `--universal PATH` | 선택 | JSON 또는 SBML universal 모델. 생략 시 설정값 또는 `data/bigg_universal_model_fixed.json` 사용 |
-| Medium | `--medium PATH_OR_SPEC` | 선택 | 기본 배지. 생략 시 draft 모델의 COBRA `model.medium` 사용 |
-| Metabolic task | `--tasks PATH` | 선택 | task CSV. 생략 시 설정값 또는 `data/universal_essential_tasks.csv` 사용 |
-
-가장 일반적인 실행:
-
-```bash
-python -m src.cli data/iML1515.xml \
-  --gap-fill \
-  --universal data/bigg_universal_model_fixed.json \
-  --tasks data/universal_essential_tasks.csv \
-  --output-model output/iML1515_gapfilled.xml \
-  --output-report output/iML1515_gapfill_report.csv
-```
-
-editable 설치 후:
-
-```bash
-metatask-gapfill-cli data/iML1515.xml \
-  --gap-fill \
-  --universal data/bigg_universal_model_fixed.json \
-  --tasks data/universal_essential_tasks.csv \
-  --output-model output/iML1515_gapfilled.xml \
-  --output-report output/iML1515_gapfill_report.csv
-```
-
-medium을 생략하면 draft 모델의 default medium을 사용합니다.
-
-```bash
-python -m src.cli draft.xml \
-  --gap-fill \
-  --universal universal.json \
-  --tasks tasks.csv \
-  --output-model repaired.xml
-```
-
-medium을 inline spec으로 지정할 수 있습니다. 값은 exchange lower bound입니다.
-
-```bash
-python -m src.cli draft.xml \
-  --gap-fill \
-  --medium "glc__D_e(-10);o2_e(-1000);nh4_e(-1000)" \
-  --tasks tasks.csv \
-  --output-model repaired.xml
-```
-
-medium JSON 파일도 사용할 수 있습니다. 양수 값은 COBRA `model.medium` 스타일의 uptake capacity로 보고 음수 lower bound로 변환합니다.
-
-```json
-{
-  "EX_glc__D_e": 10,
-  "EX_o2_e": 1000,
-  "EX_nh4_e": 1000
-}
-```
-
-```bash
-python -m src.cli draft.xml \
-  --gap-fill \
-  --medium medium.json \
-  --tasks tasks.csv \
-  --output-model repaired.xml
-```
-
-medium CSV 파일도 사용할 수 있습니다.
+Create a manifest (`manifest.csv`); each row carries its KEGG taxonomy code:
 
 ```csv
-reaction_id,lower_bound
-EX_glc__D_e,-10
-EX_o2_e,-1000
-EX_nh4_e,-1000
+fasta,kegg_code,universe,medium,label
+data/eco_protein.faa,eco,gramneg,,E. coli
+data/cgb_protein.faa,cgb,grampos,,C. glutamicum
 ```
-
-또는 uptake column을 양수로 줄 수 있습니다.
-
-```csv
-reaction_id,uptake
-EX_glc__D_e,10
-EX_o2_e,1000
-EX_nh4_e,1000
-```
-
-task CSV의 `Medium` 컬럼은 CLI/model base medium 위에 적용되는 task-specific override입니다. 예를 들어 base medium에서 `EX_o2_e=-1000`이어도 특정 task가 `o2_e(0.0)`을 지정하면 해당 task에서는 산소 uptake가 닫힙니다.
-
-evidence 계산을 건너뛰고 순수 task gap-fill만 실행하려면:
 
 ```bash
-python -m src.cli draft.xml \
-  --gap-fill \
-  --universal universal.json \
-  --tasks tasks.csv \
-  --skip-evaluation \
-  --output-model repaired.xml
+metatask-gapfill-cli --batch-build manifest.csv --build-output built_models/
 ```
 
-gap-fill report CSV에는 요약, 추가된 반응, before/after task 결과가 포함됩니다.
+Each model is built independently; a failure in one does not abort the batch.
+Refinement is **single-model only** — build the batch first, then refine models
+individually.
+
+### Tutorial 3 — Build and refine (task-aware gap-filling)
 
 ```bash
-python -m src.cli --help
-metatask-gapfill-cli --help
+metatask-gapfill-cli --build data/eco_protein.faa --organism eco \
+    --build-output eco_model.xml \
+    --refine --skip-evaluation \
+    --output-model eco_refined.xml \
+    --output-report eco_report.csv
 ```
 
-### GUI 사용 순서
+The report CSV contains a summary, the added reactions (with penalties and assigned
+GPRs), and the per-task before/after pass table.
 
-1. **모델 로드**: File > Open 에서 SBML 파일(`.xml`) 선택
-2. **Settings 확인**: Settings에서 organism, API 키, 가중치 설정
-3. **평가 실행**:
-   - 개별 반응: 반응 선택 후 "Evaluate" 버튼
-   - 전체 평가: "Evaluate All" 버튼
-4. **결과 확인**: 반응 테이블에서 confidence score 확인, 반응 클릭 시 evidence 패널에서 상세 내용 확인
-5. **Gap-Filling**: Gap-Fill 탭에서 universal model 로드 → 워크플로우 실행
-6. **반응 제거**: 반응 우클릭 > "Remove Reaction..." 또는 상세 패널의 Remove 버튼
-7. **버전 관리**: Version History 패널에서 변경 이력 확인 및 복원
-8. **내보내기**: File > Export에서 CSV 또는 JSON으로 결과 저장
+### Tutorial 4 — One-shot pipeline (YAML)
 
-## 트러블슈팅
-
-### Qt platform plugin 오류
-
-```
-qt.qpa.plugin: Could not find the Qt platform plugin "cocoa" in ""
-```
-
-PySide6 설치가 손상된 경우 발생합니다. 재설치로 해결:
+Run build → refine (→ optional evaluate) for several organisms from one file:
 
 ```bash
-source .venv/bin/activate
-pip install --force-reinstall PySide6
+metatask-gapfill-cli --config examples/pipeline.yaml                # run
+metatask-gapfill-cli --config examples/pipeline.yaml --config-validate   # dry-run
 ```
 
-위 명령이 `Cannot uninstall` 오류를 내면:
+`examples/pipeline.yaml`:
+
+```yaml
+carveme:
+  solver: gurobi
+  universe: bacteria
+build:                 # or:  models: [{path: data/iML1515.xml, kegg_code: eco}]
+  mode: batch          # single | batch
+  output_dir: built_models/
+  jobs:
+    - { fasta: data/eco_protein.faa, kegg_code: eco, universe: gramneg }
+    - { fasta: data/cgb_protein.faa, kegg_code: cgb, universe: grampos }
+refine:                # applied to each model, one at a time
+  enabled: true
+  universal: data/bigg_universal_model_fixed.json
+  tasks: data/universal_essential_tasks.csv
+  skip_evaluation: true
+  output_model: out/{label}_refined.xml
+  output_report: out/{label}_report.csv
+evaluate:              # KEGG/BiGG evidence per model (optional; needs network)
+  enabled: false
+  output: out/{label}_evidence.csv
+```
+
+`{label}` / `{model}` in output paths are substituted per model; specify exactly
+one of `build` or `models`.
+
+### Tutorial 5 — Work with an existing model
 
 ```bash
-SITE_PKGS="$(python -c 'import site; print(site.getsitepackages()[0])')"
-rm -rf "$SITE_PKGS/PySide6" "$SITE_PKGS/shiboken6" "$SITE_PKGS"/PySide6*.dist-info "$SITE_PKGS"/shiboken6*.dist-info
-pip install PySide6
+# Evidence evaluation -> CSV/JSON
+metatask-gapfill-cli data/iML1515.xml --organism eco -o iML1515_evidence.csv
+
+# Task-aware gap-filling of an existing draft
+metatask-gapfill-cli data/iML1515.xml --gap-fill --organism eco \
+    --universal data/bigg_universal_model_fixed.json \
+    --tasks data/universal_essential_tasks.csv \
+    --output-model iML1515_gapfilled.xml --output-report report.csv
 ```
 
-### Linux에서 `libGL.so.1` 오류
+### GUI walkthrough
 
 ```bash
-# Ubuntu/Debian
-sudo apt install libgl1-mesa-glx libegl1
-
-# Fedora/RHEL
-sudo dnf install mesa-libGL mesa-libEGL
+metatask-gapfill        # or:  python -m src.app
 ```
 
-### Linux에서 `xcb` 관련 오류
+1. **Build** — *Analysis ▸ Build Model (CarveMe)…* (`Ctrl+B`) opens the **Construct**
+   tab. Choose single or batch mode, set the FASTA and KEGG code, then **Build** or
+   **Build & Refine**. Configure the toolchain under *Settings ▸ Construction*.
+2. **Send to Evaluator** loads a built model into the evaluator (reaction table,
+   overview, version history).
+3. **Evaluate** — score reactions (*Evaluation ▸ Evaluate All*).
+4. **Gap-fill** — *Analysis ▸ Task-Based Gap-Filling…* (`Ctrl+W`); inspect added
+   reactions and before/after task results in the **Gap-Fill** and **Tasks** tabs.
+5. **Export** — *Export* menu (CSV / JSON / improved SBML).
+
+The GUI runs headless for automated rendering with `QT_QPA_PLATFORM=offscreen`.
+
+---
+
+## Input data
+
+| File | Description |
+|------|-------------|
+| `data/eco_protein.faa`, `data/cgb_protein.faa` | Example proteomes (E. coli, C. glutamicum) |
+| `data/iML1515.xml`, `data/e_coli_core.xml` | Reference E. coli models |
+| `data/bigg_universal_model_fixed.json` | BiGG universal reaction database (gap-fill source) |
+| `data/universal_essential_tasks.csv` | 52 metabolic tasks (production, constraints, negatives) |
+
+Optional local mapping files (`reac_xref.tsv`, `bigg_models_reactions.txt`, …),
+when present, improve evidence resolution and organism filtering.
+
+---
+
+## Metabolic tasks and media
+
+Each metabolic task in the task CSV is **self-contained**: its `Medium` column
+declares the complete medium it needs, and the task runner additionally keeps
+water, protons, and trace elements exchangeable. Tasks come in three kinds:
+
+- **Production tasks** (`>` operator) — a metabolite/reaction must carry flux;
+  these are *gap-fillable* (reactions can be added to enable them).
+- **Negative-constraint tasks** (`=0`) — a metabolite must **not** be producible
+  under a deliberately restricted medium (e.g. *"no ATP without a carbon source"*);
+  these are **not** gap-fillable and are protected, not modified.
+- **Upper-bound tasks** (`<`) — also not gap-fillable.
+
+A complete model passes **all 52 tasks** with task-only media (verified:
+iML1515 = 52/52; CarveMe-built *E. coli* = 52/52; *C. glutamicum* = 51/52, the one
+difference being a genuine organism-specific negative constraint). Core/partial
+models fail production tasks they lack pathways for — that is precisely what
+refinement repairs.
+
+> **Why the model's default medium is *not* merged.** When `--medium` is omitted,
+> MetaTaskGapFill uses each task's own medium and does **not** merge the draft
+> model's default medium. Merging it would add nutrients (e.g. glucose) back into
+> negative-constraint tasks that omit them on purpose, silently breaking those
+> tests. Supply `--medium` only when you intend an explicit shared base medium; it
+> is then applied identically in the CLI and GUI.
+
+---
+
+## Configuration
+
+Persistent settings live in `~/.metataskgapfill/config.json` (edit via the GUI
+*Settings* dialog or directly). Selected keys:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `kegg_organism_code` | `eco` | KEGG organism code |
+| `weight_kegg` / `weight_bigg` | `0.70` / `0.30` | Evidence weights |
+| `default_universal_model` | `data/bigg_universal_model_fixed.json` | Gap-fill universal |
+| `default_task_file` | `data/universal_essential_tasks.csv` | Default task set |
+| `gapfill_iterations` / `gapfill_alternatives` | `5` / `5` | Gap-fill convergence / per-task alternatives |
+| `carveme_solver` | `gurobi` | MILP solver for CarveMe (`gurobi`/`cplex`/`scip`) |
+| `carveme_universe` | `""` | CarveMe universe template |
+| `carveme_env` | `""` | Conda env holding `carve` (runs via `conda run`) |
+| `carveme_timeout` | `1800` | Per-model build timeout (s) |
+| `carveme_max_parallel` | `1` | Batch build parallelism |
+
+CLI flags (`--carveme-solver`, `--organism`, `--medium`, …) override config for a
+single invocation.
+
+---
+
+## Important notes and caveats
+
+- **CarveMe runs as an external subprocess.** It is never imported, keeping its
+  `reframed`/`python-libsbml` dependencies isolated from the app's `cobra`/`PySide6`
+  stack. If a same-environment install ever conflicts, install CarveMe in a separate
+  conda env and point `carveme_env` at it.
+- **DIAMOND is required and not pip-installable** — install via bioconda or Homebrew.
+- **Solver licensing.** Gurobi/CPLEX need a license; SCIP is free but slow (minutes
+  per model). The build always passes `--solver` explicitly because carve defaults to
+  CPLEX.
+- **Reserved reaction IDs.** Some CarveMe models contain reaction IDs that collide
+  with LP/MPS keywords (e.g. `St`); these are automatically renamed on load
+  (`St → St_rxn`) to keep solver model-copy/snapshot operations safe.
+- **Negative-constraint tasks are organism-specific.** The bundled task set is
+  E. coli-centric; one or two constraints may legitimately differ for other
+  organisms.
+- **Performance.** Building a ~4,600-protein proteome takes a few minutes with
+  Gurobi (much longer with SCIP). Large universal models are pruned for tractable
+  MILP solving.
+- **Batch vs. refinement.** Models can be built in batch, but task-aware
+  refinement is performed one model at a time by design.
+
+---
+
+## Testing
 
 ```bash
-# Ubuntu/Debian
-sudo apt install libxcb-xinerama0 libxcb-cursor0 libxkbcommon0
+pytest -m "not integration"          # fast unit suite (mocked external tools)
+pytest -m integration                # real carve builds on the bundled proteomes
+pytest --cov=src --cov-report=term-missing
 
-# 또는 XCB 대신 Wayland 사용
-export QT_QPA_PLATFORM=wayland
+ruff check src tests                 # lint
+mypy src --ignore-missing-imports    # type check
 ```
 
-### `ModuleNotFoundError: No module named 'PySide6'`
+Integration tests are skipped automatically if `carve` is not installed. GUI tests
+run under `QT_QPA_PLATFORM=offscreen`.
 
-가상환경이 활성화되지 않은 경우:
+---
 
-```bash
-source .venv/bin/activate
-python -m src.app
-```
+## Project structure
 
-### Git LFS 데이터 파일 누락
-
-`data/` 파일이 텍스트 포인터(~130 bytes)로 보이는 경우:
-
-```bash
-git lfs install
-git lfs pull
-```
-
-## 테스트
-
-```bash
-# 전체 테스트
-pytest tests/ -v
-
-# 커버리지 포함
-pytest tests/ --cov=src --cov-report=term-missing
-
-# 특정 모듈만
-pytest tests/test_reaction_removal.py -v
-```
-
-## 개발 도구
-
-```bash
-# 린트 및 자동 수정
-ruff check src/ tests/ --fix
-
-# 코드 포맷팅
-ruff format src/ tests/
-
-# 타입 체크
-mypy src/ --ignore-missing-imports
-
-# Pre-commit (모든 훅)
-pre-commit run --all-files
-```
-
-## 프로젝트 구조
-
-```
+```text
 src/
-├── core/              # 데이터 모델, SBML 파싱, GPR 파싱, ID 매핑
-│   ├── models.py          # Reaction, ModelData, EvidenceItem 등 데이터클래스
-│   ├── sbml_parser.py     # COBRApy 기반 SBML 로더
-│   ├── gpr_parser.py      # Gene-Protein-Reaction 규칙 파서
-│   ├── id_mapper.py       # BiGG → KEGG/EC 외부 DB ID 변환
-│   ├── mapping_data.py    # 오프라인 매핑 데이터 로더
-│   ├── cobra_utils.py     # COBRApy 모델 ↔ ModelData 변환
-│   ├── task_parser.py     # Metabolic task 파서 및 FBA 실행기
-│   └── universal_loader.py # BiGG universal model 로더
-├── api/               # 외부 API 클라이언트 (비동기)
-│   ├── base_client.py     # ABC: 속도 제한, 재시도, 서킷 브레이커
-│   ├── rate_limiter.py    # 토큰 버킷 속도 제한기
-│   ├── kegg_client.py     # KEGG REST API 클라이언트
-│   ├── bigg_client.py     # BiGG Models API 클라이언트
-│   └── bigg_lookup.py     # BiGG local lookup
-├── evidence/          # Evidence 수집 및 스코어링
-│   ├── engine.py          # KEGG/BiGG 반응 검증 실행
-│   ├── scoring.py         # 가중 confidence 점수 산출
-│   └── evidence_types.py  # 임계값 및 표시 상수
-├── gapfill/           # Gap-filling 엔진
-│   ├── engine.py          # MILP 기반 gap-fill 워크플로우
-│   ├── organism_filter.py # KEGG API 기반 organism 유전자 필터
-│   ├── penalty_calculator.py # 반응 페널티 계산
-│   └── gpr_assigner.py   # GPR 규칙 자동 할당
-├── gui/               # PySide6 (Qt6) GUI
-│   ├── main_window.py     # 메인 앱 윈도우, 메뉴, 내보내기
-│   ├── workers.py         # QRunnable 워커 (워커 스레드에서 비동기 실행)
-│   ├── reaction_table.py  # 반응 테이블 모델 + 필터 프록시 + 위젯
-│   ├── reaction_detail.py # 반응 상세 위젯 (편집, 제거)
-│   ├── reaction_removal_dialog.py # 반응 제거 다이얼로그 (task impact preview)
-│   ├── delegates.py       # 점수 바 및 상태 셀 렌더러
-│   ├── model_overview.py  # 모델 개요 위젯
-│   ├── evidence_panel.py  # Evidence 패널
-│   ├── gene_panel.py      # 유전자 정보 패널
-│   ├── metabolite_panel.py # 대사물질 정보 패널
-│   ├── gapfill_panel.py   # Gap-filling 패널
-│   ├── task_panel.py      # Metabolic task 패널
-│   ├── workflow_wizard.py # Gap-fill 워크플로우 마법사
-│   ├── version_panel.py   # 버전 이력 패널
-│   ├── diff_dialog.py     # 버전 비교 다이얼로그
-│   ├── score_visualization.py # PyQtGraph 차트
-│   ├── progress_dialog.py # 진행률 대화상자
-│   ├── settings_dialog.py # 설정 대화상자
-│   ├── theme.py           # 테마 시스템
-│   └── evidence_colors.py # Evidence 색상 상수
-├── cache/             # SQLite 캐싱 레이어
-│   ├── cache_manager.py
-│   └── schema.py
-├── utils/             # 설정, 로깅, 상수
-│   ├── config.py
-│   ├── constants.py
-│   └── logging_config.py
-├── app.py             # GUI 엔트리 포인트
-└── cli.py             # CLI 배치 평가 엔트리 포인트
+├── build/             # Model construction (CarveMe)
+│   ├── carveme_runner.py   # `carve` subprocess wrapper (stream / cancel / timeout)
+│   ├── build_manifest.py   # batch manifest parsing + validation
+│   └── build_engine.py     # build → load → (refine) orchestration
+├── core/              # Domain models, SBML/COBRA utilities, task runner
+├── evidence/          # KEGG/BiGG evidence engine + scoring
+├── gapfill/           # Task-aware gap-filling
+│   ├── engine.py           # MILP gap-fill workflow (task-protected)
+│   └── refine.py           # reusable refinement core
+├── gui/               # PySide6 desktop UI (panels, controllers, workers)
+├── utils/             # Config, constants, logging
+├── pipeline.py        # YAML pipeline runner (build → refine → evaluate)
+├── app.py             # GUI entry point
+└── cli.py             # CLI entry point (evaluate / gap-fill / build / pipeline)
 ```
 
-## 기술 스택
+---
 
-- **SBML 파싱**: COBRApy (libsbml 래핑)
-- **GUI**: PySide6 (Qt6) + PyQtGraph
-- **DB APIs**: Biopython (KEGG), aiohttp (REST), BiGG local lookup
-- **Gap-Filling**: COBRApy MILP solver (GLPK/Gurobi)
-- **캐싱**: SQLite (aiosqlite)
-- **비동기**: QRunnable 워커 + asyncio 이벤트 루프 (워커 스레드, GUI) / asyncio.run (CLI)
+## Citing and acknowledgements
 
-## 라이선스
+If you use MetaTaskGapFill in academic work, please cite this repository and the
+underlying tools:
+
+- **CarveMe** — Machado et al., *Nucleic Acids Research* (2018), "Fast automated
+  reconstruction of genome-scale metabolic models for microbial species and
+  communities."
+- **COBRApy** — Ebrahim et al., *BMC Systems Biology* (2013).
+- **DIAMOND** — Buchfink et al., *Nature Methods* (2015, 2021).
+- Reaction evidence: **KEGG** (Kanehisa et al.) and **BiGG Models** (King et al.).
+
+## License
 
 MIT

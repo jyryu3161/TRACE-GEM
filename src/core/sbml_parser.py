@@ -11,6 +11,7 @@ from src.core.cobra_utils import (
     convert_cobra_gene,
     convert_cobra_metabolite,
     convert_cobra_reaction,
+    rename_solver_reserved_reactions,
 )
 from src.core.models import ModelData
 from src.utils.constants import KEGG_CODE_TO_NAME, ORGANISM_MAP
@@ -41,6 +42,10 @@ class SBMLParser:
             len(cobra_model.metabolites),
             len(cobra_model.genes),
         )
+
+        # CarveMe and some SBML sources emit reaction IDs (e.g. "St") that
+        # collide with LP/MPS solver keywords and corrupt model copy/snapshot.
+        rename_solver_reserved_reactions(cobra_model)
 
         model_data = self._convert_model(cobra_model)
         model_data.cobra_model = cobra_model

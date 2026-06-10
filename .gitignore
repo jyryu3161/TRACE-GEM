@@ -49,3 +49,9 @@ data/universal_model.json
 # BiGG official model JSON cache (auto-downloaded for subsystem lookup)
 data/external/*
 !data/external/.gitkeep
+
+# CarveMe model construction outputs and intermediates
+temp_figures/
+built_models/
+out/
+data/*_protein.tsv

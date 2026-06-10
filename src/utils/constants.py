@@ -43,6 +43,8 @@ KEGG_CODE_TO_NAME: dict[str, str] = {
     "hsa": "Homo sapiens",
     "bsu": "Bacillus subtilis",
     "ppu": "Pseudomonas putida",
+    "cgb": "Corynebacterium glutamicum",
+    "cgl": "Corynebacterium glutamicum",
 }
 
 # Common organism mappings (model ID prefix -> KEGG org code)

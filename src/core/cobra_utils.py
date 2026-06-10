@@ -2,10 +2,72 @@
 
 from __future__ import annotations
 
+import logging
+
 import cobra
 
 from src.core.gpr_parser import extract_genes, parse_gpr
 from src.core.models import Gene, Metabolite, ModelData, Reaction
+
+logger = logging.getLogger("metataskgapfill.cobra_utils")
+
+# Reaction IDs that collide with LP/MPS solver-format keywords. A reaction
+# whose ID lowercases to one of these (e.g. CarveMe's ``St``) optimizes fine
+# in memory but corrupts any LP-text round-trip the solver performs
+# (model.copy()/clone, snapshots), so they must be renamed or removed.
+SOLVER_RESERVED_REACTION_IDS = frozenset({
+    "bounds",
+    "binaries",
+    "binary",
+    "end",
+    "generals",
+    "general",
+    "maximize",
+    "maximise",
+    "minimize",
+    "minimise",
+    "st",
+    "subject",
+    "subjectto",
+})
+
+
+def is_solver_reserved_id(rxn_id: str) -> bool:
+    """Return True if ``rxn_id`` collides with an LP/MPS solver keyword."""
+    return rxn_id.replace(" ", "").lower() in SOLVER_RESERVED_REACTION_IDS
+
+
+def rename_solver_reserved_reactions(model: cobra.Model) -> list[tuple[str, str]]:
+    """Rename reactions whose IDs collide with solver-format keywords.
+
+    Used for user/built models (e.g. CarveMe output) where the reaction is
+    meaningful and must be preserved — unlike universal models, where such IDs
+    are dropped. Returns the list of ``(old_id, new_id)`` renames applied.
+    """
+    existing = set(model.reactions.list_attr("id"))
+    renames: list[tuple[str, str]] = []
+    for rxn in list(model.reactions):
+        if not is_solver_reserved_id(rxn.id):
+            continue
+        base = f"{rxn.id}_rxn"
+        new_id = base
+        suffix = 1
+        while new_id in existing:
+            new_id = f"{base}{suffix}"
+            suffix += 1
+        old_id = rxn.id
+        existing.discard(old_id)
+        existing.add(new_id)
+        rxn.id = new_id
+        renames.append((old_id, new_id))
+    if renames:
+        model.repair()
+        logger.warning(
+            "Renamed %d solver-reserved reaction ID(s): %s",
+            len(renames),
+            ", ".join(f"{o}->{n}" for o, n in renames),
+        )
+    return renames
 
 
 def convert_cobra_reaction(rxn: cobra.Reaction) -> Reaction:

@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "metatask-gapfill"
@@ -19,6 +19,7 @@ dependencies = [
     "biopython>=1.83",
     "aiohttp>=3.9.0",
     "aiosqlite>=0.19.0",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +29,14 @@ dev = [
     "pytest-qt>=4.3",
     "pytest-cov>=4.1",
     "aioresponses>=0.7",
+]
+# Model construction toolchain (CarveMe + MILP solvers). The `diamond` binary
+# is NOT pip-installable — install it via conda (bioconda) or brew. See
+# environment.yml for the one-command reproducible setup.
+build = [
+    "carveme>=1.6",
+    "gurobipy>=11.0",
+    "pyscipopt>=5.0",
 ]
 
 [project.scripts]
@@ -55,3 +64,6 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 qt_api = "pyside6"
+markers = [
+    "integration: tests that invoke real external binaries (carve/diamond/solver); deselect with -m 'not integration'",
+]

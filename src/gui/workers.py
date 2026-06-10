@@ -314,6 +314,17 @@ class GapFillWorkflowWorker(QRunnable):
                 tasks = parser.parse(self.task_path)
                 on_progress("parsing_tasks", 1, 1, f"{len(tasks)} tasks parsed")
 
+        # Merge an EXPLICIT base medium only if one was provided (parity with the
+        # CLI --medium). Tasks are otherwise self-contained — never merge the
+        # model's default medium, which would break negative-constraint tasks.
+        medium_arg = self.options.get("medium")
+        if medium_arg and tasks:
+            from src.cli import load_medium_argument
+            from src.gapfill.refine import apply_base_medium_to_tasks
+
+            base_medium = load_medium_argument(medium_arg, self.model_data.cobra_model)
+            tasks = apply_base_medium_to_tasks(tasks, base_medium)
+
         if self._is_cancelled():
             return GapFillResult(total_tasks=len(tasks), is_partial=True, completed_phase=0)
 
@@ -544,3 +555,143 @@ class OrganismFilterWorker(QRunnable):
         finally:
             await filt.close()
         return result
+
+
+class BuildWorkerSignals(QObject):
+    """Signals for CarveMe model construction workers."""
+
+    started = Signal()
+    line = Signal(str)  # raw `carve` stdout line -> build log view
+    progress = Signal(int, int, str)  # models_done, models_total, label
+    model_built = Signal(object)  # BuildItemResult (batch, per model)
+    result = Signal(object)  # BuiltModel (single) or list[BuildItemResult] (batch)
+    error = Signal(str)
+    finished = Signal()
+
+
+class BuildModelWorker(QRunnable):
+    """Build a single genome-scale model from a protein FASTA with CarveMe.
+
+    The build runs as an external `carve` subprocess (off the GUI thread).
+    ``cancel()`` sets an event that the runner polls and uses to terminate the
+    live subprocess.
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        fasta_path: str,
+        kegg_code: str | None,
+        options: object | None = None,
+        output_path: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.config = config
+        self.fasta_path = fasta_path
+        self.kegg_code = kegg_code
+        self.options = options
+        self.output_path = output_path
+        self.signals = BuildWorkerSignals()
+        self._cancel_event = threading.Event()
+        self.setAutoDelete(False)
+
+    def cancel(self) -> None:
+        self._cancel_event.set()
+
+    @Slot()
+    def run(self) -> None:
+        _safe_emit(self.signals.started)
+        try:
+            from src.build.build_engine import BuildEngine
+
+            engine = BuildEngine(self.config)
+
+            # Probe the CarveMe toolchain here (worker thread) so its blocking
+            # `carve --help`/`diamond --version` subprocesses never freeze the GUI.
+            avail = engine.runner.check_available(solver=self.config.carveme_solver)
+            if not avail.ok:
+                _safe_emit(self.signals.error, "CarveMe toolchain not available:\n" + avail.message)
+                return
+
+            def on_line(line: str) -> None:
+                _safe_emit(self.signals.line, line)
+
+            built = engine.build_one(
+                self.fasta_path,
+                self.kegg_code,
+                options=self.options,
+                output_path=self.output_path,
+                on_line=on_line,
+                cancel_token=self._cancel_event,
+            )
+            _safe_emit(self.signals.result, built)
+        except Exception as e:
+            logger.error("Build model error: %s\n%s", e, traceback.format_exc())
+            _safe_emit(self.signals.error, str(e))
+        finally:
+            _safe_emit(self.signals.finished)
+
+
+class BatchBuildWorker(QRunnable):
+    """Build several models from a list of BuildJob specs with CarveMe.
+
+    Models are built one at a time (optionally parallel per config); a failure
+    in one model does not abort the batch. ``model_built`` fires per genome.
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        jobs: list,
+        options: object | None = None,
+        output_dir: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.config = config
+        self.jobs = jobs
+        self.options = options
+        self.output_dir = output_dir
+        self.signals = BuildWorkerSignals()
+        self._cancel_event = threading.Event()
+        self.setAutoDelete(False)
+
+    def cancel(self) -> None:
+        self._cancel_event.set()
+
+    @Slot()
+    def run(self) -> None:
+        _safe_emit(self.signals.started)
+        try:
+            from src.build.build_engine import BuildEngine
+
+            engine = BuildEngine(self.config)
+            total = len(self.jobs)
+
+            # Probe toolchain on the worker thread (off the GUI thread).
+            avail = engine.runner.check_available(solver=self.config.carveme_solver)
+            if not avail.ok:
+                _safe_emit(self.signals.error, "CarveMe toolchain not available:\n" + avail.message)
+                return
+
+            def on_line(line: str) -> None:
+                _safe_emit(self.signals.line, line)
+
+            def on_model_built(index: int, item: object) -> None:
+                _safe_emit(self.signals.model_built, item)
+                label = getattr(getattr(item, "job", None), "label", str(index + 1))
+                _safe_emit(self.signals.progress, index + 1, total, label)
+
+            results = engine.build_batch(
+                self.jobs,
+                options=self.options,
+                output_dir=self.output_dir,
+                on_line=on_line,
+                on_model_built=on_model_built,
+                cancel_token=self._cancel_event,
+            )
+            _safe_emit(self.signals.result, results)
+        except Exception as e:
+            logger.error("Batch build error: %s\n%s", e, traceback.format_exc())
+            _safe_emit(self.signals.error, str(e))
+        finally:
+            _safe_emit(self.signals.finished)

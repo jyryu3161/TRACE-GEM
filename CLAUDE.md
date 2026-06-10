@@ -69,9 +69,16 @@ mypy src/ --ignore-missing-imports
   is `0` by default; set it to a positive threshold to defer evidence for large
   universals and evaluate only gap-filled reactions.
 - CLI gap-fill mode accepts draft model, universal model, metabolic task CSV,
-  and optional base medium. If `--medium` is omitted, use the draft COBRA
-  model's default medium. If provided, medium may be JSON, CSV/TSV, or inline
-  spec such as `glc__D_e(-10);o2_e(-1000)`.
+  and optional base medium. Metabolic tasks are self-contained — each task's
+  `Medium` column declares the full medium it needs, and `prepare_task_model`
+  opens trace elements/water/protons. The draft model's default medium is NOT
+  auto-merged when `--medium` is omitted: doing so would add nutrients (e.g.
+  glucose) back into negative-constraint tasks that omit them on purpose
+  ("no X without carbon source"), breaking those tests and making CLI disagree
+  with the GUI. Only an EXPLICIT `--medium` (JSON, CSV/TSV, or inline spec such
+  as `glc__D_e(-10);o2_e(-1000)`) is merged as a base medium, in BOTH CLI and
+  GUI. A complete model (e.g. iML1515) passes all 52 universal tasks with
+  task-only media.
 - Gap-filling is metabolic-task-aware. Task evaluation and gap-fill setup share
   `TaskRunner.prepare_task_model()` so medium, free exchanges, trace elements,
   cofactor turnover, constraints, and ID normalization stay consistent.

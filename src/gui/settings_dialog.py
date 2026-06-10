@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -104,6 +105,48 @@ class SettingsDialog(QDialog):
         eval_form.addRow("Max Concurrent:", self._max_concurrent)
         tabs.addTab(eval_tab, "Evaluation")
 
+        # Model construction (CarveMe) tab
+        carveme_tab = QGroupBox()
+        carveme_form = QFormLayout(carveme_tab)
+
+        self._carveme_executable = QLineEdit()
+        self._carveme_env = QLineEdit()
+        self._carveme_env.setPlaceholderText("(optional) conda env containing `carve`")
+        self._carveme_diamond = QLineEdit()
+        self._carveme_solver = QComboBox()
+        # "" = use carve's own default; mirrors the universe combo so an empty
+        # config value round-trips instead of being silently rewritten.
+        self._carveme_solver.addItems(["", "gurobi", "cplex", "scip"])
+        self._carveme_universe = QComboBox()
+        self._carveme_universe.addItems(
+            ["", "bacteria", "grampos", "gramneg", "archaea", "cyanobacteria"]
+        )
+        self._carveme_gapfill_media = QLineEdit()
+        self._carveme_init_medium = QLineEdit()
+        self._carveme_output_dir = QLineEdit()
+        self._carveme_timeout = QSpinBox()
+        self._carveme_timeout.setRange(60, 36000)
+        self._carveme_max_parallel = QSpinBox()
+        self._carveme_max_parallel.setRange(1, 16)
+        self._carveme_gzip = QCheckBox("Write .xml.gz output")
+
+        carveme_form.addRow("carve executable:", self._carveme_executable)
+        carveme_form.addRow("conda env:", self._carveme_env)
+        carveme_form.addRow("diamond executable:", self._carveme_diamond)
+        carveme_form.addRow("Solver:", self._carveme_solver)
+        carveme_form.addRow("Universe:", self._carveme_universe)
+        carveme_form.addRow("Gap-fill media (-g):", self._carveme_gapfill_media)
+        carveme_form.addRow("Init medium (-i):", self._carveme_init_medium)
+        carveme_form.addRow("Output dir:", self._carveme_output_dir)
+        carveme_form.addRow("Timeout (s):", self._carveme_timeout)
+        carveme_form.addRow("Batch parallelism:", self._carveme_max_parallel)
+        carveme_form.addRow("", self._carveme_gzip)
+        carveme_form.addRow(
+            QLabel("<i>CarveMe runs as an external `carve` subprocess. Default "
+                   "solver gurobi; SCIP is the free fallback.</i>")
+        )
+        tabs.addTab(carveme_tab, "Construction")
+
         layout.addWidget(tabs)
 
         # Buttons
@@ -131,6 +174,19 @@ class SettingsDialog(QDialog):
         self._batch_size.setValue(self._config.batch_size)
         self._max_concurrent.setValue(self._config.max_concurrent)
 
+        # CarveMe construction settings
+        self._carveme_executable.setText(self._config.carveme_executable)
+        self._carveme_env.setText(self._config.carveme_env)
+        self._carveme_diamond.setText(self._config.carveme_diamond_executable)
+        self._carveme_solver.setCurrentText(self._config.carveme_solver)
+        self._carveme_universe.setCurrentText(self._config.carveme_universe or "")
+        self._carveme_gapfill_media.setText(self._config.carveme_gapfill_media)
+        self._carveme_init_medium.setText(self._config.carveme_init_medium)
+        self._carveme_output_dir.setText(self._config.carveme_output_dir)
+        self._carveme_timeout.setValue(self._config.carveme_timeout)
+        self._carveme_max_parallel.setValue(self._config.carveme_max_parallel)
+        self._carveme_gzip.setChecked(self._config.carveme_gzip_output)
+
     def _save_and_accept(self) -> None:
         self._config.organism_name = self._organism_name.text()
         self._config.kegg_organism_code = self._kegg_code.text()
@@ -147,4 +203,21 @@ class SettingsDialog(QDialog):
 
         self._config.batch_size = self._batch_size.value()
         self._config.max_concurrent = self._max_concurrent.value()
+
+        # CarveMe construction settings
+        self._config.carveme_executable = self._carveme_executable.text().strip() or "carve"
+        self._config.carveme_env = self._carveme_env.text().strip()
+        self._config.carveme_diamond_executable = (
+            self._carveme_diamond.text().strip() or "diamond"
+        )
+        self._config.carveme_solver = self._carveme_solver.currentText()
+        self._config.carveme_universe = self._carveme_universe.currentText()
+        self._config.carveme_gapfill_media = self._carveme_gapfill_media.text().strip()
+        self._config.carveme_init_medium = self._carveme_init_medium.text().strip()
+        self._config.carveme_output_dir = (
+            self._carveme_output_dir.text().strip() or "built_models"
+        )
+        self._config.carveme_timeout = self._carveme_timeout.value()
+        self._config.carveme_max_parallel = self._carveme_max_parallel.value()
+        self._config.carveme_gzip_output = self._carveme_gzip.isChecked()
         self.accept()
