@@ -88,6 +88,78 @@ def test_refine_defers_until_engine_ready() -> None:
     w.close()
 
 
+def test_start_single_build_rejects_missing_universe_file(tmp_path, monkeypatch) -> None:
+    """GUI must reject a non-existent universe_file early, before any worker starts."""
+    from PySide6.QtWidgets import QWidget
+
+    from src.gui.controllers import construct_ctrl as cc_mod
+    from src.gui.controllers.construct_ctrl import ConstructController
+    from src.utils.config import Config
+
+    fasta = tmp_path / "g.faa"
+    fasta.write_text(">a\nMKV\n")
+    missing = tmp_path / "missing_universe.xml.gz"
+
+    started: list = []
+    warnings: list = []
+
+    class _FakePanel:
+        def get_single_spec(self):
+            return {"fasta": str(fasta), "universe_file": str(missing), "kegg_code": "eco"}
+
+    class _FakeWindow(QWidget):
+        pass
+
+    w = _FakeWindow()
+    w._build_panel = _FakePanel()
+    w._config = Config()
+    w._active_workers = []
+    w._thread_pool = type("TP", (), {"start": lambda self, wk: started.append(wk)})()
+    monkeypatch.setattr(cc_mod.QMessageBox, "warning", lambda *a, **k: warnings.append(a))
+
+    ctrl = ConstructController(w)
+    ctrl.start_single_build()
+    assert warnings, "missing universe_file should raise a warning dialog"
+    assert started == [], "no build worker should start when universe_file is missing"
+    w.close()
+
+
+def test_start_batch_build_rejects_missing_universe_file(tmp_path, monkeypatch) -> None:
+    """Batch path rejects a missing per-row universe_file before any worker starts."""
+    from PySide6.QtWidgets import QWidget
+
+    from src.gui.controllers import construct_ctrl as cc_mod
+    from src.gui.controllers.construct_ctrl import ConstructController
+    from src.utils.config import Config
+
+    fasta = tmp_path / "g.faa"
+    fasta.write_text(">a\nMKV\n")
+    missing = tmp_path / "missing_universe.xml.gz"
+
+    started: list = []
+    criticals: list = []
+
+    class _FakePanel:
+        def get_batch_jobs(self):
+            return [{"fasta": str(fasta), "kegg_code": "eco", "universe_file": str(missing)}]
+
+    class _FakeWindow(QWidget):
+        pass
+
+    w = _FakeWindow()
+    w._build_panel = _FakePanel()
+    w._config = Config()
+    w._active_workers = []
+    w._thread_pool = type("TP", (), {"start": lambda self, wk: started.append(wk)})()
+    monkeypatch.setattr(cc_mod.QMessageBox, "critical", lambda *a, **k: criticals.append(a))
+
+    ctrl = ConstructController(w)
+    ctrl.start_batch_build()
+    assert criticals, "missing per-row universe_file should raise a critical dialog"
+    assert started == [], "no batch worker should start when a universe_file is missing"
+    w.close()
+
+
 def test_build_panel_set_busy_locks_mode_toggle() -> None:
     from src.gui.build_panel import BuildPanelWidget
 

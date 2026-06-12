@@ -50,6 +50,7 @@ class ConstructController:
         return engine.options_from_config(
             solver=spec.get("solver") or None,
             universe=spec.get("universe") or None,
+            universe_file=spec.get("universe_file") or None,
             gapfill_media=spec.get("gapfill_media") or None,
             init_medium=spec.get("init_medium") or None,
             gzip_output=bool(spec.get("gzip")),
@@ -64,6 +65,10 @@ class ConstructController:
         fasta = spec.get("fasta", "")
         if not fasta or not Path(fasta).exists():
             QMessageBox.warning(self._w, "Build", "Select a valid protein FASTA file.")
+            return
+        universe_file = spec.get("universe_file", "")
+        if universe_file and not Path(universe_file).exists():
+            QMessageBox.warning(self._w, "Build", f"Universe file not found:\n{universe_file}")
             return
         # CarveMe toolchain availability is checked inside the worker (off the GUI
         # thread) so the carve/diamond subprocess probes don't freeze the UI.
@@ -118,11 +123,16 @@ class ConstructController:
             if not d.get("kegg_code"):
                 problems.append(f"row {i}: missing KEGG code")
                 continue
+            row_universe_file = d.get("universe_file", "")
+            if row_universe_file and not Path(row_universe_file).exists():
+                problems.append(f"row {i}: universe_file not found: {row_universe_file}")
+                continue
             jobs.append(
                 BuildJob(
                     fasta_path=Path(fasta),
                     kegg_code=d["kegg_code"],
                     universe=d.get("universe", ""),
+                    universe_file=d.get("universe_file", ""),
                     medium=d.get("medium", ""),
                     label=d.get("label", ""),
                 )
@@ -132,7 +142,14 @@ class ConstructController:
             return
         # Availability checked inside the worker (off the GUI thread).
 
-        options = self._options(panel.get_options_spec())
+        options_spec = panel.get_options_spec()
+        global_universe_file = options_spec.get("universe_file", "")
+        if global_universe_file and not Path(global_universe_file).exists():
+            QMessageBox.warning(
+                self._w, "Batch build", f"Universe file not found:\n{global_universe_file}"
+            )
+            return
+        options = self._options(options_spec)
         output_dir = panel.get_batch_output_dir() or None
 
         panel.clear_log()

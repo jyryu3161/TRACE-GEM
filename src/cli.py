@@ -155,7 +155,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Build multiple models from a manifest CSV/TSV "
-            "(columns: fasta,kegg_code[,universe,gram,medium,label])"
+            "(columns: fasta,kegg_code[,universe,universe_file,gram,medium,label])"
         ),
     )
     build_group.add_argument(
@@ -176,6 +176,13 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("bacteria", "grampos", "gramneg", "archaea", "cyanobacteria"),
         default=None,
         help="CarveMe universe template (default: carve's own default)",
+    )
+    build_group.add_argument(
+        "--carveme-universe-file",
+        metavar="PATH",
+        default=None,
+        help="Custom CarveMe reaction universe model (SBML); overrides "
+        "--carveme-universe",
     )
     build_group.add_argument(
         "--carveme-gapfill-media",
@@ -867,6 +874,8 @@ def _apply_carveme_overrides(config: Config, args: argparse.Namespace) -> None:
         config.carveme_solver = args.carveme_solver
     if getattr(args, "carveme_universe", None):
         config.carveme_universe = args.carveme_universe
+    if getattr(args, "carveme_universe_file", None):
+        config.carveme_universe_file = args.carveme_universe_file
     if getattr(args, "carveme_env", None) is not None:
         config.carveme_env = args.carveme_env
     if getattr(args, "carveme_executable", None):
@@ -910,6 +919,10 @@ def _run_build(args: argparse.Namespace, config: Config) -> None:
         _eprint("CarveMe toolchain not ready:\n" + avail.message)
         sys.exit(1)
     _eprint(avail.message)
+
+    if config.carveme_universe_file and not Path(config.carveme_universe_file).exists():
+        _eprint(f"Error: universe file not found: {config.carveme_universe_file}")
+        sys.exit(1)
 
     options = engine.options_from_config(dna=getattr(args, "build_dna", False))
 
@@ -972,7 +985,7 @@ def _run_build(args: argparse.Namespace, config: Config) -> None:
     _eprint(
         f"Building model from {fasta} "
         f"(solver={config.carveme_solver}, "
-        f"universe={config.carveme_universe or 'default'})..."
+        f"universe={config.carveme_universe_file or config.carveme_universe or 'default'})..."
     )
     try:
         built = engine.build_one(

@@ -48,6 +48,14 @@ def test_batch_build_flag() -> None:
     assert ns.build is None
 
 
+def test_carveme_universe_file_flag() -> None:
+    ns = _parse(["--build", "g.faa", "--carveme-universe-file", "/u/custom.xml.gz"])
+    assert ns.carveme_universe_file == "/u/custom.xml.gz"
+    cfg = Config()
+    cli._apply_carveme_overrides(cfg, ns)
+    assert cfg.carveme_universe_file == "/u/custom.xml.gz"
+
+
 def test_apply_carveme_overrides() -> None:
     cfg = Config()
     ns = _parse([

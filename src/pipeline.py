@@ -38,6 +38,7 @@ class PipelineError(ValueError):
 class CarveMeDefaults:
     solver: str | None = None
     universe: str | None = None
+    universe_file: str | None = None
     env: str | None = None
     gapfill_media: str | None = None
     init_medium: str | None = None
@@ -187,9 +188,13 @@ def _parse_carveme(cm: dict, errors: list[str]) -> CarveMeDefaults:
     if max_parallel is not None and not _is_int(max_parallel):
         errors.append(f"carveme.max_parallel must be an integer, got {max_parallel!r}")
         max_parallel = None
+    universe_file = cm.get("universe_file")
+    if universe_file and not Path(universe_file).exists():
+        errors.append(f"carveme.universe_file not found: {universe_file}")
     return CarveMeDefaults(
         solver=solver,
         universe=universe,
+        universe_file=universe_file,
         env=cm.get("env"),
         gapfill_media=cm.get("gapfill_media"),
         init_medium=cm.get("init_medium"),
@@ -222,6 +227,9 @@ def _parse_build(b: Any, errors: list[str]) -> BuildStep:
             errors.append(f"build.jobs[{i}]: fasta not found: {fasta}")
         if not job.get("kegg_code"):
             errors.append(f"build.jobs[{i}]: missing 'kegg_code' (KEGG taxonomy code)")
+        job_universe_file = job.get("universe_file")
+        if job_universe_file and not Path(job_universe_file).exists():
+            errors.append(f"build.jobs[{i}]: universe_file not found: {job_universe_file}")
     return BuildStep(mode=mode, jobs=jobs, output_dir=str(b.get("output_dir", "built_models")))
 
 
@@ -282,6 +290,8 @@ def apply_carveme_defaults(config: Config, cm: CarveMeDefaults) -> None:
         config.carveme_solver = cm.solver
     if cm.universe is not None:
         config.carveme_universe = cm.universe
+    if cm.universe_file is not None:
+        config.carveme_universe_file = cm.universe_file
     if cm.env is not None:
         config.carveme_env = cm.env
     if cm.gapfill_media is not None:
@@ -426,6 +436,7 @@ def _resolve_built_models(
             fasta_path=Path(j["fasta"]),
             kegg_code=j.get("kegg_code", ""),
             universe=j.get("universe", ""),
+            universe_file=j.get("universe_file", ""),
             gram=j.get("gram", ""),
             medium=j.get("medium", ""),
             label=j.get("label", ""),

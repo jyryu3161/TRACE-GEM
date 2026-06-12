@@ -33,7 +33,7 @@ from src.utils.constants import KEGG_CODE_TO_NAME
 
 _SOLVERS = ("gurobi", "cplex", "scip")
 _UNIVERSES = ("(default)", "bacteria", "grampos", "gramneg", "archaea", "cyanobacteria")
-_BATCH_COLUMNS = ("fasta", "kegg_code", "universe", "medium", "label")
+_BATCH_COLUMNS = ("fasta", "kegg_code", "universe", "universe_file", "medium", "label")
 
 
 class BuildPanelWidget(QWidget):
@@ -188,7 +188,7 @@ class BuildPanelWidget(QWidget):
 
         self._batch_table = QTableWidget(0, len(_BATCH_COLUMNS))
         self._batch_table.setHorizontalHeaderLabels(
-            ["FASTA", "KEGG code", "universe", "medium", "label"]
+            ["FASTA", "KEGG code", "universe", "universe_file", "medium", "label"]
         )
         self._batch_table.verticalHeader().setVisible(False)
         v.addWidget(self._batch_table)
@@ -222,6 +222,15 @@ class BuildPanelWidget(QWidget):
         self._universe_combo = QComboBox()
         self._universe_combo.addItems(_UNIVERSES)
         form.addRow("Universe:", self._universe_combo)
+
+        uni_row = QHBoxLayout()
+        self._universe_file_edit = QLineEdit()
+        self._universe_file_edit.setPlaceholderText("(optional) custom universe SBML — overrides Universe")
+        uni_browse = QPushButton("Browse...")
+        uni_browse.clicked.connect(self._browse_universe_file)
+        uni_row.addWidget(self._universe_file_edit)
+        uni_row.addWidget(uni_browse)
+        form.addRow("Universe file:", uni_row)
 
         self._gapfill_media_edit = QLineEdit()
         self._gapfill_media_edit.setPlaceholderText("(optional) carve -g, e.g. M9,LB")
@@ -284,6 +293,14 @@ class BuildPanelWidget(QWidget):
         if path:
             self._out_edit.setText(path)
 
+    def _browse_universe_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select custom universe (SBML)", "",
+            "SBML (*.xml *.xml.gz);;All Files (*)",
+        )
+        if path:
+            self._universe_file_edit.setText(path)
+
     def _browse_output_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Output directory")
         if path:
@@ -321,8 +338,9 @@ class BuildPanelWidget(QWidget):
             self._batch_table.setItem(
                 r, 2, QTableWidgetItem(norm.get("universe", norm.get("gram", "")))
             )
-            self._batch_table.setItem(r, 3, QTableWidgetItem(norm.get("medium", "")))
-            self._batch_table.setItem(r, 4, QTableWidgetItem(norm.get("label", "")))
+            self._batch_table.setItem(r, 3, QTableWidgetItem(norm.get("universe_file", "")))
+            self._batch_table.setItem(r, 4, QTableWidgetItem(norm.get("medium", "")))
+            self._batch_table.setItem(r, 5, QTableWidgetItem(norm.get("label", "")))
 
     def _add_batch_row(self) -> int:
         r = self._batch_table.rowCount()
@@ -343,6 +361,7 @@ class BuildPanelWidget(QWidget):
         return {
             "solver": self._solver_combo.currentText(),
             "universe": "" if universe == "(default)" else universe,
+            "universe_file": self._universe_file_edit.text().strip(),
             "gapfill_media": self._gapfill_media_edit.text().strip(),
             "init_medium": self._init_medium_edit.text().strip(),
             "gzip": self._gzip_check.isChecked(),
@@ -375,8 +394,9 @@ class BuildPanelWidget(QWidget):
                     "fasta": fasta,
                     "kegg_code": cell(1),
                     "universe": cell(2),
-                    "medium": cell(3),
-                    "label": cell(4),
+                    "universe_file": cell(3),
+                    "medium": cell(4),
+                    "label": cell(5),
                 }
             )
         return jobs
@@ -414,7 +434,7 @@ class BuildPanelWidget(QWidget):
             return None
         obj = item.data(0x0100)  # Qt.UserRole
         # Accept either a BuiltModel or a BuildItemResult (use its .built).
-        built = getattr(obj, "built", obj)
+        built: object | None = getattr(obj, "built", obj)
         if built is None or getattr(built, "model_data", None) is None:
             return None
         return built

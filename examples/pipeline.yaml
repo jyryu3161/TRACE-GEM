@@ -9,6 +9,7 @@
 carveme:
   solver: gurobi          # gurobi | cplex | scip (free)
   universe: bacteria      # bacteria | grampos | gramneg | archaea | cyanobacteria
+  # universe_file: path/to/custom_universe.xml.gz   # optional custom universe (overrides `universe`)
 
 # INPUT — build new models from protein FASTA (mode: single | batch).
 # (Alternatively, replace this whole `build:` block with a `models:` list of

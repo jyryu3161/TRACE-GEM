@@ -167,7 +167,9 @@ metatask-gapfill-cli --build data/eco_protein.faa \
 This runs `carve` as a subprocess, then loads the resulting SBML and reports the
 reaction/metabolite/gene counts (≈2,600 reactions for *E. coli*). Useful flags:
 `--carveme-universe {bacteria,grampos,gramneg,archaea,cyanobacteria}`,
-`--carveme-gapfill-media M9,LB`, `--gzip-model`, `--build-dna`.
+`--carveme-universe-file PATH` (a **custom, well-curated reaction universe** in
+SBML — overrides the named universe), `--carveme-gapfill-media M9,LB`,
+`--gzip-model`, `--build-dna`.
 
 ### Tutorial 2 — Batch build from a manifest (CLI)
 
@@ -183,7 +185,10 @@ data/cgb_protein.faa,cgb,grampos,,C. glutamicum
 metatask-gapfill-cli --batch-build manifest.csv --build-output built_models/
 ```
 
-Each model is built independently; a failure in one does not abort the batch.
+Manifest columns: `fasta` and `kegg_code` are required; `universe`,
+`universe_file` (a custom SBML universe, per row), `gram`, `medium`, and `label`
+are optional. Each model is built independently; a failure in one does not abort
+the batch.
 Refinement is **single-model only** — build the batch first, then refine models
 individually.
 
@@ -215,6 +220,7 @@ metatask-gapfill-cli --config examples/pipeline.yaml --config-validate   # dry-r
 carveme:
   solver: gurobi
   universe: bacteria
+  # universe_file: path/to/custom_universe.xml.gz   # optional, overrides `universe`
 build:                 # or:  models: [{path: data/iML1515.xml, kegg_code: eco}]
   mode: batch          # single | batch
   output_dir: built_models/

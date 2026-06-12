@@ -39,6 +39,19 @@ def test_build_argv_contains_expected_flags(tmp_path: Path) -> None:
     assert "-v" in argv
 
 
+def test_build_argv_universe_file_overrides_universe(tmp_path: Path) -> None:
+    runner = CarveMeRunner(executable="carve")
+    spec = BuildSpec(
+        fasta_path=tmp_path / "g.faa",
+        output_path=tmp_path / "o.xml",
+        options=CarveMeOptions(universe="bacteria", universe_file="/path/custom_universe.xml.gz"),
+    )
+    argv = runner.build_argv(spec)
+    assert "--universe-file" in argv and "/path/custom_universe.xml.gz" in argv
+    # universe_file wins: the named --universe must NOT be emitted
+    assert "--universe" not in argv
+
+
 def test_build_argv_conda_env_prefix(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("shutil.which", lambda _name: "/opt/conda/bin/conda")
     runner = CarveMeRunner(executable="carve", conda_env="carveme")
@@ -90,6 +103,16 @@ def test_build_single_missing_fasta(tmp_path: Path, monkeypatch) -> None:
     runner = CarveMeRunner(executable="carve")
     with pytest.raises(CarveMeRunError, match="FASTA file not found"):
         runner.build_single(tmp_path / "nope.faa", tmp_path / "o.xml", CarveMeOptions())
+
+
+def test_build_single_missing_universe_file(tmp_path: Path, monkeypatch) -> None:
+    fasta = tmp_path / "g.faa"
+    fasta.write_text(">a\nMKV\n")
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/carve")
+    runner = CarveMeRunner(executable="carve")
+    opts = CarveMeOptions(universe_file=str(tmp_path / "missing_universe.xml.gz"))
+    with pytest.raises(CarveMeRunError, match="Universe file not found"):
+        runner.build_single(fasta, tmp_path / "o.xml", opts)
 
 
 def test_build_single_not_installed(tmp_path: Path, monkeypatch) -> None:

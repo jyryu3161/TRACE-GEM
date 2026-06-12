@@ -121,6 +121,10 @@ class SettingsDialog(QDialog):
         self._carveme_universe.addItems(
             ["", "bacteria", "grampos", "gramneg", "archaea", "cyanobacteria"]
         )
+        self._carveme_universe_file = QLineEdit()
+        self._carveme_universe_file.setPlaceholderText(
+            "(optional) custom universe SBML — overrides Universe"
+        )
         self._carveme_gapfill_media = QLineEdit()
         self._carveme_init_medium = QLineEdit()
         self._carveme_output_dir = QLineEdit()
@@ -135,6 +139,7 @@ class SettingsDialog(QDialog):
         carveme_form.addRow("diamond executable:", self._carveme_diamond)
         carveme_form.addRow("Solver:", self._carveme_solver)
         carveme_form.addRow("Universe:", self._carveme_universe)
+        carveme_form.addRow("Universe file:", self._carveme_universe_file)
         carveme_form.addRow("Gap-fill media (-g):", self._carveme_gapfill_media)
         carveme_form.addRow("Init medium (-i):", self._carveme_init_medium)
         carveme_form.addRow("Output dir:", self._carveme_output_dir)
@@ -180,6 +185,7 @@ class SettingsDialog(QDialog):
         self._carveme_diamond.setText(self._config.carveme_diamond_executable)
         self._carveme_solver.setCurrentText(self._config.carveme_solver)
         self._carveme_universe.setCurrentText(self._config.carveme_universe or "")
+        self._carveme_universe_file.setText(self._config.carveme_universe_file)
         self._carveme_gapfill_media.setText(self._config.carveme_gapfill_media)
         self._carveme_init_medium.setText(self._config.carveme_init_medium)
         self._carveme_output_dir.setText(self._config.carveme_output_dir)
@@ -212,6 +218,7 @@ class SettingsDialog(QDialog):
         )
         self._config.carveme_solver = self._carveme_solver.currentText()
         self._config.carveme_universe = self._carveme_universe.currentText()
+        self._config.carveme_universe_file = self._carveme_universe_file.text().strip()
         self._config.carveme_gapfill_media = self._carveme_gapfill_media.text().strip()
         self._config.carveme_init_medium = self._carveme_init_medium.text().strip()
         self._config.carveme_output_dir = (

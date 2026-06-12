@@ -99,6 +99,62 @@ def test_options_from_config_defaults() -> None:
     assert opts2.solver == "scip" and opts2.universe == ""
 
 
+def test_options_from_config_universe_file() -> None:
+    cfg = Config()
+    cfg.carveme_universe = "bacteria"
+    cfg.carveme_universe_file = "/u/custom.xml.gz"
+    engine = BuildEngine(cfg, runner=_FakeRunner())
+    # config-backed
+    assert engine.options_from_config().universe_file == "/u/custom.xml.gz"
+    # explicit override
+    assert engine.options_from_config(universe_file="/other.xml").universe_file == "/other.xml"
+
+
+def test_spec_for_job_per_job_universe_file() -> None:
+    cfg = Config()
+    cfg.carveme_universe_file = "/global.xml.gz"
+    engine = BuildEngine(cfg, runner=_FakeRunner())
+    base = engine.options_from_config()
+    # per-job universe_file overrides the global one
+    job = BuildJob(Path("g.faa"), "eco", universe_file="/job_specific.xml.gz")
+    spec = engine._spec_for_job(job, Path("out"), base)
+    assert spec.options.universe_file == "/job_specific.xml.gz"
+    # falls back to global when the job has none
+    job2 = BuildJob(Path("g2.faa"), "cgb")
+    spec2 = engine._spec_for_job(job2, Path("out"), base)
+    assert spec2.options.universe_file == "/global.xml.gz"
+
+
+def test_spec_for_job_per_job_universe_overrides_global_universe_file() -> None:
+    """Per-job named universe must beat a global universe_file (cross-dimension)."""
+    from src.build.carveme_runner import CarveMeRunner
+
+    cfg = Config()
+    cfg.carveme_universe_file = "/global.xml.gz"
+    engine = BuildEngine(cfg, runner=_FakeRunner())
+    base = engine.options_from_config()
+
+    # A row selecting a named universe must clear the inherited global universe_file,
+    # otherwise build_argv would silently drop --universe in favor of the global file.
+    job = BuildJob(Path("g.faa"), "eco", universe="gramneg")
+    spec = engine._spec_for_job(job, Path("out"), base)
+    assert spec.options.universe == "gramneg"
+    assert spec.options.universe_file == ""
+    argv = CarveMeRunner(executable="carve").build_argv(spec)
+    assert "--universe" in argv and "gramneg" in argv
+    assert "--universe-file" not in argv
+
+    # Reverse: a per-job universe_file clears any inherited/global named universe.
+    cfg2 = Config()
+    cfg2.carveme_universe = "bacteria"
+    engine2 = BuildEngine(cfg2, runner=_FakeRunner())
+    base2 = engine2.options_from_config()
+    job2 = BuildJob(Path("g.faa"), "eco", universe_file="/job.xml.gz")
+    spec2 = engine2._spec_for_job(job2, Path("out"), base2)
+    assert spec2.options.universe_file == "/job.xml.gz"
+    assert spec2.options.universe == ""
+
+
 def test_build_one_attaches_organism(tmp_path: Path, patched_loader) -> None:
     cfg = Config()
     engine = BuildEngine(cfg, runner=_FakeRunner())

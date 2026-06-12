@@ -96,6 +96,26 @@ def test_parse_manifest_tab_delimited_txt(tmp_path: Path) -> None:
     assert len(jobs) == 1 and jobs[0].kegg_code == "eco"
 
 
+def test_parse_manifest_universe_file_column(tmp_path: Path) -> None:
+    eco = _write_fasta(tmp_path / "eco.faa")
+    universe = tmp_path / "custom.xml.gz"
+    universe.write_text("<sbml/>")
+    manifest = tmp_path / "m.csv"
+    manifest.write_text(f"fasta,kegg_code,universe_file\n{eco},eco,{universe}\n")
+    jobs = parse_manifest(manifest)
+    assert jobs[0].universe_file == str(universe)
+
+
+def test_parse_manifest_missing_universe_file(tmp_path: Path) -> None:
+    eco = _write_fasta(tmp_path / "eco.faa")
+    manifest = tmp_path / "m.csv"
+    manifest.write_text(
+        f"fasta,kegg_code,universe_file\n{eco},eco,{tmp_path / 'nope_universe.xml.gz'}\n"
+    )
+    with pytest.raises(ManifestError, match="universe_file not found"):
+        parse_manifest(manifest)
+
+
 def test_parse_manifest_ragged_row(tmp_path: Path) -> None:
     # A row with more columns than the header must be reported, not crash.
     eco = _write_fasta(tmp_path / "eco.faa")

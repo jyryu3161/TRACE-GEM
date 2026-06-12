@@ -59,6 +59,9 @@ class Config:
     carveme_solver: str = "gurobi"
     # CarveMe universe template: "", "gramneg", "grampos", "bacteria", "archaea".
     carveme_universe: str = ""
+    # Custom CarveMe reaction universe model (SBML). When set, this overrides the
+    # named carveme_universe template (carve --universe-file).
+    carveme_universe_file: str = ""
     # CarveMe's own gap-fill media (carve -g), e.g. "M9,LB". Empty = none.
     carveme_gapfill_media: str = ""
     # CarveMe init medium (carve -i), e.g. "M9". Empty = none.
