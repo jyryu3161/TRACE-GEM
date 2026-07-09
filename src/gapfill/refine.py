@@ -149,7 +149,6 @@ async def refine_model_data(
         # KEGG evidence is computed only for gap-fill candidates (to weight
         # which universal reactions to add). Model quality is judged by tasks,
         # not by per-reaction evidence.
-        evidence_results: dict = {}
         if skip_evaluation:
             _log("Skipping candidate evidence evaluation")
         else:
