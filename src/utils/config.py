@@ -41,6 +41,9 @@ class Config:
     gapfill_exclude_exchange_reactions: bool = True
     gapfill_universal_prune_threshold: int = 5000
     gapfill_prune_to_model_metabolites: bool = True
+    # Strict KEGG-only gap-fill: only add universal reactions that map to a KEGG
+    # reaction, so every added reaction carries a KEGG identity.
+    gapfill_require_kegg_mapping: bool = True
     organism_filter_cache_ttl: int = 30 * 24 * 3600
     gapfill_penalty_epsilon: float = 0.01
     gapfill_organism_penalty_multiplier: float = 10.0
