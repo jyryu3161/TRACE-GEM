@@ -86,7 +86,9 @@ class TestComputeMatchRatio:
         assert ratio == pytest.approx(1 / 3)
 
     def test_both_empty(self):
-        assert compute_match_ratio([], []) == 1.0
+        # No compound IDs on either side is no evidence, not a perfect match:
+        # otherwise a reaction with zero metabolite evidence scores STRONG/High.
+        assert compute_match_ratio([], []) == 0.0
 
     def test_one_empty(self):
         assert compute_match_ratio(["C00001"], []) == 0.0
@@ -143,13 +145,13 @@ class TestKEGGClient:
         assert items[0].source == EvidenceSource.KEGG
         assert items[0].strength == EvidenceStrength.STRONG
         assert items[0].raw_data is not None
+        # Informative metabolites reconcile fully (H2O is currency-filtered out).
+        assert items[0].raw_data["kegg_anchored"] is True
+        assert items[0].raw_data["reconciliation_state"] == "full"
         assert items[0].raw_data["substrate_match"] == 1.0
         assert items[0].raw_data["product_match"] == 1.0
-        assert items[0].raw_data["model_substrates"] == ["C00631"]
-        assert items[0].raw_data["model_products"] == ["C00074"]
         assert items[0].raw_data["raw_model_products"] == ["C00074", "C00001"]
         assert items[0].raw_data["raw_kegg_products"] == ["C00074", "C00001"]
-        assert items[0].raw_data["currency_filtered"] is True
 
     @pytest.mark.asyncio
     async def test_check_evidence_absent(self, client):
@@ -179,6 +181,33 @@ class TestKEGGClient:
         assert len(items) == 1
         # avg_match = (1.0 + 0.5) / 2 = 0.75 → MODERATE
         assert items[0].strength in (EvidenceStrength.MODERATE, EvidenceStrength.STRONG)
+
+    @pytest.mark.asyncio
+    async def test_empty_metabolite_evidence_not_strong(self, client):
+        """A KEGG entry with no compounds + no model metabolite IDs must not score STRONG.
+
+        Regression: an empty-vs-empty match previously returned 1.0, so both the
+        substrate and product ratios became 1.0 and the reaction was scored
+        STRONG/High despite zero actual metabolite evidence.
+        """
+        equation_less_entry = (
+            "ENTRY       R99999                      Reaction\n"
+            "NAME        malformed entry without equation\n"
+            "ENZYME      1.1.1.1\n"
+            "///\n"
+        )
+        client.get = AsyncMock(return_value=equation_less_entry)
+
+        items = await client.check_evidence(
+            reaction=None,
+            kegg_reaction_ids=["R99999"],
+            model_substrates_kegg=[],
+            model_products_kegg=[],
+        )
+        assert len(items) == 1
+        # No informative metabolites on either side ⇒ unverifiable, never STRONG.
+        assert items[0].strength != EvidenceStrength.STRONG
+        assert items[0].raw_data["reconciliation_state"] == "unverifiable"
 
     @pytest.mark.asyncio
     async def test_check_evidence_ec_fallback(self, client):
@@ -288,9 +317,10 @@ class TestKEGGClient:
             model_products_kegg=["C88888"],
         )
         assert len(items) == 1
+        # Disjoint informative metabolites ⇒ contradictory ⇒ ABSENT strength.
         assert items[0].strength == EvidenceStrength.ABSENT
-        assert "metabolite match failed" in items[0].description
-        assert "KEGG reaction R00658 found" in items[0].description
+        assert items[0].raw_data["reconciliation_state"] == "none_contradictory"
+        assert "R00658" in items[0].description
 
     @pytest.mark.asyncio
     async def test_description_has_overlap_counts(self, client):
@@ -304,9 +334,8 @@ class TestKEGGClient:
             model_products_kegg=["C00074", "C00001"],
         )
         desc = items[0].description
-        assert "substrates:" in desc
-        assert "products:" in desc
-        assert "matched" in desc
+        assert "substrates" in desc
+        assert "products" in desc
         # Should have fraction like "1/1"
         assert "1/1" in desc
 

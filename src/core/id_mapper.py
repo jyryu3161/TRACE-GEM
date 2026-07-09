@@ -26,9 +26,11 @@ class IdentifierMapper:
 
         Args:
             reaction: The reaction to resolve IDs for.
-            universal: If True, use universal model annotation keys
-                (e.g., "KEGG Reaction" vs "kegg.reaction") and skip
-                metabolite mapping (universal reactions have no compartments).
+            universal: If True, use universal-model annotation keys
+                (e.g., "KEGG Reaction" vs "kegg.reaction"). Metabolite→KEGG
+                mapping runs for both cases so universal gap-fill candidates can
+                be metabolite-reconciled (they carry BiGG metabolite IDs like
+                ``prpp_c`` that resolve via ``met_bigg_to_kegg``).
         """
         bigg_id = self._normalize_bigg_id(reaction.id)
         ext = ExternalIDs(reaction_id=reaction.id, bigg_id=bigg_id)
@@ -56,19 +58,19 @@ class IdentifierMapper:
                 if kid not in ext.kegg_reaction_ids:
                     ext.kegg_reaction_ids.append(kid)
 
-        # 5-6. Map metabolites to KEGG compound IDs (SBML models only)
-        if not universal:
-            for met_id in reaction.reactants:
-                kegg_ids = self._resolve_metabolite_kegg(met_id)
-                for kid in kegg_ids:
-                    if kid not in ext.kegg_substrate_ids:
-                        ext.kegg_substrate_ids.append(kid)
+        # 5-6. Map metabolites to KEGG compound IDs. Runs for universal
+        # candidates too so they can be metabolite-reconciled during gap-fill.
+        for met_id in reaction.reactants:
+            kegg_ids = self._resolve_metabolite_kegg(met_id)
+            for kid in kegg_ids:
+                if kid not in ext.kegg_substrate_ids:
+                    ext.kegg_substrate_ids.append(kid)
 
-            for met_id in reaction.products:
-                kegg_ids = self._resolve_metabolite_kegg(met_id)
-                for kid in kegg_ids:
-                    if kid not in ext.kegg_product_ids:
-                        ext.kegg_product_ids.append(kid)
+        for met_id in reaction.products:
+            kegg_ids = self._resolve_metabolite_kegg(met_id)
+            for kid in kegg_ids:
+                if kid not in ext.kegg_product_ids:
+                    ext.kegg_product_ids.append(kid)
 
         return ext
 

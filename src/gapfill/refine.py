@@ -146,17 +146,12 @@ async def refine_model_data(
         if own_engine:
             await engine.initialize()
 
-        if not skip_evaluation:
-            _log(f"Evaluating {len(model_data.reactions)} model reactions...")
-
-            def _model_progress(c: int, t: int, rxn_id: str) -> None:
-                if progress_callback:
-                    progress_callback("evaluating_model", c, t, rxn_id)
-
-            evidence_results = await engine.evaluate_batch(
-                list(model_data.reactions), progress_callback=_model_progress
-            )
-
+        # KEGG evidence is computed only for gap-fill candidates (to weight
+        # which universal reactions to add). Model quality is judged by tasks,
+        # not by per-reaction evidence.
+        if skip_evaluation:
+            _log("Skipping candidate evidence evaluation")
+        else:
             # Honor candidate_evidence_eager_limit (matches CLI + GUI): defer
             # candidate evidence for large universals, leaving default penalties.
             eager_limit = max(0, config.candidate_evidence_eager_limit)
@@ -172,12 +167,9 @@ async def refine_model_data(
                     if progress_callback:
                         progress_callback("evaluating_candidates", c, t, rxn_id)
 
-                cand_results = await engine.evaluate_candidates_batch(
+                evidence_results = await engine.evaluate_candidates_batch(
                     candidates, progress_callback=_cand_progress
                 )
-                evidence_results.update(cand_results)
-        else:
-            _log("Skipping evidence evaluation")
 
         gapfill_engine = GapFillEngine(config)
         try:

@@ -20,6 +20,38 @@ logger = logging.getLogger("metataskgapfill.universal_loader")
 _UTILITY_PREFIXES = ("EX_", "DM_", "SK_", "sink_")
 _SOLVER_RESERVED_REACTION_IDS = SOLVER_RESERVED_REACTION_IDS
 
+# Human-readable names for standard BiGG single-letter compartment codes. Used
+# to label compartments backfilled from metabolite ID suffixes; unknown codes
+# fall back to the code itself as the name.
+_COMPARTMENT_NAMES = {
+    "c": "cytosol",
+    "e": "extracellular space",
+    "p": "periplasm",
+    "m": "mitochondria",
+    "r": "endoplasmic reticulum",
+    "h": "chloroplast",
+    "x": "peroxisome/glyoxysome",
+    "g": "golgi apparatus",
+    "l": "lysosome",
+    "n": "nucleus",
+    "v": "vacuole",
+    "u": "thylakoid",
+}
+
+
+def _infer_compartment_from_id(met_id: str) -> str:
+    """Infer a compartment code from a BiGG-style metabolite ID suffix.
+
+    Metabolite IDs follow ``<base>_<compartment>`` (e.g. ``glc__D_e`` -> ``e``,
+    ``prpp_c`` -> ``c``). Returns the suffix when it looks like a compartment
+    code (short alphanumeric token), otherwise an empty string.
+    """
+    if "_" in met_id:
+        suffix = met_id.rsplit("_", 1)[1]
+        if suffix and suffix.isalnum() and len(suffix) <= 2:
+            return suffix
+    return ""
+
 
 class UniversalLoader:
     """Load a universal model and extract candidate reactions."""
@@ -48,6 +80,7 @@ class UniversalLoader:
 
         logger.info("Loading universal model (JSON) from %s", filepath)
         model = cobra.io.load_json_model(str(filepath))
+        self._backfill_compartments(model)
         self._remove_solver_reserved_reactions(model)
         logger.info(
             "Loaded universal model '%s': %d reactions, %d metabolites",
@@ -65,6 +98,7 @@ class UniversalLoader:
 
         logger.info("Loading universal model (SBML) from %s", filepath)
         model = cobra.io.read_sbml_model(str(filepath))
+        self._backfill_compartments(model)
         self._remove_solver_reserved_reactions(model)
         logger.info(
             "Loaded universal model '%s': %d reactions, %d metabolites",
@@ -134,6 +168,35 @@ class UniversalLoader:
     def is_exchange_or_utility_reaction(rxn_id: str) -> bool:
         """Check if reaction is an exchange, demand, or sink reaction."""
         return any(rxn_id.startswith(p) for p in _UTILITY_PREFIXES)
+
+    def _backfill_compartments(self, model: cobra.Model) -> None:
+        """Assign a compartment to metabolites that lack one and register names.
+
+        The BiGG universal JSON ships every metabolite with an empty
+        ``compartment`` attribute. Left unfixed, copying such metabolites into a
+        user model during gap-fill produces an ``id``-less ``<compartment>`` on
+        save, yielding an SBML file COBRApy cannot re-read (breaking
+        ``--output-model``, GUI export, and version restore). Recover the
+        compartment from the metabolite ID suffix and ensure every referenced
+        compartment has a name entry.
+        """
+        fixed = 0
+        used_names = dict(model.compartments)
+        for met in model.metabolites:
+            if not met.compartment:
+                inferred = _infer_compartment_from_id(met.id)
+                met.compartment = inferred or "c"
+                fixed += 1
+            code = met.compartment
+            if code and not used_names.get(code):
+                used_names[code] = _COMPARTMENT_NAMES.get(code, code)
+        # Reassign so unnamed/newly-referenced compartments carry a name in SBML.
+        model.compartments = used_names
+        if fixed:
+            logger.info(
+                "Backfilled compartments for %d universal metabolite(s) from ID suffixes",
+                fixed,
+            )
 
     def _remove_solver_reserved_reactions(self, model: cobra.Model) -> None:
         """Remove reactions whose IDs collide with LP/MPS solver keywords."""

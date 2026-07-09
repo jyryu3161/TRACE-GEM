@@ -48,6 +48,8 @@ class SourceConfig:
     order: int  # Display order
 
 
+# Evidence is KEGG-only. BiGG is not an evidence source (its only role is the
+# KEGG<->BiGG reaction mapping used by gap-fill), so it is not registered here.
 SOURCE_REGISTRY: dict[EvidenceSource, SourceConfig] = {
     EvidenceSource.KEGG: SourceConfig(
         display_name="KEGG",
@@ -58,16 +60,6 @@ SOURCE_REGISTRY: dict[EvidenceSource, SourceConfig] = {
         weight_key="weight_kegg",
         description="KEGG pathway database verification",
         order=0,
-    ),
-    EvidenceSource.BIGG: SourceConfig(
-        display_name="BiGG Models",
-        color=_DEFAULT_SOURCE_COLORS[EvidenceSource.BIGG],
-        requires_api_key=False,
-        config_key="",
-        enable_key="enable_bigg",
-        weight_key="weight_bigg",
-        description="BiGG universal reaction database",
-        order=1,
     ),
 }
 
@@ -84,7 +76,7 @@ def get_ordered_sources() -> list[tuple[EvidenceSource, SourceConfig]]:
 
 def get_active_sources(config: object) -> list[EvidenceSource]:
     """Get list of enabled sources based on config flags."""
-    active = []
+    active: list[EvidenceSource] = []
     for source, sc in get_ordered_sources():
         if source == EvidenceSource.KEGG:
             active.append(source)  # KEGG is always active

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 from dataclasses import asdict
@@ -62,9 +63,8 @@ class VersionStorage:
 
         # Write metadata
         meta_path = version_dir / "meta.json"
-        meta_path.write_text(
-            json.dumps(self._version_to_dict(version), indent=2),
-            encoding="utf-8",
+        self._atomic_write_text(
+            meta_path, json.dumps(self._version_to_dict(version), indent=2)
         )
 
         # Update history index
@@ -108,13 +108,34 @@ class VersionStorage:
         model = cobra.io.read_sbml_model(str(sbml_path))
         return model, version
 
+    @staticmethod
+    def _atomic_write_text(path: Path, text: str) -> None:
+        """Write ``text`` atomically so a crash mid-write can't corrupt ``path``.
+
+        Writes a sibling temp file then ``os.replace``s it into place (an atomic
+        rename on the same filesystem). Without this, a truncated write to the
+        shared history index would make an entire model's version history
+        unreadable.
+        """
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+
     def load_history(self, model_id: str) -> list[ModelVersion]:
         """Load the full version history for a model."""
         history_path = self._model_dir(model_id) / "history.json"
         if not history_path.exists():
             return []
 
-        data = json.loads(history_path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(history_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.error(
+                "Version history for %s is unreadable (%s); treating as empty",
+                model_id,
+                exc,
+            )
+            return []
         return [self._dict_to_version(d) for d in data]
 
     def save_history(
@@ -126,9 +147,7 @@ class VersionStorage:
 
         history_path = model_dir / "history.json"
         data = [self._version_to_dict(v) for v in versions]
-        history_path.write_text(
-            json.dumps(data, indent=2), encoding="utf-8",
-        )
+        self._atomic_write_text(history_path, json.dumps(data, indent=2))
 
     def cleanup_old_versions(
         self, model_id: str, max_keep: int = 20

@@ -152,9 +152,13 @@ def _extract_compound_ids(side: str) -> list[str]:
 
 
 def compute_match_ratio(model_ids: list[str], kegg_ids: list[str]) -> float:
-    """Compute Jaccard similarity between model metabolite IDs and KEGG compound IDs."""
-    if not model_ids and not kegg_ids:
-        return 1.0  # Both empty = match
+    """Compute Jaccard similarity between model metabolite IDs and KEGG compound IDs.
+
+    An empty-vs-empty comparison is treated as *no evidence* (0.0), not a
+    perfect match: if neither the model reaction nor the KEGG entry contributed
+    any compound IDs for a side, there is nothing to corroborate. Returning 1.0
+    here would let a reaction with zero metabolite evidence be scored STRONG/High.
+    """
     if not model_ids or not kegg_ids:
         return 0.0
 
@@ -192,6 +196,103 @@ def compute_informative_match(
             True,
         )
     return compute_match_ratio(model_ids, kegg_ids), model_ids, kegg_ids, False
+
+
+# --- Rule-based reconciliation / EC-concordance states -----------------------
+# Tiers are decided from these categorical states (not tuned float cutoffs).
+RECON_FULL = "full"
+RECON_PARTIAL = "partial"
+RECON_CONTRADICTORY = "none_contradictory"
+RECON_UNVERIFIABLE = "unverifiable"
+_RECON_RANK = {RECON_FULL: 3, RECON_PARTIAL: 2, RECON_UNVERIFIABLE: 1, RECON_CONTRADICTORY: 0}
+
+EC_CONCORDANT = "concordant"
+EC_DISCORDANT = "discordant"
+EC_UNKNOWN = "unknown"
+_EC_RANK = {EC_CONCORDANT: 2, EC_UNKNOWN: 1, EC_DISCORDANT: 0}
+
+
+def _reconcile_side(model_inf: set[str], kegg_inf: set[str]) -> str:
+    """Reconcile one side (substrates or products) of informative compounds.
+
+    Empty on either side ⇒ UNVERIFIABLE (no currency-only fallback). FULL
+    requires symmetric set equality — strictly more conservative than a
+    high-Jaccard threshold.
+    """
+    if not model_inf or not kegg_inf:
+        return RECON_UNVERIFIABLE
+    matched = model_inf & kegg_inf
+    if matched == model_inf == kegg_inf:
+        return RECON_FULL
+    if matched:
+        return RECON_PARTIAL
+    return RECON_CONTRADICTORY
+
+
+def _aggregate_reconciliation(sub_state: str, prod_state: str) -> str:
+    states = {sub_state, prod_state}
+    if RECON_CONTRADICTORY in states:
+        return RECON_CONTRADICTORY
+    if states == {RECON_UNVERIFIABLE}:
+        return RECON_UNVERIFIABLE
+    if states == {RECON_FULL}:
+        return RECON_FULL
+    # One FULL side with the other UNVERIFIABLE, or any PARTIAL ⇒ PARTIAL
+    # (conservative: the whole reaction was not verified).
+    return RECON_PARTIAL
+
+
+def reconciliation_state(
+    model_substrates: list[str],
+    model_products: list[str],
+    kegg_substrates: list[str],
+    kegg_products: list[str],
+) -> tuple[str, dict]:
+    """Best-of-both-orientation metabolite reconciliation state + detail.
+
+    KEGG's substrate/product split is direction-arbitrary, so both orientations
+    are scored and the stronger (non-contradictory) reading is kept.
+    """
+    m_sub, m_prod = set(_filter_currency(model_substrates)), set(_filter_currency(model_products))
+    k_sub, k_prod = set(_filter_currency(kegg_substrates)), set(_filter_currency(kegg_products))
+
+    orientations = [
+        ("forward", (m_sub, k_sub), (m_prod, k_prod)),
+        ("reverse", (m_sub, k_prod), (m_prod, k_sub)),
+    ]
+    best: tuple[str, str, tuple, tuple] | None = None
+    for name, (ms1, ks1), (ms2, ks2) in orientations:
+        agg = _aggregate_reconciliation(_reconcile_side(ms1, ks1), _reconcile_side(ms2, ks2))
+        if best is None or _RECON_RANK[agg] > _RECON_RANK[best[0]]:
+            best = (agg, name, (ms1, ks1), (ms2, ks2))
+    agg, name, (ms1, ks1), (ms2, ks2) = best  # type: ignore[misc]
+    info = {
+        "orientation": name,
+        "sub_matched": len(ms1 & ks1),
+        "sub_total": len(ms1 | ks1),
+        "prod_matched": len(ms2 & ks2),
+        "prod_total": len(ms2 | ks2),
+    }
+    return agg, info
+
+
+def ec_concordance_state(model_ec: list[str], kegg_ec: list[str]) -> str:
+    """Compare model EC numbers with the KEGG entry's EC numbers.
+
+    Exact 4-level overlap ⇒ CONCORDANT; sharing only the 3-level subclass ⇒
+    UNKNOWN (ambiguous); disjoint at the 3-level class ⇒ DISCORDANT; missing on
+    either side ⇒ UNKNOWN.
+    """
+    model = {e.strip() for e in model_ec if e and e.strip()}
+    kegg = {e.strip() for e in kegg_ec if e and e.strip()}
+    if not model or not kegg:
+        return EC_UNKNOWN
+    if model & kegg:
+        return EC_CONCORDANT
+    prefix3 = lambda ec: ".".join(ec.split(".")[:3])  # noqa: E731
+    if {prefix3(e) for e in model} & {prefix3(e) for e in kegg}:
+        return EC_UNKNOWN
+    return EC_DISCORDANT
 
 
 class KEGGClient(BaseAPIClient):
@@ -244,16 +345,17 @@ class KEGGClient(BaseAPIClient):
         best_result = None  # Track best match across all KEGG IDs
 
         for kid in kegg_ids:
-            result = await self._verify_reaction(kid, substrates, products)
+            result = await self._verify_reaction(kid, substrates, products, ec_nums)
             if self._is_better_kegg_result(result, best_result):
                 best_result = result
 
-        # If direct IDs are absent or only mismatched, try EC number lookup.
-        if (best_result is None or best_result["strength_rank"] == 0) and ec_nums:
+        # If no anchor yet, or the best anchor contradicts the model, try to
+        # find a KEGG reaction via the model's EC numbers.
+        if (best_result is None or not best_result["verified"]) and ec_nums:
             for ec in ec_nums[:3]:
                 ec_rxn_ids = await self._find_reactions_by_ec(ec)
                 for kid in ec_rxn_ids[:3]:
-                    result = await self._verify_reaction(kid, substrates, products)
+                    result = await self._verify_reaction(kid, substrates, products, ec_nums)
                     if result is not None:
                         result["via_ec"] = ec
                         if self._is_better_kegg_result(result, best_result):
@@ -262,11 +364,17 @@ class KEGGClient(BaseAPIClient):
         if best_result:
             items.append(best_result["evidence_item"])
         else:
+            # No KEGG entry could be retrieved by any route \u21d2 not KEGG-anchored.
             items.append(
                 EvidenceItem(
                     source=EvidenceSource.KEGG,
                     strength=EvidenceStrength.ABSENT,
                     description="No KEGG reaction found for this reaction",
+                    raw_data={
+                        "kegg_anchored": False,
+                        "reconciliation_state": RECON_UNVERIFIABLE,
+                        "ec_concordance_state": EC_UNKNOWN,
+                    },
                 )
             )
 
@@ -274,123 +382,62 @@ class KEGGClient(BaseAPIClient):
 
     @staticmethod
     def _is_better_kegg_result(result: dict | None, current: dict | None) -> bool:
-        """Return True when ``result`` is a better KEGG verification candidate."""
+        """Rank KEGG verifications by (reconciliation state, EC concordance)."""
         if result is None:
             return False
         if current is None:
             return True
-        result_rank = result.get("strength_rank", 0)
-        current_rank = current.get("strength_rank", 0)
-        if result_rank != current_rank:
-            return result_rank > current_rank
-        return result.get("average_match", 0.0) > current.get("average_match", 0.0)
+        r = (_RECON_RANK[result["reconciliation_state"]], _EC_RANK[result["ec_concordance_state"]])
+        c = (_RECON_RANK[current["reconciliation_state"]], _EC_RANK[current["ec_concordance_state"]])
+        return r > c
+
+    # Legacy per-item strength (drives the display-only kegg_score, NOT the tier).
+    _RECON_STRENGTH = {
+        RECON_FULL: EvidenceStrength.STRONG,
+        RECON_PARTIAL: EvidenceStrength.MODERATE,
+        RECON_UNVERIFIABLE: EvidenceStrength.WEAK,
+        RECON_CONTRADICTORY: EvidenceStrength.ABSENT,
+    }
 
     async def _verify_reaction(
         self,
         kegg_id: str,
         model_substrates: list[str],
         model_products: list[str],
+        model_ec: list[str] | None = None,
     ) -> dict | None:
-        """Verify a single KEGG reaction against model data. Returns result dict or None."""
+        """Verify a single KEGG reaction against model data. Returns result dict or None.
+
+        Computes the categorical metabolite-reconciliation and EC-concordance
+        states that the scorer turns into a tier. Returns ``None`` only when the
+        KEGG entry itself cannot be retrieved (not KEGG-anchored via this ID).
+        """
         parsed = await self.get_reaction_parsed(kegg_id)
         if parsed is None:
             return None
 
-        # Stage 1: Reaction exists
         url = f"https://www.kegg.jp/entry/{kegg_id}"
-
-        # Stage 2: Substrate/product matching
-        sub_ratio, matched_model_substrates, matched_kegg_substrates, sub_filtered = (
-            compute_informative_match(model_substrates, parsed.substrates)
+        recon, info = reconciliation_state(
+            model_substrates, model_products, parsed.substrates, parsed.products
         )
-        prod_ratio, matched_model_products, matched_kegg_products, prod_filtered = (
-            compute_informative_match(model_products, parsed.products)
-        )
-        avg_match = (sub_ratio + prod_ratio) / 2
+        ec_state = ec_concordance_state(model_ec or [], parsed.enzyme)
+        strength = self._RECON_STRENGTH[recon]
+        verified = recon != RECON_CONTRADICTORY
 
-        # Reject as supporting evidence if overlap is too low, but keep an
-        # explicit ABSENT item so the UI can distinguish "entry mismatch" from
-        # "no KEGG entry was found".
-        if avg_match < 0.2:
-            model_sub_set = set(matched_model_substrates)
-            kegg_sub_set = set(matched_kegg_substrates)
-            sub_overlap = len(model_sub_set & kegg_sub_set)
-            sub_total = len(model_sub_set | kegg_sub_set)
+        sub_ratio = info["sub_matched"] / info["sub_total"] if info["sub_total"] else 0.0
+        prod_ratio = info["prod_matched"] / info["prod_total"] if info["prod_total"] else 0.0
 
-            model_prod_set = set(matched_model_products)
-            kegg_prod_set = set(matched_kegg_products)
-            prod_overlap = len(model_prod_set & kegg_prod_set)
-            prod_total = len(model_prod_set | kegg_prod_set)
-
-            description = (
-                f"KEGG reaction {kegg_id} found but metabolite match failed "
-                f"(substrates: {sub_overlap}/{sub_total} matched, "
-                f"products: {prod_overlap}/{prod_total} matched)"
-            )
-            return {
-                "evidence_item": EvidenceItem(
-                    source=EvidenceSource.KEGG,
-                    strength=EvidenceStrength.ABSENT,
-                    description=description,
-                    url=url,
-                    raw_data={
-                        "kegg_id": kegg_id,
-                        "substrate_match": sub_ratio,
-                        "product_match": prod_ratio,
-                        "currency_filtered": sub_filtered or prod_filtered,
-                        "model_substrates": matched_model_substrates,
-                        "model_products": matched_model_products,
-                        "kegg_substrates": matched_kegg_substrates,
-                        "kegg_products": matched_kegg_products,
-                        "raw_model_substrates": model_substrates,
-                        "raw_model_products": model_products,
-                        "raw_kegg_substrates": parsed.substrates,
-                        "raw_kegg_products": parsed.products,
-                        "enzyme": parsed.enzyme,
-                        "pathway_ids": parsed.pathway_ids,
-                    },
-                ),
-                "strength_rank": 0,
-                "substrate_match": sub_ratio,
-                "product_match": prod_ratio,
-                "average_match": avg_match,
-            }
-
-        # Determine strength
-        if avg_match >= 0.8:
-            strength = EvidenceStrength.STRONG
-            rank = 3
-        elif avg_match >= 0.5:
-            strength = EvidenceStrength.MODERATE
-            rank = 2
-        else:
-            strength = EvidenceStrength.WEAK
-            rank = 1
-
-        # Compute overlap counts for description
-        model_sub_set = set(matched_model_substrates)
-        kegg_sub_set = set(matched_kegg_substrates)
-        sub_overlap = len(model_sub_set & kegg_sub_set)
-        sub_total = len(model_sub_set | kegg_sub_set)
-
-        model_prod_set = set(matched_model_products)
-        kegg_prod_set = set(matched_kegg_products)
-        prod_overlap = len(model_prod_set & kegg_prod_set)
-        prod_total = len(model_prod_set | kegg_prod_set)
-
-        # Build description
-        desc_parts = [
-            f"KEGG reaction {kegg_id}",
-        ]
+        desc_parts = [f"KEGG reaction {kegg_id}"]
         if parsed.name:
             desc_parts.append(f"({parsed.name})")
         desc_parts.append(
-            f"\u2014 substrates: {sub_overlap}/{sub_total} matched ({sub_ratio:.0%}), "
-            f"products: {prod_overlap}/{prod_total} matched ({prod_ratio:.0%})"
+            f"\u2014 metabolites: {recon.replace('_', ' ')}"
+            f" (substrates {info['sub_matched']}/{info['sub_total']},"
+            f" products {info['prod_matched']}/{info['prod_total']})"
         )
+        desc_parts.append(f"| EC: {ec_state}")
         if parsed.enzyme:
-            desc_parts.append(f" | EC: {', '.join(parsed.enzyme[:3])}")
-
+            desc_parts.append(f"({', '.join(parsed.enzyme[:3])})")
         description = " ".join(desc_parts)
 
         return {
@@ -401,26 +448,28 @@ class KEGGClient(BaseAPIClient):
                 url=url,
                 raw_data={
                     "kegg_id": kegg_id,
+                    "kegg_anchored": True,
+                    "reconciliation_state": recon,
+                    "ec_concordance_state": ec_state,
+                    "reconciliation_detail": info,
                     "substrate_match": sub_ratio,
                     "product_match": prod_ratio,
-                    "currency_filtered": sub_filtered or prod_filtered,
-                    "model_substrates": matched_model_substrates,
-                    "model_products": matched_model_products,
-                    "kegg_substrates": matched_kegg_substrates,
-                    "kegg_products": matched_kegg_products,
                     "raw_model_substrates": model_substrates,
                     "raw_model_products": model_products,
                     "raw_kegg_substrates": parsed.substrates,
                     "raw_kegg_products": parsed.products,
-                    "enzyme": parsed.enzyme,
+                    "model_ec": list(model_ec or []),
+                    "kegg_enzyme": parsed.enzyme,
                     "pathway_ids": parsed.pathway_ids,
                     "kegg_parsed": parsed,
                 },
             ),
-            "strength_rank": rank,
+            "kegg_anchored": True,
+            "reconciliation_state": recon,
+            "ec_concordance_state": ec_state,
+            "verified": verified,
             "substrate_match": sub_ratio,
             "product_match": prod_ratio,
-            "average_match": avg_match,
         }
 
     async def _find_reactions_by_ec(self, ec_number: str) -> list[str]:

@@ -45,12 +45,11 @@ def test_load_models_pipeline(tmp_path: Path) -> None:
     cfg = _write(
         tmp_path, "p.yaml",
         f"models:\n  - {{path: {m}, kegg_code: eco, label: ecoli}}\n"
-        f"evaluate:\n  enabled: true\n  output: out/{{label}}.csv\n",
+        f"refine:\n  enabled: false\n",
     )
     spec = load_pipeline(cfg)
     assert spec.build is None
     assert len(spec.models) == 1 and spec.models[0].kegg_code == "eco"
-    assert spec.evaluate.enabled
 
 
 def test_validate_requires_exactly_one_input(tmp_path: Path) -> None:
@@ -112,9 +111,9 @@ def test_validate_non_dict_section(tmp_path: Path) -> None:
     m = _write(tmp_path, "m.xml", "<x/>")
     cfg = _write(
         tmp_path, "p.yaml",
-        f"models:\n  - {{path: {m}, kegg_code: eco}}\nevaluate: enabled\n",
+        f"models:\n  - {{path: {m}, kegg_code: eco}}\nrefine: enabled\n",
     )
-    with pytest.raises(PipelineError, match="'evaluate' must be a mapping"):
+    with pytest.raises(PipelineError, match="'refine' must be a mapping"):
         load_pipeline(cfg)
 
 
@@ -167,12 +166,30 @@ def test_apply_carveme_defaults() -> None:
     assert cfg.carveme_max_parallel == 4
 
 
+def test_cli_flags_win_over_yaml_carveme_defaults() -> None:
+    """Regression: an explicit CLI flag must take precedence over the YAML
+    carveme block (CLI > YAML > defaults), not be overwritten by it."""
+    cfg = Config()
+    cfg.carveme_solver = "scip"  # as if set by --carveme-solver scip
+    cfg.carveme_universe = "grampos"
+
+    apply_carveme_defaults(
+        cfg,
+        CarveMeDefaults(solver="gurobi", universe="gramneg", max_parallel=4),
+        cli_overridden={"carveme_solver"},
+    )
+
+    assert cfg.carveme_solver == "scip"  # CLI flag preserved
+    assert cfg.carveme_universe == "gramneg"  # not CLI-set → YAML applies
+    assert cfg.carveme_max_parallel == 4  # not CLI-set → YAML applies
+
+
 def test_fmt_templating() -> None:
     assert _fmt("out/{label}_{model}.xml", "ecoli", "iML1515") == "out/ecoli_iML1515.xml"
 
 
 @pytest.mark.asyncio
-async def test_run_pipeline_models_refine_evaluate(tmp_path: Path, monkeypatch) -> None:
+async def test_run_pipeline_models_refine(tmp_path: Path, monkeypatch) -> None:
     import src.cli as cli_mod
     from src.core.models import ModelData, Reaction
 
@@ -187,17 +204,12 @@ async def test_run_pipeline_models_refine_evaluate(tmp_path: Path, monkeypatch) 
 
     monkeypatch.setattr("src.core.sbml_parser.SBMLParser.load_model", fake_load)
 
-    calls: dict[str, list] = {"refine": [], "eval": []}
+    calls: dict[str, list] = {"refine": []}
 
     async def fake_gapfill(**kwargs):
         calls["refine"].append(kwargs)
 
-    async def fake_eval(**kwargs):
-        calls["eval"].append(kwargs)
-        return {}
-
     monkeypatch.setattr(cli_mod, "async_gapfill_main", fake_gapfill)
-    monkeypatch.setattr(cli_mod, "async_main", fake_eval)
 
     m = _write(tmp_path, "a.xml", "<x/>")
     universal = _write(tmp_path, "u.json", "{}")
@@ -206,17 +218,15 @@ async def test_run_pipeline_models_refine_evaluate(tmp_path: Path, monkeypatch) 
         tmp_path, "p.yaml",
         f"models:\n  - {{path: {m}, kegg_code: eco, label: ecoli}}\n"
         f"refine:\n  enabled: true\n  universal: {universal}\n  tasks: {tasks}\n"
-        f"  output_model: {tmp_path}/out/{{label}}_refined.xml\n"
-        f"evaluate:\n  enabled: true\n  output: {tmp_path}/out/{{label}}_ev.csv\n",
+        f"  output_model: {tmp_path}/out/{{label}}_refined.xml\n",
     )
     spec = load_pipeline(cfg_yaml)
     config = Config()
     result = await run_pipeline(spec, config, log=lambda _m: None)
 
     assert result.models_built == 1
-    assert result.models_refined == 1 and result.models_evaluated == 1
-    assert len(calls["refine"]) == 1 and len(calls["eval"]) == 1
+    assert result.models_refined == 1
+    assert len(calls["refine"]) == 1
     # organism (taxonomy) propagated to config + templated output resolved
     assert config.kegg_organism_code == "eco"
     assert calls["refine"][0]["output_model"].endswith("/out/ecoli_refined.xml")
-    assert calls["eval"][0]["output_path"].endswith("/out/ecoli_ev.csv")

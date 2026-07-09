@@ -16,6 +16,17 @@ from src.core.models import EvidenceItem, Reaction
 logger = logging.getLogger("metataskgapfill.api")
 
 
+class APIUnavailableError(Exception):
+    """Raised when a request cannot be completed (network error, exhausted
+    retries, or an open circuit breaker) — as distinct from a genuine 404.
+
+    ``get`` returns ``None`` only for a real "not found" (absent evidence).
+    This exception means the lookup could *not be performed*, so the result is
+    unknown, not absent. Conflating the two would let a transient KEGG outage
+    silently mislabel an entire model as lacking KEGG evidence.
+    """
+
+
 class BaseAPIClient(ABC):
     """Abstract base class for all external API clients.
 
@@ -77,7 +88,9 @@ class BaseAPIClient(ABC):
         if self._circuit_open:
             if time.monotonic() < self._circuit_open_until:
                 logger.warning("[%s] Circuit open, skipping request", self.name)
-                return None
+                raise APIUnavailableError(
+                    f"{self.name} circuit breaker is open; request skipped"
+                )
             self._circuit_open = False
             self._failure_count = 0
 
@@ -147,7 +160,12 @@ class BaseAPIClient(ABC):
                 self._failure_count,
             )
 
-        return None
+        # Exhausted retries without a definitive answer: the resource is
+        # unreachable, not confirmed-absent. Raise so callers do not record a
+        # transient outage as absent evidence (a real 404 returned None above).
+        raise APIUnavailableError(
+            f"{self.name} request to {url} failed after {self._max_retries} attempt(s)"
+        )
 
     @abstractmethod
     async def check_evidence(self, reaction: Reaction, **kwargs) -> list[EvidenceItem]:

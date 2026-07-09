@@ -194,10 +194,6 @@ class WorkflowWizard(QDialog):
         group = QGroupBox("Step 4: Options")
         vlayout = QVBoxLayout(group)
 
-        self._opt_evaluate_model = QCheckBox("Evaluate model reactions")
-        self._opt_evaluate_model.setChecked(True)
-        vlayout.addWidget(self._opt_evaluate_model)
-
         self._opt_evaluate_candidates = QCheckBox("Evaluate candidate reactions")
         self._opt_evaluate_candidates.setChecked(True)
         vlayout.addWidget(self._opt_evaluate_candidates)
@@ -264,7 +260,6 @@ class WorkflowWizard(QDialog):
             organism_name: str
             universal_model_path: str  (resolved to default or custom path)
             task_file_path: str | None  (None if skipped)
-            evaluate_model: bool
             evaluate_candidates: bool
             filter_organism: bool
             gap_fill: bool
@@ -300,7 +295,6 @@ class WorkflowWizard(QDialog):
             "organism_name": self._organism_name.text().strip(),
             "universal_model_path": universal_path,
             "task_file_path": task_path,
-            "evaluate_model": self._opt_evaluate_model.isChecked(),
             "evaluate_candidates": self._opt_evaluate_candidates.isChecked(),
             "filter_organism": self._opt_filter_organism.isChecked(),
             "gap_fill": self._opt_gap_fill.isChecked(),

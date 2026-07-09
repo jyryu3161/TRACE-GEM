@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 import cobra
+from cobra.exceptions import OptimizationError
 
 from src.cache.cache_manager import CacheManager
 from src.core.cobra_utils import convert_cobra_reaction
@@ -173,6 +174,9 @@ class GapFillEngine:
             for candidate in candidates:
                 if candidate.reaction.id in penalties:
                     candidate.penalty = penalties[candidate.reaction.id]
+                ev = evidence_results.get(candidate.reaction.id)
+                if ev is not None:
+                    candidate.evidence_tier = ev.evidence_tier
 
             result.all_candidates = list(candidates)
             result.completed_phase = 2
@@ -186,6 +190,9 @@ class GapFillEngine:
             for candidate in candidates:
                 if candidate.reaction.id in penalties:
                     candidate.penalty = penalties[candidate.reaction.id]
+                ev = evidence_results.get(candidate.reaction.id)
+                if ev is not None:
+                    candidate.evidence_tier = ev.evidence_tier
 
         latest_after_results: list[TaskResult] | None = None
         gapfill_universal = self._exclude_exchange_reactions_from_universal(
@@ -404,6 +411,7 @@ class GapFillEngine:
         after_failed = {r.task.task_id for r in result.task_results_after if not r.passed}
         result.tasks_fixed = len(before_failed & after_passed)
         result.tasks_broken = len(before_passed & after_failed)
+
         if result.tasks_broken:
             logger.warning(
                 "Gap-fill regressed %d previously-passing task(s): %s",
@@ -479,10 +487,12 @@ class GapFillEngine:
                     required,
                     alternatives=max(1, self._config.gapfill_alternatives),
                 )
-            except RuntimeError:
+            except (RuntimeError, OptimizationError):
                 # Solver infeasibility near the requested bound: retry at a
                 # relaxed bound, but only keep reactions that genuinely satisfy
-                # the task's real threshold (see _retry_gapfill).
+                # the task's real threshold (see _retry_gapfill). cobra raises
+                # OptimizationError/Infeasible (NOT a RuntimeError subclass) when
+                # the MILP is infeasible, so both must be caught here.
                 solution_sets = self._retry_gapfill(
                     model, universal, task, penalties, required, result
                 )
@@ -856,9 +866,13 @@ class GapFillEngine:
         if not allowed_metabolites:
             return universal
 
+        # Prune only for MILP size: keep reactions whose metabolites are already
+        # in the draft model, plus explicit task targets. KEGG evidence is NOT a
+        # filter here — it only weights candidate penalties, so the gap-filler
+        # prefers evidence-backed reactions but can still add unevidenced ones to
+        # satisfy a task.
         keep_reaction_ids: set[str] = set()
         universal_rxn_map, universal_met_map, _ = self._task_runner._build_id_maps(universal)
-
         for task in tasks:
             if task.task_type == "Reaction":
                 rxn_id = self._task_runner._resolve_reaction(task.target_id, universal_rxn_map)

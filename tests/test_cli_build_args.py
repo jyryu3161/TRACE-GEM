@@ -113,7 +113,11 @@ def test_config_flags_parse() -> None:
 
 def test_main_config_dispatch(monkeypatch) -> None:
     seen = {}
-    monkeypatch.setattr(cli, "_run_pipeline_config", lambda args, cfg: seen.setdefault("cfg", args.config))
+    monkeypatch.setattr(
+        cli,
+        "_run_pipeline_config",
+        lambda args, cfg, overrides=None: seen.setdefault("cfg", args.config),
+    )
     cli.main(["--config", "run.yaml"])
     assert seen.get("cfg") == "run.yaml"
 

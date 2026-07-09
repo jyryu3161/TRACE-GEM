@@ -274,6 +274,58 @@ class TestRunTaskMetaboliteType:
         assert "not found" in result.error_message
 
 
+class TestObjectiveReactionCollision:
+    """Regression: the task objective demand reaction must not collide with a
+    reaction already in the model (cobra silently ignores duplicate adds)."""
+
+    def test_unique_objective_reaction_id_avoids_collision(self):
+        import cobra
+
+        model = cobra.Model("t")
+        met = cobra.Metabolite("atp_c", compartment="c")
+        pre = cobra.Reaction("DM_atp_c")
+        pre.add_metabolites({met: -1.0})
+        model.add_reactions([pre])
+
+        unique = TaskRunner._unique_objective_reaction_id(model, "DM_atp_c")
+        assert unique != "DM_atp_c"
+        assert unique not in model.reactions
+        # A free ID is returned unchanged.
+        assert (
+            TaskRunner._unique_objective_reaction_id(model, "TURNOVER_atp_c")
+            == "TURNOVER_atp_c"
+        )
+
+    def test_metabolite_task_ignores_blocked_preexisting_demand(self):
+        """With a blocked pre-existing DM_atp_c, the task must still use a fresh
+        objective reaction and correctly detect atp_c production."""
+        import cobra
+
+        model = cobra.Model("t")
+        atp = cobra.Metabolite("atp_c", compartment="c")
+        src = cobra.Reaction("SRC")
+        src.add_metabolites({atp: 1.0})
+        src.bounds = (0.0, 1000.0)
+        blocked = cobra.Reaction("DM_atp_c")  # pre-existing, cannot carry flux
+        blocked.add_metabolites({atp: -1.0})
+        blocked.bounds = (0.0, 0.0)
+        model.add_reactions([src, blocked])
+        model.solver = "glpk"
+
+        task = MetabolicTask(
+            task_id="U001",
+            task_type="Metabolite",
+            target_id="atp_c",
+            medium={},
+            expected_operator=">",
+            expected_value=0.0,
+        )
+
+        result = TaskRunner().run_task(model, task)
+        assert result.passed is True
+        assert result.actual_value > 0.0
+
+
 class TestRunTaskReactionType:
     def test_reaction_task_passes(self):
         """A Reaction-type task that optimizes the target reaction."""

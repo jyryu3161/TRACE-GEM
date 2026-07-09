@@ -25,12 +25,8 @@ class Config:
     # 0 means evaluate evidence for all candidates before gap-filling.
     candidate_evidence_eager_limit: int = 0
 
-    # Scoring weights
+    # Scoring weights (KEGG-only evidence scheme)
     weight_kegg: float = 0.70
-    weight_bigg: float = 0.30
-
-    # Source enable flags
-    enable_bigg: bool = True
 
     # Gap-fill settings
     default_universal_model: str = "data/bigg_universal_model_fixed.json"
@@ -117,5 +113,4 @@ class Config:
     def weights(self) -> dict[str, float]:
         return {
             "kegg": self.weight_kegg,
-            "bigg": self.weight_bigg,
         }

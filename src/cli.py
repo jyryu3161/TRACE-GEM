@@ -8,17 +8,13 @@ import csv
 import json
 import sys
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from src.core.models import (
-    EvidenceSource,
-    EvidenceTier,
     GapFillResult,
     MetabolicTask,
     ModelData,
-    Reaction,
     ReactionEvidence,
 )
 from src.gapfill.refine import apply_base_medium_to_tasks
@@ -43,26 +39,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="metatask-gapfill-cli",
         description=(
-            "Evaluate SBML model reactions and run metabolic-task-based gap-filling."
+            "Task-aware gap-filling of genome-scale models, with universal "
+            "candidate reactions weighted by KEGG evidence."
         ),
     )
     parser.add_argument(
         "model",
         nargs="?",
         default=None,
-        help="Path to SBML model file (.xml). Omit when using --build/--batch-build.",
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        help="Output file path (extension determines format: .csv or .json). "
-        "Default: {model_id}_evidence.csv",
-    )
-    parser.add_argument(
-        "-f",
-        "--format",
-        choices=("csv", "json"),
-        help="Force output format (overrides extension detection)",
+        help="Path to SBML model file (.xml). Requires --gap-fill. "
+        "Omit when using --build/--batch-build.",
     )
     parser.add_argument(
         "--organism",
@@ -71,17 +57,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--batch-size",
         type=int,
-        help="Batch size override",
+        help="Candidate-evaluation batch size override",
     )
     parser.add_argument(
         "--max-concurrent",
         type=int,
         help="Max concurrent requests override",
-    )
-    parser.add_argument(
-        "--skip-exchange",
-        action="store_true",
-        help="Skip exchange reactions (EX_*)",
     )
 
     # Gap-filling options
@@ -130,7 +111,8 @@ def _build_parser() -> argparse.ArgumentParser:
     gf_group.add_argument(
         "--skip-evaluation",
         action="store_true",
-        help="Skip evidence evaluation of model and candidates",
+        help="Skip KEGG evidence evaluation of gap-fill candidates "
+        "(use default penalties)",
     )
     gf_group.add_argument(
         "--include-exchange-gapfill",
@@ -248,7 +230,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config",
         metavar="FILE.yaml",
         default=None,
-        help="Run a full build → refine → evaluate pipeline from a YAML config "
+        help="Run a full build → refine (gap-fill) pipeline from a YAML config "
         "(jobs carry KEGG taxonomy codes). Mutually exclusive with other modes.",
     )
     pipe_group.add_argument(
@@ -281,7 +263,13 @@ def _medium_value_to_lower_bound(value: float) -> float:
 
 
 def _parse_medium_spec(spec: str) -> dict[str, float]:
-    """Parse inline medium spec: ``glc__D_e(-10);EX_o2_e(-1000)``."""
+    """Parse inline medium spec: ``glc__D_e(-10);EX_o2_e(-1000)``.
+
+    Values use the same sign convention as JSON/CSV media: a positive number is
+    an uptake capacity converted to a negative lower bound, a negative number is
+    an explicit lower bound. Without this, ``glc__D_e(10)`` would force glucose
+    *efflux* while the equivalent JSON ``{"glc__D_e": 10}`` allows uptake.
+    """
     import re
 
     medium: dict[str, float] = {}
@@ -293,7 +281,7 @@ def _parse_medium_spec(spec: str) -> dict[str, float]:
         if not match:
             raise ValueError(f"Invalid medium entry: {entry}")
         rxn_id = _normalize_medium_reaction_id(match.group(1))
-        medium[rxn_id] = float(match.group(2))
+        medium[rxn_id] = _medium_value_to_lower_bound(float(match.group(2)))
     return medium
 
 
@@ -367,6 +355,12 @@ def load_medium_argument(value: str | None, cobra_model: Any | None) -> dict[str
             if path.suffix.lower() in {".csv", ".tsv"}:
                 return _load_medium_csv(path)
             raise ValueError(f"Unsupported medium file extension: {path.suffix}")
+        # Not an existing file. If the value clearly names a medium file (a known
+        # extension or a path separator) rather than an inline spec, report the
+        # missing file instead of misparsing it as inline syntax and raising a
+        # confusing "Invalid medium entry" error.
+        if path.suffix.lower() in {".json", ".csv", ".tsv"} or "/" in value or "\\" in value:
+            raise FileNotFoundError(f"Medium file not found: {value}")
         return _parse_medium_spec(value)
 
     if cobra_model is None:
@@ -393,196 +387,6 @@ def load_medium_argument(value: str | None, cobra_model: Any | None) -> dict[str
         for rxn in exchanges
         if getattr(rxn, "lower_bound", 0.0) < 0
     }
-
-
-def _resolve_format(args: argparse.Namespace) -> str:
-    """Determine output format from --format flag or file extension."""
-    if args.format:
-        return str(args.format)
-    if args.output:
-        ext = Path(args.output).suffix.lower()
-        if ext == ".json":
-            return "json"
-    return "csv"
-
-
-def _serialize_raw_data(raw_data: dict | None) -> dict | None:
-    """Make raw_data JSON-serializable."""
-    if raw_data is None:
-        return None
-    result = {}
-    for k, v in raw_data.items():
-        if hasattr(v, "__dataclass_fields__"):
-            result[k] = asdict(v)
-        else:
-            result[k] = v
-    return result
-
-
-def export_csv(
-    filepath: str,
-    model_id: str,
-    reactions: list[Reaction],
-    results: dict[str, ReactionEvidence],
-) -> None:
-    """Export evaluation results to CSV."""
-    from src.evidence.evidence_types import get_ordered_sources
-
-    source_order = get_ordered_sources()
-    score_headers = [f"{sc.display_name} Score" for _, sc in source_order]
-
-    with open(filepath, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(
-            [
-                "Reaction ID",
-                "Name",
-                "Subsystem",
-                "Genes",
-                "GPR",
-                "Evidence Tier",
-                "Evidence Rationale",
-                "Legacy Confidence Score",
-                *score_headers,
-                "Substrate Match",
-                "Product Match",
-                "EC Numbers",
-                "KEGG IDs",
-                "Status",
-            ]
-        )
-        for rxn in reactions:
-            ev = results.get(rxn.id, ReactionEvidence(rxn.id))
-            per_source = []
-            for source, _ in source_order:
-                attr = f"{source.value}_score"
-                per_source.append(f"{getattr(ev, attr, 0.0):.4f}")
-
-            writer.writerow(
-                [
-                    rxn.id,
-                    rxn.name,
-                    rxn.subsystem or "",
-                    ";".join(rxn.genes),
-                    rxn.gene_reaction_rule,
-                    ev.evidence_tier.label,
-                    ev.evidence_rationale,
-                    f"{ev.confidence_score:.4f}",
-                    *per_source,
-                    f"{ev.substrate_match_ratio:.4f}",
-                    f"{ev.product_match_ratio:.4f}",
-                    ";".join(ev.ec_numbers),
-                    ";".join(ev.kegg_reaction_ids),
-                    ev.status.value,
-                ]
-            )
-
-
-def export_json(
-    filepath: str,
-    model_id: str,
-    organism: str | None,
-    reactions: list[Reaction],
-    results: dict[str, ReactionEvidence],
-) -> None:
-    """Export evaluation results to JSON."""
-    reactions_dict: dict[str, dict] = {}
-    export: dict[str, object] = {
-        "model_id": model_id,
-        "organism": organism,
-        "total_reactions": len(reactions),
-        "reactions": reactions_dict,
-    }
-    for rxn in reactions:
-        ev = results.get(rxn.id, ReactionEvidence(rxn.id))
-        reactions_dict[rxn.id] = {
-            "name": rxn.name,
-            "subsystem": rxn.subsystem,
-            "equation": rxn.equation,
-            "genes": rxn.genes,
-            "evidence_tier": ev.evidence_tier.value,
-            "evidence_rationale": ev.evidence_rationale,
-            "confidence_score": ev.confidence_score,
-            "scores": {
-                source.value: getattr(ev, f"{source.value}_score", 0.0) for source in EvidenceSource
-            },
-            "verification": {
-                "substrate_match_ratio": ev.substrate_match_ratio,
-                "product_match_ratio": ev.product_match_ratio,
-            },
-            "ec_numbers": ev.ec_numbers,
-            "kegg_reaction_ids": ev.kegg_reaction_ids,
-            "evidence_items": [
-                {
-                    "source": item.source.value,
-                    "strength": item.strength.name,
-                    "description": item.description,
-                    "url": item.url,
-                    "raw_data": _serialize_raw_data(item.raw_data),
-                }
-                for item in ev.items
-            ],
-            "status": ev.status.value,
-        }
-
-    with open(filepath, "w") as f:
-        json.dump(export, f, indent=2)
-
-
-async def async_main(
-    config: Config,
-    reactions: list[Reaction],
-    output_path: str,
-    fmt: str,
-    model_id: str,
-    organism: str | None,
-) -> dict[str, ReactionEvidence]:
-    """Run the async evaluation pipeline."""
-    from src.evidence.engine import EvidenceEngine
-
-    engine = EvidenceEngine(config)
-    try:
-        _eprint("Initializing evidence engine...")
-        await engine.initialize()
-
-        total = len(reactions)
-        start_time = time.monotonic()
-
-        def progress_callback(completed: int, total: int, reaction_id: str) -> None:
-            pct = completed / total * 100 if total else 0
-            filled = int(pct / 5)
-            bar = "=" * filled + ">" + " " * (20 - filled - 1)
-            elapsed = time.monotonic() - start_time
-            _eprint(
-                f"\rEvaluating: [{bar}] {completed}/{total} ({pct:.1f}%) "
-                f"-- {reaction_id} [{_format_time(elapsed)}]",
-                end="",
-            )
-
-        results = await engine.evaluate_batch(reactions, progress_callback=progress_callback)
-        elapsed = time.monotonic() - start_time
-        _eprint(f"\nEvaluation complete: {total} reactions in {_format_time(elapsed)}")
-
-        # Export
-        if fmt == "json":
-            export_json(output_path, model_id, organism, reactions, results)
-        else:
-            export_csv(output_path, model_id, reactions, results)
-
-        # Summary statistics
-        high = sum(1 for ev in results.values() if ev.evidence_tier == EvidenceTier.HIGH)
-        moderate = sum(
-            1 for ev in results.values() if ev.evidence_tier == EvidenceTier.MODERATE
-        )
-        low = sum(1 for ev in results.values() if ev.evidence_tier == EvidenceTier.LOW)
-        _eprint(f"  High:      {high} ({high / total * 100:.1f}%)")
-        _eprint(f"  Moderate:  {moderate} ({moderate / total * 100:.1f}%)")
-        _eprint(f"  Low:       {low} ({low / total * 100:.1f}%)")
-        _eprint(f"Results saved to {output_path}")
-
-        return results
-    finally:
-        await engine.close()
 
 
 async def async_gapfill_main(
@@ -651,31 +455,14 @@ async def async_gapfill_main(
     try:
         await evidence_engine.initialize()
 
-        if not skip_evaluation:
-            # Evaluate model reactions
-            reactions = list(model_data.reactions)
-            _eprint(f"Evaluating {len(reactions)} model reactions...")
-            eval_start = time.monotonic()
-
-            def model_progress(completed: int, total: int, reaction_id: str) -> None:
-                pct = completed / total * 100 if total else 0
-                filled = int(pct / 5)
-                bar = "=" * filled + ">" + " " * (20 - filled - 1)
-                elapsed = time.monotonic() - eval_start
-                _eprint(
-                    f"\r  Model eval: [{bar}] {completed}/{total} ({pct:.1f}%) "
-                    f"-- {reaction_id} [{_format_time(elapsed)}]",
-                    end="",
-                )
-
-            evidence_results = await evidence_engine.evaluate_batch(
-                reactions, progress_callback=model_progress
-            )
-            _eprint(f"\n  Model evaluation complete: {len(evidence_results)} reactions scored")
-
-            # Candidate evidence — honor candidate_evidence_eager_limit so the CLI
-            # matches the GUI: defer (skip) candidate evidence for large universals,
-            # leaving default penalties for those candidates.
+        # KEGG evidence is computed only for gap-fill candidates (to weight
+        # which universal reactions to add). Model quality is judged by tasks.
+        if skip_evaluation:
+            _eprint("Skipping candidate evidence evaluation (--skip-evaluation)")
+        else:
+            # Honor candidate_evidence_eager_limit so the CLI matches the GUI:
+            # defer candidate evidence for large universals, leaving default
+            # penalties for those candidates.
             eager_limit = max(0, config.candidate_evidence_eager_limit)
             if eager_limit and len(candidates) > eager_limit:
                 _eprint(
@@ -697,13 +484,12 @@ async def async_gapfill_main(
                         end="",
                     )
 
-                cand_results = await evidence_engine.evaluate_candidates_batch(
+                evidence_results = await evidence_engine.evaluate_candidates_batch(
                     candidates, progress_callback=cand_progress
                 )
-                evidence_results.update(cand_results)
-                _eprint(f"\n  Candidate evaluation complete: {len(cand_results)} reactions scored")
-        else:
-            _eprint("Skipping evidence evaluation (--skip-evaluation)")
+                _eprint(
+                    f"\n  Candidate evaluation complete: {len(evidence_results)} reactions scored"
+                )
 
         # Step 5: Run gap-fill pipeline
         _eprint("Starting gap-fill pipeline...")
@@ -817,17 +603,25 @@ def _save_gapfill_report(
         writer.writerow(["Infeasible Tasks", ";".join(result.infeasible_tasks)])
         writer.writerow([])
 
-        # Section 2: Added reactions
+        # Section 2: Added reactions (with KEGG evidence provenance)
         writer.writerow(["Added Reactions"])
-        writer.writerow(["Reaction ID", "Name", "Subsystem", "Penalty", "GPR"])
+        writer.writerow([
+            "Reaction ID", "Name", "Subsystem", "Penalty", "GPR",
+            "Evidence Tier", "Weight (penalty)",
+        ])
         for candidate in result.added_reactions:
             rxn = candidate.reaction
+            tier_label = (
+                candidate.evidence_tier.label if candidate.evidence_tier else "—"
+            )
             writer.writerow([
                 rxn.id,
                 rxn.name,
                 rxn.subsystem or "",
                 f"{candidate.penalty:.4f}",
                 candidate.assigned_gpr,
+                tier_label,
+                f"{candidate.penalty:.2f}",
             ])
         writer.writerow([])
 
@@ -868,28 +662,45 @@ def _save_gapfill_report(
             ])
 
 
-def _apply_carveme_overrides(config: Config, args: argparse.Namespace) -> None:
-    """Apply CarveMe CLI flag overrides onto the config (per-invocation)."""
+def _apply_carveme_overrides(config: Config, args: argparse.Namespace) -> set[str]:
+    """Apply CarveMe CLI flag overrides onto the config (per-invocation).
+
+    Returns the set of config field names the CLI explicitly set, so a YAML
+    ``--config`` run can keep CLI flags taking precedence over file defaults
+    (CLI > YAML > built-in defaults).
+    """
+    overridden: set[str] = set()
     if getattr(args, "carveme_solver", None):
         config.carveme_solver = args.carveme_solver
+        overridden.add("carveme_solver")
     if getattr(args, "carveme_universe", None):
         config.carveme_universe = args.carveme_universe
+        overridden.add("carveme_universe")
     if getattr(args, "carveme_universe_file", None):
         config.carveme_universe_file = args.carveme_universe_file
+        overridden.add("carveme_universe_file")
     if getattr(args, "carveme_env", None) is not None:
         config.carveme_env = args.carveme_env
+        overridden.add("carveme_env")
     if getattr(args, "carveme_executable", None):
         config.carveme_executable = args.carveme_executable
+        overridden.add("carveme_executable")
     if getattr(args, "carveme_timeout", None) is not None:
         config.carveme_timeout = args.carveme_timeout
+        overridden.add("carveme_timeout")
     if getattr(args, "carveme_max_parallel", None) is not None:
         config.carveme_max_parallel = args.carveme_max_parallel
+        overridden.add("carveme_max_parallel")
     if getattr(args, "gzip_model", False):
         config.carveme_gzip_output = True
+        overridden.add("carveme_gzip_output")
     if getattr(args, "carveme_gapfill_media", None) is not None:
         config.carveme_gapfill_media = args.carveme_gapfill_media
+        overridden.add("carveme_gapfill_media")
     if getattr(args, "carveme_init_medium", None) is not None:
         config.carveme_init_medium = args.carveme_init_medium
+        overridden.add("carveme_init_medium")
+    return overridden
 
 
 def _run_check_carveme(config: Config) -> None:
@@ -1037,7 +848,11 @@ def _run_build(args: argparse.Namespace, config: Config) -> None:
         )
 
 
-def _run_pipeline_config(args: argparse.Namespace, config: Config) -> None:
+def _run_pipeline_config(
+    args: argparse.Namespace,
+    config: Config,
+    cli_overrides: set[str] | None = None,
+) -> None:
     """Load and run (or validate) a YAML pipeline config."""
     from src.pipeline import PipelineError, load_pipeline, run_pipeline
 
@@ -1046,14 +861,16 @@ def _run_pipeline_config(args: argparse.Namespace, config: Config) -> None:
         if args.config_validate:
             _eprint(f"Config OK: {args.config}")
             return
-        result = asyncio.run(run_pipeline(spec, config, log=_eprint))
+        result = asyncio.run(
+            run_pipeline(spec, config, log=_eprint, cli_overridden=cli_overrides)
+        )
     except PipelineError as exc:
         _eprint(f"Error: {exc}")
         sys.exit(1)
 
     if result.models_failed > 0 or result.models_built == 0:
         _eprint(
-            f"Pipeline finished with failures: {result.models_built} built, "
+            f"Pipeline finished with failures: {result.models_built} resolved, "
             f"{result.models_failed} failed"
         )
         sys.exit(1)
@@ -1069,7 +886,7 @@ def main(argv: list[str] | None = None) -> None:
 
     setup_logging()
     config = Config.load()
-    _apply_carveme_overrides(config, args)
+    cli_overrides = _apply_carveme_overrides(config, args)
 
     # YAML pipeline mode takes a config file instead of a model / FASTA.
     if args.config_validate and not args.config:
@@ -1077,7 +894,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.config:
         if args.model is not None or args.build or args.batch_build:
             parser.error("--config cannot be combined with a model / --build / --batch-build")
-        _run_pipeline_config(args, config)
+        _run_pipeline_config(args, config, cli_overrides)
         return
 
     # Model construction (CarveMe) modes are dispatched first: they take a
@@ -1168,37 +985,13 @@ def main(argv: list[str] | None = None) -> None:
         )
         return
 
-    # Filter reactions
-    reactions = list(model_data.reactions)
-    if args.skip_exchange:
-        before = len(reactions)
-        reactions = [r for r in reactions if not r.is_exchange]
-        _eprint(f"Skipped {before - len(reactions)} exchange reactions")
-
-    if not reactions:
-        _eprint("Error: No reactions to evaluate.")
-        sys.exit(1)
-
-    # Resolve output path and format
-    fmt = _resolve_format(args)
-    if args.output:
-        output_path = args.output
-    else:
-        ext = "json" if fmt == "json" else "csv"
-        output_path = f"{model_data.id}_evidence.{ext}"
-
-    _eprint(f"Output: {output_path} ({fmt.upper()})")
-
-    # Run evaluation
-    asyncio.run(
-        async_main(
-            config=config,
-            reactions=reactions,
-            output_path=output_path,
-            fmt=fmt,
-            model_id=model_data.id,
-            organism=model_data.organism,
-        )
+    # No standalone per-reaction model-evaluation mode: KEGG evidence is used
+    # only to weight gap-fill candidates, and model quality is judged by
+    # metabolic tasks. A bare model therefore requires --gap-fill.
+    parser.error(
+        "a model was provided without --gap-fill. Per-reaction model evaluation "
+        "has been removed; run task-aware gap-filling with --gap-fill (model "
+        "quality is judged by metabolic tasks)."
     )
 
 

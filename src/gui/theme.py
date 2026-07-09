@@ -331,7 +331,7 @@ QLabel#sectionTitle {{
 def score_color(score: float) -> str:
     """Map a confidence score to a hex color string.
 
-    Used by delegates, evidence_panel, and score_visualization.
+    Used by delegates and evidence_panel.
     """
     if score >= 0.7:
         return THEME.score_high

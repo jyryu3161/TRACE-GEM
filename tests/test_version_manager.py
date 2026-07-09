@@ -132,6 +132,28 @@ class TestVersionStorageHistory:
         assert history[0].version_id == "v001"
         assert history[1].version_id == "v002"
 
+    def test_corrupt_history_degrades_gracefully(
+        self, tmp_storage: VersionStorage
+    ) -> None:
+        """A truncated/corrupt history index returns [] instead of crashing."""
+        model = _make_cobra_model()
+        tmp_storage.save_version("test_model", _make_version("v001"), model)
+
+        history_path = tmp_storage._model_dir("test_model") / "history.json"
+        history_path.write_text('[{"version_id": "v001", trunca', encoding="utf-8")
+
+        # Must not raise JSONDecodeError up into save_version/get_next_version_id.
+        assert tmp_storage.load_history("test_model") == []
+
+    def test_save_history_is_atomic(self, tmp_storage: VersionStorage) -> None:
+        """History is written atomically and leaves no leftover temp file."""
+        model = _make_cobra_model()
+        tmp_storage.save_version("test_model", _make_version("v001"), model)
+
+        model_dir = tmp_storage._model_dir("test_model")
+        assert (model_dir / "history.json").exists()
+        assert not (model_dir / "history.json.tmp").exists()
+
 
 class TestVersionStorageCleanup:
     """Tests for cleanup_old_versions."""
@@ -232,6 +254,32 @@ class TestVersionManagerSetBase:
         history = vm.get_history()
         assert len(history) == 1
         assert history[0].version_id == "v001"
+
+    async def test_reopening_resumes_existing_history(
+        self, vm_config: Config
+    ) -> None:
+        """Reopening a model with existing history resumes its tip, not a new root.
+
+        Regression: previously every load appended a fresh parentless
+        ``initial_load`` version, orphaning the prior edit chain and splitting
+        the history graph into multiple disconnected roots.
+        """
+        vm1 = VersionManager(vm_config)
+        vm1.set_base_model(_make_model_with_rxns(["PFK"]), "test_model")  # v001
+        await vm1.save_version(
+            _make_model_with_rxns(["PFK", "ENO"]), "gap_fill"
+        )  # v002
+
+        # Simulate reopening the model: a fresh manager over the same storage.
+        vm2 = VersionManager(vm_config)
+        vm2.set_base_model(_make_model_with_rxns(["PFK", "ENO"]), "test_model")
+
+        history = vm2.get_history()
+        assert len(history) == 2  # no extra initial_load root was appended
+        assert vm2.current_version is not None
+        assert vm2.current_version.version_id == "v002"  # resumed at the tip
+        roots = [v for v in history if v.parent_version_id is None]
+        assert len(roots) == 1  # exactly one parentless root remains
 
 
 class TestVersionManagerSave:

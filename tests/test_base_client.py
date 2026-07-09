@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.api.base_client import BaseAPIClient
+from src.api.base_client import APIUnavailableError, BaseAPIClient
 from src.core.models import EvidenceItem, Reaction
 
 
@@ -114,8 +114,10 @@ class TestCircuitBreaker:
         )
         client._circuit_open = True
         client._circuit_open_until = time.monotonic() + 300
-        result = await client.get("/test")
-        assert result is None
+        # An open circuit means "unavailable", not "not found": raise rather
+        # than return None so callers don't record it as absent evidence.
+        with pytest.raises(APIUnavailableError):
+            await client.get("/test")
 
     @pytest.mark.asyncio
     async def test_circuit_resets_after_timeout(self):
@@ -230,10 +232,11 @@ class TestBaseClientRetry:
         mock_session.get = MagicMock(side_effect=make_ctx)
         client._session = mock_session
 
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await client.get("/test")
+        with patch("asyncio.sleep", new_callable=AsyncMock), \
+                pytest.raises(APIUnavailableError):
+            await client.get("/test")
 
-        assert result is None
+        # Exhausted retries surface as unavailable (unknown), not absent.
         assert call_count == 2  # max_retries=2
 
     @pytest.mark.asyncio

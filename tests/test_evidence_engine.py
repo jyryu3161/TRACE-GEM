@@ -1,11 +1,17 @@
-"""Tests for evidence engine."""
+"""Tests for evidence engine.
 
-from types import SimpleNamespace
+Evidence is KEGG-only and computed ONLY for gap-fill candidate reactions, so the
+engine exposes ``evaluate_candidate`` / ``evaluate_candidates_batch`` (there is
+no per-model-reaction evaluation).
+"""
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.api.base_client import APIUnavailableError
 from src.core.models import (
+    CandidateReaction,
     EvaluationStatus,
     EvidenceItem,
     EvidenceSource,
@@ -16,6 +22,10 @@ from src.core.models import (
 )
 from src.evidence.engine import EvidenceEngine
 from src.utils.config import Config
+
+
+def _candidate(reaction: Reaction) -> CandidateReaction:
+    return CandidateReaction(reaction)
 
 
 class TestEvidenceEngine:
@@ -47,6 +57,9 @@ class TestEvidenceEngine:
                     description="KEGG reaction R00658 — substrate match: 100%, product match: 100%",
                     raw_data={
                         "kegg_id": "R00658",
+                        "kegg_anchored": True,
+                        "reconciliation_state": "full",
+                        "ec_concordance_state": "concordant",
                         "substrate_match": 1.0,
                         "product_match": 1.0,
                     },
@@ -70,8 +83,8 @@ class TestEvidenceEngine:
         return engine
 
     @pytest.mark.asyncio
-    async def test_evaluate_reaction(self, mock_engine, sample_reaction):
-        ev = await mock_engine.evaluate_reaction(sample_reaction)
+    async def test_evaluate_candidate(self, mock_engine, sample_reaction):
+        ev = await mock_engine.evaluate_candidate(_candidate(sample_reaction))
         assert ev.status == EvaluationStatus.EVALUATED
         assert ev.confidence_score > 0
         assert ev.evidence_tier == EvidenceTier.HIGH
@@ -79,68 +92,54 @@ class TestEvidenceEngine:
         assert ev.ec_numbers == ["4.2.1.11"]
 
     @pytest.mark.asyncio
-    async def test_bigg_lookup_falls_back_from_kegg_mapping(
+    async def test_kegg_outage_marks_error_not_absent(
         self, mock_engine, sample_reaction
     ):
-        """If direct BiGG lookup misses, KEGG->BiGG mappings are checked."""
+        """A KEGG outage must surface as ERROR, not a silent KEGG-absent score.
 
-        async def check_evidence(reaction, bigg_id=None):
-            if bigg_id == "ENO_mapped":
-                return [
-                    EvidenceItem(
-                        source=EvidenceSource.BIGG,
-                        strength=EvidenceStrength.STRONG,
-                        description="Mapped BiGG evidence",
-                    )
-                ]
-            return [
-                EvidenceItem(
-                    source=EvidenceSource.BIGG,
-                    strength=EvidenceStrength.ABSENT,
-                    description="Direct BiGG lookup miss",
-                )
-            ]
-
-        mock_engine._bigg = MagicMock()
-        mock_engine._bigg.check_evidence = AsyncMock(side_effect=check_evidence)
-        mock_engine._mapping_data = SimpleNamespace(
-            rxn_kegg_to_bigg={"R00658": ["ENO_mapped"]}
+        Regression: an unreachable KEGG (circuit open / exhausted retries)
+        previously returned None all the way up, so every reaction was scored
+        KEGG-absent and its tier collapsed to Low with no error signalled.
+        """
+        mock_engine._kegg.check_evidence = AsyncMock(
+            side_effect=APIUnavailableError("KEGG circuit open")
         )
 
-        ev = await mock_engine.evaluate_reaction(sample_reaction)
+        ev = await mock_engine.evaluate_candidate(_candidate(sample_reaction))
 
-        bigg_items = [item for item in ev.items if item.source == EvidenceSource.BIGG]
-        assert len(bigg_items) == 1
-        assert bigg_items[0].strength == EvidenceStrength.STRONG
-        assert bigg_items[0].raw_data["match_method"] == "kegg_to_bigg"
-        assert bigg_items[0].raw_data["mapped_bigg_id"] == "ENO_mapped"
+        assert ev.status == EvaluationStatus.ERROR
+        assert ev.error_message
+        # Must NOT have been scored as a confident absent-KEGG result.
+        assert ev.evidence_tier != EvidenceTier.HIGH
 
     @pytest.mark.asyncio
     async def test_evaluate_extracts_match_ratios(self, mock_engine, sample_reaction):
-        ev = await mock_engine.evaluate_reaction(sample_reaction)
+        ev = await mock_engine.evaluate_candidate(_candidate(sample_reaction))
         assert ev.substrate_match_ratio == 1.0
         assert ev.product_match_ratio == 1.0
 
     @pytest.mark.asyncio
-    async def test_evaluate_batch(self, mock_engine):
-        reactions = [
-            Reaction(id=f"RXN{i}", name=f"Reaction {i}", equation=f"a{i} -> b{i}")
+    async def test_evaluate_candidates_batch(self, mock_engine):
+        candidates = [
+            _candidate(
+                Reaction(id=f"RXN{i}", name=f"Reaction {i}", equation=f"a{i} -> b{i}")
+            )
             for i in range(10)
         ]
-        results = await mock_engine.evaluate_batch(reactions)
+        results = await mock_engine.evaluate_candidates_batch(candidates)
         assert len(results) == 10
         assert all(ev.status == EvaluationStatus.EVALUATED for ev in results.values())
 
     @pytest.mark.asyncio
     async def test_get_result(self, mock_engine, sample_reaction):
-        await mock_engine.evaluate_reaction(sample_reaction)
+        await mock_engine.evaluate_candidate(_candidate(sample_reaction))
         result = mock_engine.get_result("ENO")
         assert result is not None
         assert result.confidence_score > 0
 
     @pytest.mark.asyncio
     async def test_clear_results(self, mock_engine, sample_reaction):
-        await mock_engine.evaluate_reaction(sample_reaction)
+        await mock_engine.evaluate_candidate(_candidate(sample_reaction))
         mock_engine.clear_results()
         assert mock_engine.get_result("ENO") is None
 
@@ -155,7 +154,7 @@ class TestEvidenceEngine:
     async def test_evaluate_handles_kegg_exception(self, mock_engine, sample_reaction):
         """KEGG failure should result in ERROR status."""
         mock_engine._kegg.check_evidence = AsyncMock(side_effect=RuntimeError("KEGG down"))
-        ev = await mock_engine.evaluate_reaction(sample_reaction)
+        ev = await mock_engine.evaluate_candidate(_candidate(sample_reaction))
         assert ev.status == EvaluationStatus.ERROR
         assert ev.error_message is not None
 
@@ -163,7 +162,7 @@ class TestEvidenceEngine:
     async def test_evaluate_handles_mapper_exception(self, mock_engine, sample_reaction):
         """Mapper failure should result in ERROR status."""
         mock_engine._mapper.resolve = AsyncMock(side_effect=RuntimeError("Mapper crashed"))
-        ev = await mock_engine.evaluate_reaction(sample_reaction)
+        ev = await mock_engine.evaluate_candidate(_candidate(sample_reaction))
         assert ev.status == EvaluationStatus.ERROR
         assert ev.error_message is not None
 
@@ -172,10 +171,15 @@ class TestEvidenceEngine:
         """Cancelling a batch should stop evaluation."""
         import asyncio
 
-        reactions = [Reaction(id=f"RXN{i}", name=f"R{i}", equation="a -> b") for i in range(20)]
+        candidates = [
+            _candidate(Reaction(id=f"RXN{i}", name=f"R{i}", equation="a -> b"))
+            for i in range(20)
+        ]
         cancel = asyncio.Event()
         cancel.set()  # Cancel immediately
-        results = await mock_engine.evaluate_batch(reactions, cancel_event=cancel)
+        results = await mock_engine.evaluate_candidates_batch(
+            candidates, cancel_event=cancel
+        )
         # Should have stopped early
         assert len(results) < 20
 
@@ -187,8 +191,13 @@ class TestEvidenceEngine:
         def on_progress(current, total, rxn_id):
             progress_calls.append((current, total, rxn_id))
 
-        reactions = [Reaction(id=f"RXN{i}", name=f"R{i}", equation="a -> b") for i in range(5)]
-        await mock_engine.evaluate_batch(reactions, progress_callback=on_progress)
+        candidates = [
+            _candidate(Reaction(id=f"RXN{i}", name=f"R{i}", equation="a -> b"))
+            for i in range(5)
+        ]
+        await mock_engine.evaluate_candidates_batch(
+            candidates, progress_callback=on_progress
+        )
         assert len(progress_calls) >= 1
 
     @pytest.mark.asyncio
@@ -202,6 +211,6 @@ class TestEvidenceEngine:
         engine._kegg = MagicMock()
         engine._kegg.check_evidence = AsyncMock(return_value=[])
 
-        reactions = [Reaction(id="R1", name="R1", equation="a -> b")]
-        results = await engine.evaluate_batch(reactions)
+        candidates = [_candidate(Reaction(id="R1", name="R1", equation="a -> b"))]
+        results = await engine.evaluate_candidates_batch(candidates)
         assert len(results) == 1

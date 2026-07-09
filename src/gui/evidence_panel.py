@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.core.models import EvidenceItem, EvidenceSource, ReactionEvidence
+from src.core.models import EvidenceSource, ReactionEvidence
 from src.evidence.evidence_types import (
     SOURCE_LABELS,
     SOURCE_REGISTRY,
@@ -65,13 +65,7 @@ class EvidencePanelWidget(QWidget):
         # KEGG Verification summary card (special — includes match ratios)
         html_parts.append(self._render_kegg_card(evidence))
 
-        # Database source cards
-        for source in (EvidenceSource.BIGG,):
-            items = [i for i in evidence.items if i.source == source]
-            if items:
-                html_parts.append(self._render_source_card(source, items[0]))
-
-        # Individual evidence items (all sources)
+        # Individual evidence items (KEGG-only)
         for item in evidence.items:
             strength_label = STRENGTH_LABELS[item.strength]
             strength_color = STRENGTH_COLORS[item.strength]
@@ -164,29 +158,6 @@ class EvidencePanelWidget(QWidget):
         if evidence.ec_numbers:
             parts.append(f"<b>EC Numbers:</b> {', '.join(evidence.ec_numbers)}<br>")
 
-        parts.append("</div>")
-        return "".join(parts)
-
-    @staticmethod
-    def _render_source_card(source: EvidenceSource, item: EvidenceItem) -> str:
-        """Render a generic evidence source card."""
-        sc = SOURCE_REGISTRY.get(source)
-        source_color = sc.color if sc else THEME.neutral
-        display_name = sc.display_name if sc else source.value
-        strength_color = STRENGTH_COLORS[item.strength]
-
-        parts = [
-            f'<div style="margin-bottom: 12px; padding: 10px; '
-            f"border-left: 4px solid {source_color}; "
-            f"background-color: {THEME.evidence_item_bg}; "
-            f'color: {THEME.text}; border-radius: 4px;">',
-            f"<h3>{display_name}</h3>",
-            f'<span style="color: {strength_color};">',
-            f"{STRENGTH_LABELS[item.strength]}</span><br>",
-            item.description,
-        ]
-        if item.url:
-            parts.append(f'<br><a href="{item.url}">View source</a>')
         parts.append("</div>")
         return "".join(parts)
 

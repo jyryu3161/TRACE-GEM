@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import cobra
 import pytest
+from cobra.exceptions import OptimizationError
 
 from src.core.models import (
     CandidateReaction,
@@ -213,6 +214,48 @@ class TestGapFillEngine:
             )
 
         assert "T001" in result.infeasible_tasks
+
+    @pytest.mark.asyncio
+    async def test_solver_infeasibility_triggers_relaxed_retry(
+        self,
+        engine: GapFillEngine,
+        sample_tasks: list[MetabolicTask],
+        sample_candidates: list[CandidateReaction],
+        sample_evidence: dict[str, ReactionEvidence],
+    ) -> None:
+        """cobra raises OptimizationError (not RuntimeError) on an infeasible MILP.
+
+        Regression: it must route to the relaxed-bound retry, not fall straight
+        through to the generic handler that marks the task infeasible untried.
+        """
+        mock_model = MagicMock()
+        mock_universal = MagicMock()
+
+        before_results = [
+            TaskResult(task=sample_tasks[0], passed=False, actual_value=0.0),
+            TaskResult(task=sample_tasks[1], passed=True, actual_value=1.0),
+        ]
+
+        def mock_run_all(model, tasks, progress_callback=None):
+            return list(before_results)
+
+        def raise_infeasible(*args, **kwargs):
+            raise OptimizationError("MILP infeasible")
+
+        with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
+             patch.object(
+                 engine, "_gapfill_solutions_for_task", side_effect=raise_infeasible
+             ), \
+             patch.object(engine, "_retry_gapfill", return_value=[]) as mock_retry:
+            await engine.run(
+                mock_model,
+                mock_universal,
+                sample_candidates,
+                sample_tasks,
+                sample_evidence,
+            )
+
+        assert mock_retry.called
 
     @pytest.mark.asyncio
     async def test_task_results_before_after(
@@ -594,6 +637,38 @@ class TestGapFillEngine:
             "R_DROP",
             "R_TARGET",
         }
+
+    def test_prune_universal_keeps_unevidenced_reactions(self) -> None:
+        """KEGG evidence weights candidates; it must NOT filter the universe.
+
+        Regression guard against the reverted "strict KEGG-only" universe
+        filter: a metabolite-compatible reaction with no KEGG annotation must
+        survive pruning exactly like a KEGG-annotated one, so gap-fill can still
+        add unevidenced reactions when a task needs them.
+        """
+        config = Config(
+            gapfill_universal_prune_threshold=1,
+            gapfill_prune_to_model_metabolites=True,
+        )
+        engine = GapFillEngine(config)
+
+        model = cobra.Model("draft")
+        a = cobra.Metabolite("a_c", compartment="c")
+        b = cobra.Metabolite("b_c", compartment="c")
+        model.add_metabolites([a, b])
+
+        universal = cobra.Model("universal")
+        kegg_rxn = cobra.Reaction("R_KEGG")
+        kegg_rxn.add_metabolites({a.copy(): -1.0, b.copy(): 1.0})
+        kegg_rxn.annotation = {"kegg.reaction": "R00001"}
+        nokegg_rxn = cobra.Reaction("R_NOKEGG")
+        nokegg_rxn.add_metabolites({a.copy(): -1.0, b.copy(): 1.0})
+        universal.add_reactions([kegg_rxn, nokegg_rxn])
+
+        pruned = engine._prune_universal_for_gapfill(universal, model, [])
+
+        # Both survive — the unevidenced reaction is not filtered out.
+        assert {rxn.id for rxn in pruned.reactions} == {"R_KEGG", "R_NOKEGG"}
 
     def test_lower_bound_for_strict_greater_uses_extra_tolerance(
         self, engine: GapFillEngine

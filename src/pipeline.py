@@ -1,15 +1,14 @@
-"""YAML-driven CLI pipeline: build (single/batch) → refine → evaluate in one run.
+"""YAML-driven CLI pipeline: build (single/batch) → refine in one run.
 
 A pipeline YAML is a one-shot run specification layered on top of the persistent
 :class:`~src.utils.config.Config`. It either *builds* models from protein FASTA
-(with their KEGG taxonomy codes) or takes existing SBML *models*, then optionally
-runs task-aware gap-fill refinement (single model at a time) and/or KEGG/BiGG
-evidence evaluation, writing per-model outputs via ``{label}`` / ``{model}``
-templates.
+(with their KEGG taxonomy codes) or takes existing SBML *models*, then runs
+task-aware gap-fill refinement (single model at a time), writing per-model
+outputs via ``{label}`` / ``{model}`` templates.
 
 The executor is thin: it parses + validates the spec and delegates to the
 existing engines/entry points (:class:`~src.build.build_engine.BuildEngine`,
-``src.cli.async_gapfill_main``, ``src.cli.async_main``).
+``src.cli.async_gapfill_main``).
 """
 
 from __future__ import annotations
@@ -80,27 +79,21 @@ class RefineStep:
 
 
 @dataclass
-class EvaluateStep:
-    enabled: bool = False
-    skip_exchange: bool = False
-    output: str = ""
-
-
-@dataclass
 class PipelineSpec:
     carveme: CarveMeDefaults = field(default_factory=CarveMeDefaults)
     build: BuildStep | None = None
     models: list[ModelInput] = field(default_factory=list)
     refine: RefineStep = field(default_factory=RefineStep)
-    evaluate: EvaluateStep = field(default_factory=EvaluateStep)
 
 
 @dataclass
 class PipelineResult:
+    # Count of models successfully resolved — whether newly built by CarveMe or
+    # loaded from an existing SBML (the `models:` list). Used as the "did any
+    # model make it through resolution" guard, so it must include loaded models.
     models_built: int = 0
     models_failed: int = 0
     models_refined: int = 0
-    models_evaluated: int = 0
     labels: list[str] = field(default_factory=list)
 
 
@@ -162,10 +155,9 @@ def _build_spec(raw: dict, errors: list[str]) -> PipelineSpec:
     build = _parse_build(raw.get("build"), errors) if has_build else None
     models = _parse_models(raw.get("models"), errors) if has_models else []
     refine = _parse_refine(_as_section(raw, "refine", errors), errors)
-    evaluate = _parse_evaluate(_as_section(raw, "evaluate", errors), errors)
 
     return PipelineSpec(
-        carveme=carveme, build=build, models=models, refine=refine, evaluate=evaluate
+        carveme=carveme, build=build, models=models, refine=refine
     )
 
 
@@ -273,34 +265,35 @@ def _parse_refine(r: dict, errors: list[str]) -> RefineStep:
     return refine
 
 
-def _parse_evaluate(e: dict, errors: list[str]) -> EvaluateStep:
-    return EvaluateStep(
-        enabled=bool(e.get("enabled")),
-        skip_exchange=bool(e.get("skip_exchange")),
-        output=str(e.get("output", "")),
-    )
-
-
 # -- execution --------------------------------------------------------------
 
 
-def apply_carveme_defaults(config: Config, cm: CarveMeDefaults) -> None:
-    """Layer the YAML carveme defaults onto the config for this run."""
-    if cm.solver:
+def apply_carveme_defaults(
+    config: Config,
+    cm: CarveMeDefaults,
+    cli_overridden: set[str] | None = None,
+) -> None:
+    """Layer the YAML carveme defaults onto the config for this run.
+
+    Fields named in ``cli_overridden`` were set explicitly on the command line
+    and are left untouched, so CLI flags win over the YAML ``carveme:`` block.
+    """
+    overridden = cli_overridden or set()
+    if cm.solver and "carveme_solver" not in overridden:
         config.carveme_solver = cm.solver
-    if cm.universe is not None:
+    if cm.universe is not None and "carveme_universe" not in overridden:
         config.carveme_universe = cm.universe
-    if cm.universe_file is not None:
+    if cm.universe_file is not None and "carveme_universe_file" not in overridden:
         config.carveme_universe_file = cm.universe_file
-    if cm.env is not None:
+    if cm.env is not None and "carveme_env" not in overridden:
         config.carveme_env = cm.env
-    if cm.gapfill_media is not None:
+    if cm.gapfill_media is not None and "carveme_gapfill_media" not in overridden:
         config.carveme_gapfill_media = cm.gapfill_media
-    if cm.init_medium is not None:
+    if cm.init_medium is not None and "carveme_init_medium" not in overridden:
         config.carveme_init_medium = cm.init_medium
-    if cm.timeout is not None:
+    if cm.timeout is not None and "carveme_timeout" not in overridden:
         config.carveme_timeout = int(cm.timeout)
-    if cm.max_parallel is not None:
+    if cm.max_parallel is not None and "carveme_max_parallel" not in overridden:
         config.carveme_max_parallel = int(cm.max_parallel)
 
 
@@ -312,10 +305,16 @@ async def run_pipeline(
     spec: PipelineSpec,
     config: Config,
     log: LogCallback | None = None,
+    cli_overridden: set[str] | None = None,
 ) -> PipelineResult:
-    """Execute a validated pipeline: resolve models, then refine + evaluate each."""
+    """Execute a validated pipeline: resolve models, then refine + evaluate each.
+
+    ``cli_overridden`` names CarveMe config fields set explicitly on the command
+    line; those keep precedence over the YAML ``carveme:`` block (CLI > YAML >
+    built-in defaults).
+    """
     _log = log or logger.info
-    apply_carveme_defaults(config, spec.carveme)
+    apply_carveme_defaults(config, spec.carveme, cli_overridden)
 
     result = PipelineResult()
     models = _dedupe_labels(_resolve_models(spec, config, _log, result), _log)
@@ -340,18 +339,14 @@ async def run_pipeline(
             if spec.refine.enabled:
                 await _run_refine(spec.refine, config, label, model_data, _log)
                 result.models_refined += 1
-            if spec.evaluate.enabled and await _run_evaluate(
-                spec.evaluate, config, label, model_data, _log
-            ):
-                result.models_evaluated += 1
         except Exception as exc:  # noqa: BLE001 - one model's failure must not abort the run
             result.models_failed += 1
             _log(f"[ERROR] model '{label}' failed: {exc}")
             logger.exception("Pipeline model '%s' failed", label)
 
     _log(
-        f"Pipeline complete: {result.models_built} built, {result.models_failed} failed, "
-        f"{result.models_refined} refined, {result.models_evaluated} evaluated"
+        f"Pipeline complete: {result.models_built} resolved, "
+        f"{result.models_failed} failed, {result.models_refined} refined"
     )
     return result
 
@@ -393,13 +388,6 @@ def _check_output_collisions(spec: PipelineSpec, models: list[tuple[str, str | N
                 _add(_fmt(spec.refine.output_model, label, md.id), label)
             if spec.refine.output_report:
                 _add(_fmt(spec.refine.output_report, label, md.id), label)
-        if spec.evaluate.enabled:
-            out = (
-                _fmt(spec.evaluate.output, label, md.id)
-                if spec.evaluate.output
-                else f"{label}_evidence.csv"
-            )
-            _add(out, label)
 
     if collisions:
         raise PipelineError(
@@ -511,42 +499,3 @@ async def _run_refine(
     )
 
 
-async def _run_evaluate(
-    evaluate: EvaluateStep, config: Config, label: str, model_data: Any, log: LogCallback
-) -> bool:
-    """Evaluate one model. Returns True if evidence was actually produced."""
-    # Organism is already set on config per-model by run_pipeline.
-    from src.cli import async_main
-
-    out = _fmt(evaluate.output, label, model_data.id) if evaluate.output else f"{label}_evidence.csv"
-    Path(out).parent.mkdir(parents=True, exist_ok=True)
-    fmt = "json" if out.lower().endswith(".json") else "csv"
-
-    # If a refine step mutated the cobra model (gap-filled reactions), re-sync the
-    # domain reaction list so we evaluate the refined model, not the stale one.
-    if getattr(model_data, "cobra_model", None) is not None:
-        try:
-            from src.core.cobra_utils import sync_model_data_from_cobra
-
-            sync_model_data_from_cobra(model_data, model_data.cobra_model)
-        except Exception as exc:  # noqa: BLE001 - surface, don't silently use a stale model
-            log(f"[warn] evaluate '{label}': could not resync from cobra model ({exc}); "
-                f"evaluating the pre-refine reaction list")
-
-    reactions = list(model_data.reactions)
-    if evaluate.skip_exchange:
-        reactions = [r for r in reactions if not r.is_exchange]
-    if not reactions:
-        log(f"[skip] evaluate '{label}': no reactions to evaluate")
-        return False
-
-    log(f"== Evaluate '{label}' -> {out} ({fmt.upper()}) ==")
-    await async_main(
-        config=config,
-        reactions=reactions,
-        output_path=out,
-        fmt=fmt,
-        model_id=model_data.id,
-        organism=model_data.organism,
-    )
-    return True

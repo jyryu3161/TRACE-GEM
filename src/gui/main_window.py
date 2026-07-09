@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.models import (
-    EvaluationStatus,
     EvidenceSource,
     ModelData,
     Reaction,
@@ -40,7 +39,7 @@ from src.gui.controllers.evaluation_ctrl import EvaluationController
 from src.gui.controllers.export_ctrl import ExportController
 from src.gui.controllers.gapfill_ctrl import GapFillController
 from src.gui.controllers.version_ctrl import VersionController
-from src.gui.delegates import ScoreBarDelegate, StatusDelegate
+from src.gui.delegates import ScoreBarDelegate
 from src.gui.evidence_panel import EvidencePanelWidget
 from src.gui.gapfill_panel import GapFillPanelWidget
 from src.gui.gene_panel import GenePanelWidget
@@ -48,7 +47,6 @@ from src.gui.metabolite_panel import MetabolitePanelWidget
 from src.gui.model_overview import ModelOverviewWidget
 from src.gui.reaction_detail import ReactionDetailWidget
 from src.gui.reaction_table import ReactionTableWidget
-from src.gui.score_visualization import ScoreVisualizationWidget
 from src.gui.styles import MAIN_STYLESHEET
 from src.gui.task_panel import TaskPanelWidget
 from src.gui.version_panel import VersionPanelWidget
@@ -141,13 +139,6 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction("E&xit", self.close, "Ctrl+Q")
 
-        # Evaluation menu
-        eval_menu = menubar.addMenu("&Evaluation")
-        eval_menu.addAction("Evaluate &Selected", self._eval_ctrl.evaluate_selected, "Ctrl+E")
-        eval_menu.addAction("Evaluate &All", self._eval_ctrl.evaluate_all, "Ctrl+Shift+E")
-        eval_menu.addSeparator()
-        eval_menu.addAction("&Clear Results", self._eval_ctrl.clear_results)
-
         # Analysis menu
         analysis_menu = menubar.addMenu("&Analysis")
         analysis_menu.addAction(
@@ -157,15 +148,9 @@ class MainWindow(QMainWindow):
 
         # Export menu
         export_menu = menubar.addMenu("E&xport")
-        export_menu.addAction("Export &CSV...", self._export_ctrl.export_csv)
-        export_menu.addAction("Export &JSON...", self._export_ctrl.export_json)
         export_menu.addAction("Export &SBML...", self._export_ctrl.export_sbml)
         export_menu.addSeparator()
         export_menu.addAction("Export &Improved SBML...", self._export_ctrl.export_improved_sbml)
-
-        # View menu
-        view_menu = menubar.addMenu("&View")
-        view_menu.addAction("&Charts", self._show_charts, "Ctrl+G")
 
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -203,7 +188,6 @@ class MainWindow(QMainWindow):
         self._universal_table.evaluate_requested.connect(self._gapfill_ctrl.evaluate_universal_candidates)
         self._left_tabs.addTab(self._universal_table, "Universal")
 
-        self._left_tabs.currentChanged.connect(lambda _: self._update_charts())
         left_layout.addWidget(self._left_tabs)
 
         splitter.addWidget(left_widget)
@@ -213,14 +197,13 @@ class MainWindow(QMainWindow):
 
         # Detail tab
         self._reaction_detail = ReactionDetailWidget()
-        self._reaction_detail.evaluate_requested.connect(self._eval_ctrl.evaluate_reaction_by_id)
         self._reaction_detail.reaction_modified.connect(self._version_ctrl.on_reaction_modified)
         self._reaction_detail.removal_requested.connect(self._on_removal_requested)
         right_tabs.addTab(self._reaction_detail, "Detail")
 
-        # Evidence tab
+        # Evidence panel — kept as an object for candidate detail display, but not
+        # shown as a tab (there is no model-evaluation feature).
         self._evidence_panel = EvidencePanelWidget()
-        right_tabs.addTab(self._evidence_panel, "Evidence")
 
         # Gene panel tab
         self._gene_panel = GenePanelWidget()
@@ -229,10 +212,6 @@ class MainWindow(QMainWindow):
         # Metabolite panel tab
         self._metabolite_panel = MetabolitePanelWidget()
         right_tabs.addTab(self._metabolite_panel, "Metabolites")
-
-        # Charts tab
-        self._chart_widget = ScoreVisualizationWidget()
-        right_tabs.addTab(self._chart_widget, "Charts")
 
         # Tasks tab
         self._task_panel = TaskPanelWidget()
@@ -279,11 +258,9 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(splitter)
 
-        # Set delegates
-        self._score_delegate = ScoreBarDelegate(self._reaction_table)
+        # Set delegates — only the universal candidate table shows an evidence
+        # score bar (the model reaction table has no evidence column).
         self._candidate_score_delegate = ScoreBarDelegate(self._universal_table)
-        self._status_delegate = StatusDelegate(self._reaction_table)
-        self._reaction_table.set_delegates(self._score_delegate, self._status_delegate)
         self._universal_table.set_score_delegate(self._candidate_score_delegate)
 
     def _setup_statusbar(self) -> None:
@@ -629,15 +606,8 @@ class MainWindow(QMainWindow):
         self._reaction_detail.set_reaction(rxn)
         self._gene_panel.set_reaction(rxn)
         self._metabolite_panel.set_reaction(rxn)
-
-        # Show evidence if available
-        if self._engine:
-            ev = self._engine.get_result(reaction_id)
-            if ev:
-                self._reaction_detail.update_evidence(ev)
-                self._evidence_panel.set_evidence(ev)
-            else:
-                self._evidence_panel.clear()
+        # Model reactions carry no evidence (evidence is candidate-only).
+        self._evidence_panel.clear()
 
     # --- Reaction removal ---
 
@@ -717,58 +687,6 @@ class MainWindow(QMainWindow):
             return runner.run_all(self._model.cobra_model, self._loaded_tasks)
         return []
 
-    # --- View ---
-
-    def _show_charts(self) -> None:
-        # Switch to charts tab
-        layout = self.centralWidget().layout()
-        if layout is None:
-            return
-        for i in range(layout.count()):
-            item = layout.itemAt(i)
-            if item is None:
-                continue
-            widget = item.widget()
-            if isinstance(widget, QSplitter):
-                right = widget.widget(1)
-                if isinstance(right, QTabWidget):
-                    right.setCurrentIndex(right.count() - 1)  # Charts tab (last)
-                    self._update_charts()
-                    break
-
-    def _update_charts(self) -> None:
-        if not self._engine:
-            return
-
-        all_results = self._engine.get_all_results()
-        if not all_results:
-            return
-
-        # Determine which results to show based on active left tab
-        is_universal = self._left_tabs.currentWidget() is self._universal_table
-        if is_universal:
-            candidate_ids = {
-                c.reaction.id for c in self._universal_table.get_candidates()
-            }
-            results = {
-                rid: ev for rid, ev in all_results.items() if rid in candidate_ids
-            }
-            subsystem_map = {}
-        else:
-            if not self._model:
-                return
-            model_ids = {r.id for r in self._model.reactions}
-            results = {
-                rid: ev for rid, ev in all_results.items() if rid in model_ids
-            }
-            subsystem_map = {
-                r.id: r.subsystem or "Unknown" for r in self._model.reactions
-            }
-
-        if not results:
-            return
-        self._chart_widget.update_charts(results, subsystem_map)
-
     # --- Help ---
 
     def _show_about(self) -> None:
@@ -836,15 +754,6 @@ class MainWindow(QMainWindow):
             source_idx = table._proxy.mapToSource(idx)
             return table._model.get_reaction(source_idx.row())
         return None
-
-    def _update_eval_count(self) -> None:
-        if not self._model or not self._engine:
-            return
-        results = self._engine.get_all_results()
-        evaluated = sum(1 for ev in results.values() if ev.status == EvaluationStatus.EVALUATED)
-        total = self._model.reaction_count
-        self._overview.update_evaluation_count(evaluated, total)
-        self._mark_dirty()
 
     def _update_recent_menu(self) -> None:
         self._recent_menu.clear()
@@ -1019,25 +928,10 @@ class MainWindow(QMainWindow):
 
         all_results = self._engine.get_all_results()
 
-        # Update model reaction table
-        self._reaction_table.update_all_evidence(all_results)
-
-        # Update universal candidate table
+        # Update universal candidate table (candidate evidence only)
         if self._universal_table.get_candidates():
             self._universal_table._model.set_evidence(all_results)
 
-        # Update overview count (model reactions only)
-        if self._model:
-            model_ids = {r.id for r in self._model.reactions}
-            model_evaluated = sum(
-                1 for rid in all_results if rid in model_ids
-            )
-            self._overview.update_evaluation_count(
-                model_evaluated, self._model.reaction_count,
-            )
-
-        # Update charts
-        self._update_charts()
         logger.info("Project evaluation results restored: %d reactions", len(project.evaluation_results))
 
     def _reload_universal_from_path(self, filepath: str) -> None:

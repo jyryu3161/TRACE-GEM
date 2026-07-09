@@ -14,6 +14,7 @@ from src.cli import (
 )
 from src.core.models import (
     CandidateReaction,
+    EvidenceTier,
     GapFillResult,
     MetabolicTask,
     ModelData,
@@ -150,6 +151,23 @@ class TestCLIGapFillMode:
         """Inline medium specs are parsed into exchange lower bounds."""
         medium = load_medium_argument("glc__D_e(-10);EX_o2_e(-1000)", None)
         assert medium == {"EX_glc__D_e": -10.0, "EX_o2_e": -1000.0}
+
+    def test_inline_medium_positive_converts_to_uptake(self) -> None:
+        """Inline positive values are uptake capacities → negative lower bounds.
+
+        Regression: previously the inline path stored the raw value, so
+        ``glc__D_e(10)`` forced efflux while JSON ``{glc__D_e: 10}`` allowed
+        uptake — the same intent produced opposite biology.
+        """
+        medium = load_medium_argument("glc__D_e(10);o2_e(1000)", None)
+        assert medium == {"EX_glc__D_e": -10.0, "EX_o2_e": -1000.0}
+
+    def test_missing_medium_file_raises_clear_error(self, tmp_path) -> None:
+        """A path-like --medium that does not exist errors as a missing file,
+        not as an inline-syntax error."""
+        missing = tmp_path / "does_not_exist.csv"
+        with pytest.raises(FileNotFoundError, match="Medium file not found"):
+            load_medium_argument(str(missing), None)
 
     def test_json_medium_parsed(self, tmp_path) -> None:
         """JSON medium maps positive uptake values to negative lower bounds."""
@@ -322,6 +340,18 @@ class TestTaskBeforeAfterComparison:
                     ),
                     penalty=1.5,
                     assigned_gpr="b0485",
+                    evidence_tier=EvidenceTier.HIGH,
+                ),
+                # An unevidenced reaction is still added when a task needs it;
+                # its tier column falls back to the "—" placeholder.
+                CandidateReaction(
+                    reaction=Reaction(
+                        id="PRPPS",
+                        name="Phosphoribosylpyrophosphate synthetase",
+                        equation="r5p + atp -> prpp + amp",
+                    ),
+                    penalty=25.0,
+                    evidence_tier=None,
                 ),
             ],
             task_results_before=[
@@ -345,13 +375,25 @@ class TestTaskBeforeAfterComparison:
 
         # Check summary section
         assert rows[0] == ["Gap-Fill Summary"]
-        assert rows[1] == ["Reactions Added", "1"]
+        assert rows[1] == ["Reactions Added", "2"]
         assert rows[2] == ["Tasks Fixed", "1"]
 
-        # Check added reactions section
+        # Check added reactions section, including KEGG evidence provenance
         added_header_idx = next(i for i, r in enumerate(rows) if r == ["Added Reactions"])
-        assert rows[added_header_idx + 1][0] == "Reaction ID"
-        assert rows[added_header_idx + 2][0] == "GLNS"
+        header = rows[added_header_idx + 1]
+        assert header[0] == "Reaction ID"
+        assert header[5] == "Evidence Tier"
+        assert header[6] == "Weight (penalty)"
+        tier_col = header.index("Evidence Tier")
+        weight_col = header.index("Weight (penalty)")
+
+        added_rows = {r[0]: r for r in rows[added_header_idx + 2:] if r and r[0]}
+        # Evidence-backed reaction carries its tier label + penalty weight.
+        assert added_rows["GLNS"][tier_col] == "High"
+        assert added_rows["GLNS"][weight_col] == "1.50"
+        # Unevidenced reaction is present with the "—" tier placeholder.
+        assert added_rows["PRPPS"][tier_col] == "—"
+        assert added_rows["PRPPS"][weight_col] == "25.00"
 
         # Check task results section
         task_header_idx = next(i for i, r in enumerate(rows) if r == ["Task Results"])

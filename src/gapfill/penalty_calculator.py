@@ -24,6 +24,9 @@ class PenaltyCalculator:
         EvidenceTier.HIGH: 1.0,
         EvidenceTier.MODERATE: 5.0,
         EvidenceTier.LOW: 25.0,
+        # "Not assessable" (no KEGG anchor) is as costly as LOW; the no-KEGG
+        # multiplier below then further penalizes the genuinely anchorless.
+        EvidenceTier.NOT_ASSESSABLE: 25.0,
     }
 
     def __init__(self, config: Config) -> None:
@@ -45,15 +48,18 @@ class PenaltyCalculator:
             if no kegg_reaction_ids: base *= no_kegg_mult
             return min(base, max_penalty)
         """
-        tier = evidence.evidence_tier if evidence else EvidenceTier.LOW
-        base = self._TIER_BASE_PENALTY[tier]
+        tier = evidence.evidence_tier if evidence else EvidenceTier.NOT_ASSESSABLE
+        base = self._TIER_BASE_PENALTY.get(tier, self._TIER_BASE_PENALTY[EvidenceTier.LOW])
 
         if candidate.organism_exists is False:
             base *= self._org_mult
         elif candidate.organism_exists is None:
             base *= 3.0
 
-        if evidence is None or not evidence.kegg_reaction_ids:
+        # Penalize as no-KEGG unless a KEGG reaction was actually verified
+        # (retrieved and non-contradictory). A rejected/annotated-only KEGG ID
+        # must not launder into a lower penalty.
+        if evidence is None or not evidence.verified_kegg_reaction_ids:
             base *= self._no_kegg_mult
 
         return min(base, self._max_penalty)

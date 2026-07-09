@@ -5,7 +5,6 @@ from __future__ import annotations
 from src.core.models import (
     EvidenceItem,
     EvidenceSource,
-    EvidenceStrength,
     EvidenceTier,
     ReactionEvidence,
 )
@@ -26,47 +25,30 @@ class ConfidenceScorer:
     def __init__(self, weights: dict[str, float] | None = None) -> None:
         self._weights = weights or dict(SOURCE_WEIGHTS)
 
+    # Tier → legacy numeric confidence_score (ordering/export only; the tier is
+    # the authoritative categorical decision).
+    _TIER_SCORE = {
+        EvidenceTier.HIGH: 1.0,
+        EvidenceTier.MODERATE: 0.6,
+        EvidenceTier.LOW: 0.3,
+        EvidenceTier.NOT_ASSESSABLE: 0.0,
+    }
+
     def score(self, evidence: ReactionEvidence) -> float:
-        """Calculate overall confidence score from evidence items."""
+        """Classify the reaction's KEGG-only evidence tier and derive a score.
+
+        The tier is decided by rule from the KEGG provenance states already set
+        on ``evidence`` (kegg_anchored / reconciliation_state /
+        ec_concordance_state). ``kegg_score`` is retained for display; BiGG is
+        no longer an evidence source. ``confidence_score`` is a monotone function
+        of the tier, kept only for legacy ordering/export.
+        """
         source_scores = self._compute_source_scores(evidence.items)
-
-        # Store per-source scores
         evidence.kegg_score = source_scores.get(EvidenceSource.KEGG, 0.0)
-        evidence.bigg_score = source_scores.get(EvidenceSource.BIGG, 0.0)
-        evidence.evidence_tier, evidence.evidence_rationale = self._classify_tier(
-            source_scores
-        )
+        evidence.bigg_score = 0.0  # BiGG removed from evidence scoring
 
-        # Score all configured sources. Missing or ABSENT source evidence is
-        # treated as a zero for that source, not redistributed to other sources.
-        active_sources: dict[str, float] = {}
-        for source_key, weight in self._weights.items():
-            try:
-                EvidenceSource(source_key)
-            except ValueError:
-                continue
-            if weight > 0:
-                active_sources[source_key] = weight
-
-        # If no active sources, score is 0
-        if not active_sources:
-            evidence.confidence_score = 0.0
-            return 0.0
-
-        # Normalize weights for active sources only
-        total_weight = sum(active_sources.values())
-        if total_weight <= 0:
-            evidence.confidence_score = 0.0
-            return 0.0
-
-        total = 0.0
-        for source_key, weight in active_sources.items():
-            source_enum = EvidenceSource(source_key)
-            normalized_weight = weight / total_weight
-            total += source_scores.get(source_enum, 0.0) * normalized_weight
-
-        # Clamp to [0, 1]
-        evidence.confidence_score = max(0.0, min(1.0, total))
+        evidence.evidence_tier, evidence.evidence_rationale = self._classify_tier(evidence)
+        evidence.confidence_score = self._TIER_SCORE[evidence.evidence_tier]
         return evidence.confidence_score
 
     def _compute_source_scores(self, items: list[EvidenceItem]) -> dict[EvidenceSource, float]:
@@ -81,36 +63,57 @@ class ConfidenceScorer:
 
         return scores
 
-    def _classify_tier(
-        self,
-        source_scores: dict[EvidenceSource, float],
-    ) -> tuple[EvidenceTier, str]:
-        """Classify evidence into High/Moderate/Low with KEGG as the primary source."""
-        kegg = source_scores.get(EvidenceSource.KEGG, EvidenceStrength.ABSENT.value)
-        bigg = source_scores.get(EvidenceSource.BIGG, EvidenceStrength.ABSENT.value)
+    # Rule-based KEGG-only tier decision. Keys are (reconciliation_state,
+    # ec_concordance_state). Conservative by construction: metabolite
+    # contradiction is always Low, EC discordance never yields High, and a KEGG
+    # ID with nothing corroborating it (unverifiable + unknown EC) is Low.
+    _TIER_TABLE = {
+        ("full", "concordant"): EvidenceTier.HIGH,
+        ("full", "unknown"): EvidenceTier.HIGH,
+        ("full", "discordant"): EvidenceTier.MODERATE,
+        ("partial", "concordant"): EvidenceTier.MODERATE,
+        ("partial", "unknown"): EvidenceTier.MODERATE,
+        ("partial", "discordant"): EvidenceTier.LOW,
+        ("unverifiable", "concordant"): EvidenceTier.MODERATE,
+        ("unverifiable", "unknown"): EvidenceTier.LOW,
+        ("unverifiable", "discordant"): EvidenceTier.LOW,
+        ("none_contradictory", "concordant"): EvidenceTier.LOW,
+        ("none_contradictory", "unknown"): EvidenceTier.LOW,
+        ("none_contradictory", "discordant"): EvidenceTier.LOW,
+    }
 
-        if kegg >= EvidenceStrength.MODERATE.value:
+    def _classify_tier(self, evidence: ReactionEvidence) -> tuple[EvidenceTier, str]:
+        """Classify the KEGG-only evidence tier from provenance states."""
+        if not evidence.kegg_anchored:
             return (
-                EvidenceTier.HIGH,
-                "KEGG reaction evidence is present for this reaction.",
+                EvidenceTier.NOT_ASSESSABLE,
+                "No KEGG reaction could be linked to this reaction; "
+                "its identity could not be assessed.",
             )
 
-        if kegg > EvidenceStrength.ABSENT.value:
-            return (
-                EvidenceTier.MODERATE,
-                "KEGG evidence is weak or partial; treat as plausible but not high-confidence.",
-            )
+        recon = evidence.reconciliation_state
+        ec = evidence.ec_concordance_state
+        tier = self._TIER_TABLE.get((recon, ec), EvidenceTier.LOW)
 
-        if bigg >= EvidenceStrength.STRONG.value:
-            return (
-                EvidenceTier.MODERATE,
-                "No KEGG reaction evidence was confirmed, but BiGG prevalence is strong.",
+        recon_txt = recon.replace("_", " ")
+        if tier is EvidenceTier.HIGH:
+            rationale = (
+                f"KEGG reaction identity corroborated (metabolite reconciliation: {recon_txt}"
+                + (", EC concordant)." if ec == "concordant" else ").")
             )
-
-        return (
-            EvidenceTier.LOW,
-            "No confirmed KEGG evidence and BiGG support is weak or absent.",
-        )
+        elif tier is EvidenceTier.MODERATE:
+            rationale = (
+                f"KEGG-anchored with partial/consistent support (metabolites: {recon_txt}, "
+                f"EC: {ec}); plausible but not fully reconciled."
+            )
+        else:  # LOW
+            if recon == "none_contradictory":
+                rationale = "KEGG entry found but its metabolites contradict the model reaction."
+            else:
+                rationale = (
+                    f"KEGG-anchored but unsupported (metabolites: {recon_txt}, EC: {ec})."
+                )
+        return (tier, rationale)
 
     def score_breakdown(self, evidence: ReactionEvidence) -> dict[str, dict]:
         """Return detailed scoring breakdown for display."""
