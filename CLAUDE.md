@@ -118,11 +118,9 @@ mypy src/ --ignore-missing-imports
 
 ```text
 src/
-├── api/                 # Async external/local evidence clients
+├── api/                 # Async KEGG client + base infrastructure
 │   ├── base_client.py   # Rate limiting, retry, circuit breaker base class
-│   ├── bigg_client.py   # BiGG API/local evidence checks
-│   ├── bigg_lookup.py   # BiGG local lookup helpers
-│   ├── kegg_client.py   # KEGG evidence checks
+│   ├── kegg_client.py   # KEGG evidence checks (reconciliation + EC concordance)
 │   └── rate_limiter.py
 ├── cache/               # SQLite cache layer
 │   ├── cache_manager.py
@@ -152,7 +150,6 @@ src/
 │   ├── gapfill_panel.py
 │   ├── main_window.py
 │   ├── reaction_removal_dialog.py
-│   ├── score_visualization.py
 │   ├── task_panel.py
 │   ├── version_panel.py
 │   ├── workers.py

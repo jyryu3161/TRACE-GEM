@@ -1,4 +1,4 @@
-"""Tests for evidence source registry and helpers."""
+"""Tests for the (KEGG-only) evidence source registry and helpers."""
 
 from __future__ import annotations
 
@@ -13,10 +13,11 @@ from src.evidence.evidence_types import (
 
 
 class TestSourceRegistry:
-    def test_all_sources_registered(self) -> None:
-        assert len(SOURCE_REGISTRY) == 2
-        for source in EvidenceSource:
-            assert source in SOURCE_REGISTRY
+    def test_only_kegg_registered(self) -> None:
+        # Evidence is KEGG-only; BiGG is not an evidence source.
+        assert len(SOURCE_REGISTRY) == 1
+        assert EvidenceSource.KEGG in SOURCE_REGISTRY
+        assert EvidenceSource.BIGG not in SOURCE_REGISTRY
 
     def test_source_config_fields(self) -> None:
         cfg = SOURCE_REGISTRY[EvidenceSource.KEGG]
@@ -31,34 +32,19 @@ class TestSourceRegistry:
 
 class TestGetSourceConfig:
     def test_returns_config(self) -> None:
-        cfg = get_source_config(EvidenceSource.BIGG)
+        cfg = get_source_config(EvidenceSource.KEGG)
         assert isinstance(cfg, SourceConfig)
-        assert cfg.display_name == "BiGG Models"
+        assert cfg.display_name == "KEGG"
 
 
 class TestGetOrderedSources:
-    def test_returns_sorted_by_order(self) -> None:
+    def test_returns_only_kegg(self) -> None:
         ordered = get_ordered_sources()
-        assert len(ordered) == 2
-        orders = [sc.order for _, sc in ordered]
-        assert orders == sorted(orders)
-
-    def test_kegg_first(self) -> None:
-        ordered = get_ordered_sources()
+        assert len(ordered) == 1
         assert ordered[0][0] == EvidenceSource.KEGG
 
 
 class TestGetActiveSources:
-    def test_all_enabled(self) -> None:
-        class MockConfig:
-            enable_bigg = True
-
-        active = get_active_sources(MockConfig())
-        assert active == [EvidenceSource.KEGG, EvidenceSource.BIGG]
-
-    def test_only_kegg_when_bigg_disabled(self) -> None:
-        class MockConfig:
-            enable_bigg = False
-
-        active = get_active_sources(MockConfig())
+    def test_only_kegg_active(self) -> None:
+        active = get_active_sources(object())
         assert active == [EvidenceSource.KEGG]
