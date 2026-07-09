@@ -7,11 +7,6 @@ import sys
 
 import pytest
 
-from src.core.models import (
-    EvaluationStatus,
-    EvidenceTier,
-    ReactionEvidence,
-)
 from tests.conftest import GUI_AVAILABLE
 
 pytestmark = pytest.mark.skipif(not GUI_AVAILABLE, reason="PySide6 GUI not available")
@@ -31,7 +26,7 @@ class TestReactionTableModel:
 
         model = ReactionTableModel()
         assert model.rowCount() == 0
-        assert model.columnCount() == 8
+        assert model.columnCount() == 6
 
     def test_set_reactions(self, sample_model):
         from src.gui.reaction_table import ReactionTableModel
@@ -44,7 +39,7 @@ class TestReactionTableModel:
         from src.gui.reaction_table import ReactionTableModel
 
         model = ReactionTableModel()
-        expected = ["ID", "Name", "Equation", "Subsystem", "Genes", "GPR", "Evidence", "Status"]
+        expected = ["ID", "Name", "Equation", "Subsystem", "Genes", "GPR"]
         for i, name in enumerate(expected):
             header = model.headerData(i, Qt.Orientation.Horizontal)
             assert header == name
@@ -70,37 +65,6 @@ class TestReactionTableModel:
         # Genes column (count)
         idx = model.index(0, ReactionTableModel.COL_GENES)
         assert model.data(idx) == "1"
-
-    def test_data_score_unevaluated(self, sample_model):
-        from src.gui.reaction_table import ReactionTableModel
-
-        model = ReactionTableModel()
-        model.set_reactions(sample_model.reactions)
-
-        idx = model.index(0, ReactionTableModel.COL_SCORE)
-        assert model.data(idx) == ""
-
-    def test_data_score_evaluated(self, sample_model, sample_evidence_map):
-        from src.gui.reaction_table import ReactionTableModel
-
-        model = ReactionTableModel()
-        model.set_reactions(sample_model.reactions)
-        model.update_all_evidence(sample_evidence_map)
-
-        idx = model.index(0, ReactionTableModel.COL_SCORE)
-        tier_text = model.data(idx)
-        assert tier_text == "High"
-
-    def test_data_user_role_score(self, sample_model, sample_evidence_map):
-        from src.gui.reaction_table import ReactionTableModel
-
-        model = ReactionTableModel()
-        model.set_reactions(sample_model.reactions)
-        model.update_all_evidence(sample_evidence_map)
-
-        idx = model.index(0, ReactionTableModel.COL_SCORE)
-        tier_rank = model.data(idx, Qt.ItemDataRole.UserRole)
-        assert tier_rank == EvidenceTier.HIGH.rank
 
     def test_data_tooltip_role(self, sample_model):
         from src.gui.reaction_table import ReactionTableModel
@@ -129,21 +93,6 @@ class TestReactionTableModel:
 
         assert model.get_reaction(99) is None
         assert model.get_reaction(-1) is None
-
-    def test_update_single_evidence(self, sample_model):
-        from src.gui.reaction_table import ReactionTableModel
-
-        model = ReactionTableModel()
-        model.set_reactions(sample_model.reactions)
-
-        ev = ReactionEvidence(reaction_id="ENO")
-        ev.confidence_score = 0.75
-        ev.evidence_tier = EvidenceTier.HIGH
-        ev.status = EvaluationStatus.EVALUATED
-        model.update_evidence("ENO", ev)
-
-        idx = model.index(0, ReactionTableModel.COL_SCORE)
-        assert model.data(idx) == "High"
 
     def test_sort_by_id(self, sample_model):
         from src.gui.reaction_table import ReactionTableModel
@@ -232,25 +181,6 @@ class TestDelegates:
 
         delegate = ScoreBarDelegate()
         assert delegate is not None
-
-    def test_status_delegate_instantiation(self):
-        from src.gui.delegates import StatusDelegate
-
-        delegate = StatusDelegate()
-        assert delegate is not None
-
-    def test_status_delegate_colors(self):
-        from src.gui.delegates import StatusDelegate
-
-        assert "not_evaluated" in StatusDelegate.STATUS_COLORS
-        assert "evaluated" in StatusDelegate.STATUS_COLORS
-        assert "error" in StatusDelegate.STATUS_COLORS
-
-    def test_status_delegate_labels(self):
-        from src.gui.delegates import StatusDelegate
-
-        assert StatusDelegate.STATUS_LABELS["evaluated"] == "Done"
-        assert StatusDelegate.STATUS_LABELS["error"] == "Error"
 
     def test_score_color(self):
         from src.gui.theme import score_color

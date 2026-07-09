@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from src.core.models import GapFillResult, WorkflowCheckpoint
 from src.gui.progress_dialog import ProgressDialog
-from src.gui.workers import EvaluateBatchWorker, GapFillWorkflowWorker, TaskRunWorker
+from src.gui.workers import GapFillWorkflowWorker, TaskRunWorker
 
 if TYPE_CHECKING:
     from src.gui.main_window import MainWindow
@@ -181,47 +181,13 @@ class GapFillController:
         dialog.exec()
 
     def run_gapfill_workflow(self, selections: dict) -> None:
-        """Start the gap-filling workflow, with optional pre-evaluation."""
+        """Start the gap-filling workflow.
+
+        Candidate evidence is evaluated inside the gap-fill worker pipeline
+        (KEGG-only, candidates only); there is no model pre-evaluation step.
+        """
         if not self._w._model:
             return
-
-        if selections.get("evaluate_model") and self._w._engine:
-            results = self._w._engine.get_all_results()
-            unevaluated = [r for r in self._w._model.reactions if r.id not in results]
-            if unevaluated:
-                reply = QMessageBox.information(
-                    self._w,
-                    "Pre-evaluation Required",
-                    f"{len(unevaluated)} model reactions have not been evaluated yet.\n"
-                    "They will be evaluated before gap-filling begins.",
-                    QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-                )
-                if reply == QMessageBox.StandardButton.Cancel:
-                    return
-
-                pre_dialog = ProgressDialog("Evaluating Unevaluated Reactions", self._w)
-                pre_worker = EvaluateBatchWorker(self._w._engine, unevaluated)
-                self._w._batch_worker = pre_worker
-
-                pre_done = {"finished": False}
-
-                def on_pre_complete(r: object) -> None:
-                    self._w._eval_ctrl.on_batch_complete(r, pre_dialog)
-                    pre_done["finished"] = True
-
-                def on_pre_error(e: str) -> None:
-                    self._w._eval_ctrl.on_batch_error(e, pre_dialog)
-
-                pre_worker.signals.progress.connect(pre_dialog.update_progress)
-                pre_worker.signals.result.connect(on_pre_complete)
-                pre_worker.signals.error.connect(on_pre_error)
-                pre_dialog.cancelled.connect(pre_worker.cancel)
-
-                self._w._thread_pool.start(pre_worker)
-                pre_dialog.exec()
-
-                if not pre_done["finished"]:
-                    return
 
         self.start_gapfill_worker(selections)
 

@@ -87,55 +87,6 @@ class EvidenceEngine:
         """Expose mapping data for external use."""
         return self._mapping_data
 
-    async def evaluate_reaction(self, reaction: Reaction) -> ReactionEvidence:
-        """Evaluate a single reaction against all enabled sources."""
-        evidence = ReactionEvidence(reaction_id=reaction.id)
-        evidence.status = EvaluationStatus.IN_PROGRESS
-
-        try:
-            assert self._mapper is not None, "Engine not initialized"
-            assert self._kegg is not None, "Engine not initialized"
-
-            # Step 1: Resolve external IDs (offline)
-            ext_ids = await self._mapper.resolve(reaction)
-            evidence.ec_numbers = ext_ids.ec_numbers
-            evidence.kegg_reaction_ids = ext_ids.kegg_reaction_ids
-
-            # Steps 2-3: KEGG verification (KEGG is the only evidence source)
-            await self._run_kegg_verification(reaction, ext_ids, evidence)
-
-            # Step 4: Score (rule-based, KEGG-only)
-            self._scorer.score(evidence)
-            evidence.status = EvaluationStatus.EVALUATED
-
-        except Exception as e:
-            logger.error("Evaluation failed for %s: %s", reaction.id, e)
-            evidence.status = EvaluationStatus.ERROR
-            evidence.error_message = str(e)
-
-        self._results[reaction.id] = evidence
-        return evidence
-
-    async def evaluate_batch(
-        self,
-        reactions: list[Reaction],
-        progress_callback: Callable[[int, int, str], None] | None = None,
-        cancel_event: asyncio.Event | Any | None = None,
-    ) -> dict[str, ReactionEvidence]:
-        """Evaluate a batch of reactions with progress reporting."""
-
-        async def _evaluate_item(reaction: Reaction) -> str:
-            await self.evaluate_reaction(reaction)
-            return reaction.id
-
-        return await self._run_batch(
-            items=reactions,
-            evaluate_fn=_evaluate_item,
-            progress_callback=progress_callback,
-            cancel_event=cancel_event,
-            label="reactions",
-        )
-
     async def evaluate_candidate(self, candidate: CandidateReaction) -> ReactionEvidence:
         """Evaluate a single candidate reaction from a universal model.
 

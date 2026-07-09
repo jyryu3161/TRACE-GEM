@@ -40,7 +40,6 @@ class ModelOverviewWidget(QWidget):
         self._metabolites = QLabel("-")
         self._genes = QLabel("-")
         self._subsystems = QLabel("-")
-        self._evaluated = QLabel("0 / 0")
 
         form.addRow("Model ID:", self._model_id)
         form.addRow("Name:", self._model_name)
@@ -50,7 +49,6 @@ class ModelOverviewWidget(QWidget):
         form.addRow("Metabolites:", self._metabolites)
         form.addRow("Genes:", self._genes)
         form.addRow("Subsystems:", self._subsystems)
-        form.addRow("Evaluated:", self._evaluated)
 
         self._tabs.addTab(model_page, "Model")
 
@@ -84,9 +82,6 @@ class ModelOverviewWidget(QWidget):
         self._metabolites.setText(str(model.metabolite_count))
         self._genes.setText(str(model.gene_count))
         self._subsystems.setText(str(len(model.get_subsystems())))
-
-    def update_evaluation_count(self, evaluated: int, total: int) -> None:
-        self._evaluated.setText(f"{evaluated} / {total}")
 
     def set_universal_info(
         self,

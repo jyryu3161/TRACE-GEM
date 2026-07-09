@@ -39,13 +39,6 @@ class TestModelOverviewWidget:
         assert widget._reactions.text() == "3"
         assert widget._genes.text() == "3"
 
-    def test_update_evaluation_count(self):
-        from src.gui.model_overview import ModelOverviewWidget
-
-        widget = ModelOverviewWidget()
-        widget.update_evaluation_count(5, 10)
-        assert widget._evaluated.text() == "5 / 10"
-
 
 class TestReactionDetailWidget:
     def test_instantiation(self):
@@ -53,7 +46,6 @@ class TestReactionDetailWidget:
 
         widget = ReactionDetailWidget()
         assert widget is not None
-        assert widget._eval_btn.isEnabled() is False
 
     def test_set_reaction(self, sample_reaction):
         from src.gui.reaction_detail import ReactionDetailWidget
@@ -62,7 +54,6 @@ class TestReactionDetailWidget:
         widget.set_reaction(sample_reaction)
         assert widget._id_label.text() == "ENO"
         assert widget._name_edit.text() == "enolase"
-        assert widget._eval_btn.isEnabled() is True
         # equation_id display should show the ID-based equation
         assert "2pg_c" in widget._equation_id_display.toPlainText()
         # equation (Name) display should show name-based equation
@@ -75,7 +66,6 @@ class TestReactionDetailWidget:
         widget.set_reaction(sample_reaction)
         widget.clear()
         assert widget._id_label.text() == "-"
-        assert widget._eval_btn.isEnabled() is False
 
     def test_update_evidence(self):
         from src.gui.reaction_detail import ReactionDetailWidget
@@ -90,17 +80,6 @@ class TestReactionDetailWidget:
         # Should contain the EC number in the xref browser
         html = widget._xref_browser.toHtml()
         assert "4.2.1.11" in html
-
-    def test_evaluate_signal(self, sample_reaction):
-        from src.gui.reaction_detail import ReactionDetailWidget
-
-        widget = ReactionDetailWidget()
-        widget.set_reaction(sample_reaction)
-
-        received = []
-        widget.evaluate_requested.connect(lambda rid: received.append(rid))
-        widget._on_evaluate_clicked()
-        assert received == ["ENO"]
 
 
 class TestEvidencePanelWidget:
@@ -266,14 +245,6 @@ class TestMainWindowProjectState:
         assert window._project_dirty is False
         assert window._project_path is None
         window.close()
-
-
-class TestScoreVisualizationWidget:
-    def test_instantiation(self):
-        from src.gui.score_visualization import ScoreVisualizationWidget
-
-        widget = ScoreVisualizationWidget()
-        assert widget is not None
 
 
 class TestVersionPanelWidget:

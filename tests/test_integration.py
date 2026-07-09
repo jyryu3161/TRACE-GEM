@@ -84,7 +84,9 @@ class TestConfigPersistence:
     def test_weights_property(self):
         config = Config()
         weights = config.weights
-        assert abs(sum(weights.values()) - 1.0) < 0.01
+        # Evidence is KEGG-only: BiGG is no longer a weighted source.
+        assert "kegg" in weights
+        assert "bigg" not in weights
 
     def test_recent_files(self):
         config = Config()
@@ -126,10 +128,11 @@ class TestEndToEndMocked:
     """End-to-end test with mocked API clients."""
 
     @pytest.mark.asyncio
-    async def test_evaluate_and_export(self, tmp_path):
+    async def test_evaluate_candidate_end_to_end(self, tmp_path):
         from unittest.mock import AsyncMock, MagicMock
 
         from src.core.models import (
+            CandidateReaction,
             EvidenceItem,
             EvidenceSource,
             EvidenceStrength,
@@ -169,7 +172,7 @@ class TestEndToEndMocked:
         )
 
         rxn = Reaction(id="ENO", name="enolase", equation="2pg <=> pep")
-        ev = await engine.evaluate_reaction(rxn)
+        ev = await engine.evaluate_candidate(CandidateReaction(rxn))
 
         assert ev.status == EvaluationStatus.EVALUATED
         assert ev.confidence_score > 0

@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QHeaderView,
-    QLabel,
     QLineEdit,
     QMenu,
     QTableView,
@@ -23,55 +22,33 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.core.models import EvaluationStatus, EvidenceTier, ModelData, Reaction, ReactionEvidence
+from src.core.models import ModelData, Reaction
 
 
 class ReactionTableModel(QAbstractTableModel):
     """Table model for reactions list."""
 
-    COLUMNS = ["ID", "Name", "Equation", "Subsystem", "Genes", "GPR", "Evidence", "Status"]
+    COLUMNS = ["ID", "Name", "Equation", "Subsystem", "Genes", "GPR"]
     COL_ID = 0
     COL_NAME = 1
     COL_EQUATION = 2
     COL_SUBSYSTEM = 3
     COL_GENES = 4
     COL_GPR = 5
-    COL_SCORE = 6
-    COL_STATUS = 7
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._reactions: list[Reaction] = []
-        self._evidence: dict[str, ReactionEvidence] = {}
 
     def set_reactions(self, reactions: list[Reaction]) -> None:
         self.beginResetModel()
         self._reactions = list(reactions)
         self.endResetModel()
 
-    def update_evidence(self, reaction_id: str, evidence: ReactionEvidence) -> None:
-        self._evidence[reaction_id] = evidence
-        # Find the row and emit dataChanged
-        for row, rxn in enumerate(self._reactions):
-            if rxn.id == reaction_id:
-                score_idx = self.index(row, self.COL_SCORE)
-                status_idx = self.index(row, self.COL_STATUS)
-                self.dataChanged.emit(score_idx, status_idx)
-                break
-
-    def update_all_evidence(self, evidence: dict[str, ReactionEvidence]) -> None:
-        self._evidence.update(evidence)
-        self.beginResetModel()
-        self.endResetModel()
-
     def get_reaction(self, row: int) -> Reaction | None:
         if 0 <= row < len(self._reactions):
             return self._reactions[row]
         return None
-
-    def get_evidence(self, reaction_id: str) -> ReactionEvidence | None:
-        """Get evidence for a specific reaction."""
-        return self._evidence.get(reaction_id)
 
     @property
     def reactions(self) -> list[Reaction]:
@@ -113,21 +90,9 @@ class ReactionTableModel(QAbstractTableModel):
             elif col == self.COL_GPR:
                 gpr = rxn.gene_reaction_rule
                 return gpr if len(gpr) <= 50 else gpr[:47] + "..."
-            elif col == self.COL_SCORE:
-                ev = self._evidence.get(rxn.id)
-                if ev and ev.status == EvaluationStatus.EVALUATED:
-                    return ev.evidence_tier.label
-                return ""
-            elif col == self.COL_STATUS:
-                ev = self._evidence.get(rxn.id)
-                return ev.status.value if ev else "not_evaluated"
 
         elif role == Qt.ItemDataRole.UserRole:
-            # Return tier rank for sorting
-            if col == self.COL_SCORE:
-                ev = self._evidence.get(rxn.id)
-                return ev.evidence_tier.rank if ev else 0
-            elif col == self.COL_GENES:
+            if col == self.COL_GENES:
                 return len(rxn.genes)
 
         elif role == Qt.ItemDataRole.ToolTipRole:
@@ -142,12 +107,7 @@ class ReactionTableModel(QAbstractTableModel):
         self.beginResetModel()
         reverse = order == Qt.SortOrder.DescendingOrder
 
-        if column == self.COL_SCORE:
-            self._reactions.sort(
-                key=lambda r: self._evidence.get(r.id, ReactionEvidence(r.id)).evidence_tier.rank,
-                reverse=reverse,
-            )
-        elif column == self.COL_ID:
+        if column == self.COL_ID:
             self._reactions.sort(key=lambda r: r.id, reverse=reverse)
         elif column == self.COL_NAME:
             self._reactions.sort(key=lambda r: r.name, reverse=reverse)
@@ -166,7 +126,6 @@ class ReactionFilterProxy(QSortFilterProxyModel):
         super().__init__(parent)
         self._text_filter = ""
         self._subsystem_filter = ""
-        self._min_tier_rank = 0
         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
     def set_text_filter(self, text: str) -> None:
@@ -175,10 +134,6 @@ class ReactionFilterProxy(QSortFilterProxyModel):
 
     def set_subsystem_filter(self, subsystem: str) -> None:
         self._subsystem_filter = subsystem
-        self.invalidateFilter()
-
-    def set_min_tier(self, tier: EvidenceTier | None) -> None:
-        self._min_tier_rank = tier.rank if tier else 0
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # type: ignore[override]
@@ -201,17 +156,9 @@ class ReactionFilterProxy(QSortFilterProxyModel):
                 return False
 
         # Subsystem filter
-        if self._subsystem_filter and (rxn.subsystem or "") != self._subsystem_filter:
-            return False
-
-        # Evidence tier filter
-        if self._min_tier_rank:
-            ev = model.get_evidence(rxn.id)
-            rank = ev.evidence_tier.rank if ev and ev.status == EvaluationStatus.EVALUATED else 0
-            if rank < self._min_tier_rank:
-                return False
-
-        return True
+        return not (
+            self._subsystem_filter and (rxn.subsystem or "") != self._subsystem_filter
+        )
 
 
 class ReactionTableWidget(QWidget):
@@ -244,16 +191,6 @@ class ReactionTableWidget(QWidget):
         self._subsystem_combo.currentIndexChanged.connect(self._on_subsystem_changed)
         filter_layout.addWidget(self._subsystem_combo, stretch=1)
 
-        filter_layout.addWidget(QLabel("Evidence:"))
-        self._evidence_combo = QComboBox()
-        self._evidence_combo.addItem("All", None)
-        self._evidence_combo.addItem("High+", EvidenceTier.HIGH)
-        self._evidence_combo.addItem("Moderate+", EvidenceTier.MODERATE)
-        self._evidence_combo.addItem("Low+", EvidenceTier.LOW)
-        self._evidence_combo.setToolTip("Minimum evidence tier filter")
-        self._evidence_combo.currentIndexChanged.connect(self._on_evidence_filter_changed)
-        filter_layout.addWidget(self._evidence_combo)
-
         layout.addLayout(filter_layout)
 
         # Table view
@@ -276,7 +213,6 @@ class ReactionTableWidget(QWidget):
         header.resizeSection(ReactionTableModel.COL_SUBSYSTEM, 140)
         header.resizeSection(ReactionTableModel.COL_GENES, 50)
         header.resizeSection(ReactionTableModel.COL_GPR, 120)
-        header.resizeSection(ReactionTableModel.COL_SCORE, 90)
 
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)
@@ -292,12 +228,6 @@ class ReactionTableWidget(QWidget):
         for sub in model_data.get_subsystems():
             self._subsystem_combo.addItem(sub, sub)
 
-    def update_evidence(self, reaction_id: str, evidence: ReactionEvidence) -> None:
-        self._model.update_evidence(reaction_id, evidence)
-
-    def update_all_evidence(self, evidence: dict[str, ReactionEvidence]) -> None:
-        self._model.update_all_evidence(evidence)
-
     def update_reaction_row(self, reaction_id: str) -> None:
         """Refresh the display for a modified reaction."""
         for row, rxn in enumerate(self._model.reactions):
@@ -307,16 +237,9 @@ class ReactionTableWidget(QWidget):
                 self._model.dataChanged.emit(left, right)
                 break
 
-    def set_delegates(self, score_delegate, status_delegate) -> None:
-        self._table.setItemDelegateForColumn(ReactionTableModel.COL_SCORE, score_delegate)
-        self._table.setItemDelegateForColumn(ReactionTableModel.COL_STATUS, status_delegate)
-
     def _on_subsystem_changed(self, index: int) -> None:
         sub = self._subsystem_combo.currentData() or ""
         self._proxy.set_subsystem_filter(sub)
-
-    def _on_evidence_filter_changed(self, _index: int) -> None:
-        self._proxy.set_min_tier(self._evidence_combo.currentData())
 
     def _on_row_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
         if current.isValid():

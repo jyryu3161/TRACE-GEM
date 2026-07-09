@@ -29,7 +29,6 @@ logger = logging.getLogger("metataskgapfill.gui.reaction_detail")
 class ReactionDetailWidget(QWidget):
     """Shows detailed information about a selected reaction."""
 
-    evaluate_requested = Signal(str)  # reaction_id
     reaction_modified = Signal(str)  # reaction_id
     removal_requested = Signal(str)  # reaction_id
 
@@ -131,10 +130,6 @@ class ReactionDetailWidget(QWidget):
 
         # Buttons
         btn_layout = QHBoxLayout()
-        self._eval_btn = QPushButton("Evaluate This Reaction")
-        self._eval_btn.clicked.connect(self._on_evaluate_clicked)
-        self._eval_btn.setEnabled(False)
-
         self._save_btn = QPushButton("Save Changes")
         self._save_btn.clicked.connect(self._save_changes)
         self._save_btn.setEnabled(False)
@@ -151,7 +146,6 @@ class ReactionDetailWidget(QWidget):
         btn_layout.addStretch()
         btn_layout.addWidget(self._remove_btn)
         btn_layout.addWidget(self._save_btn)
-        btn_layout.addWidget(self._eval_btn)
         layout.addLayout(btn_layout)
 
         layout.addStretch()
@@ -198,7 +192,6 @@ class ReactionDetailWidget(QWidget):
             else f'<span style="color: {THEME.muted_text};">No annotations</span>'
         )
 
-        self._eval_btn.setEnabled(True)
         self._save_btn.setEnabled(True)
         self._remove_btn.setEnabled(not self._read_only)
 
@@ -238,17 +231,12 @@ class ReactionDetailWidget(QWidget):
         self._equation_edit.clear()
         self._gpr_edit.clear()
         self._xref_browser.setHtml("")
-        self._eval_btn.setEnabled(False)
         self._save_btn.setEnabled(False)
         self._remove_btn.setEnabled(False)
 
     def _on_remove_clicked(self) -> None:
         if self._reaction:
             self.removal_requested.emit(self._reaction.id)
-
-    def _on_evaluate_clicked(self) -> None:
-        if self._reaction:
-            self.evaluate_requested.emit(self._reaction.id)
 
     def _save_changes(self) -> None:
         if not self._reaction:

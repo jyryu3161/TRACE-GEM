@@ -603,19 +603,36 @@ def _save_gapfill_report(
         writer.writerow(["Infeasible Tasks", ";".join(result.infeasible_tasks)])
         writer.writerow([])
 
-        # Section 2: Added reactions
+        # Section 2: Added reactions (with KEGG evidence provenance)
         writer.writerow(["Added Reactions"])
-        writer.writerow(["Reaction ID", "Name", "Subsystem", "Penalty", "GPR"])
+        writer.writerow([
+            "Reaction ID", "Name", "Subsystem", "Penalty", "GPR",
+            "Evidence Tier", "Weight (penalty)",
+        ])
         for candidate in result.added_reactions:
             rxn = candidate.reaction
+            tier_label = (
+                candidate.evidence_tier.label if candidate.evidence_tier else "—"
+            )
             writer.writerow([
                 rxn.id,
                 rxn.name,
                 rxn.subsystem or "",
                 f"{candidate.penalty:.4f}",
                 candidate.assigned_gpr,
+                tier_label,
+                f"{candidate.penalty:.2f}",
             ])
         writer.writerow([])
+
+        # Section 2b: Tasks that could not be gap-filled because no KEGG-mapped
+        # universal reaction was available (strict KEGG-only gap-fill).
+        if result.unfillable_no_kegg:
+            writer.writerow(["Unfillable (no KEGG-mapped reaction)"])
+            writer.writerow(["Task ID"])
+            for task_id in result.unfillable_no_kegg:
+                writer.writerow([task_id])
+            writer.writerow([])
 
         # Section 3: Task results
         writer.writerow(["Task Results"])

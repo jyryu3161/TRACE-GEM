@@ -28,6 +28,7 @@ class GapFillPanelWidget(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self._result: GapFillResult | None = None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -45,9 +46,9 @@ class GapFillPanelWidget(QWidget):
         rxn_layout = QVBoxLayout(rxn_group)
 
         self._reaction_table = QTableWidget()
-        self._reaction_table.setColumnCount(5)
+        self._reaction_table.setColumnCount(6)
         self._reaction_table.setHorizontalHeaderLabels(
-            ["ID", "Name", "Penalty", "GPR", "Fixing Task"]
+            ["ID", "Name", "Evidence", "Penalty", "GPR", "Fixing Task"]
         )
         self._reaction_table.horizontalHeader().setStretchLastSection(True)
         self._reaction_table.horizontalHeader().setSectionResizeMode(
@@ -94,6 +95,7 @@ class GapFillPanelWidget(QWidget):
 
     def set_result(self, result: GapFillResult) -> None:
         """Populate the panel with gap-filling results."""
+        self._result = result
         # Summary
         added = len(result.added_reactions)
         broken_note = (
@@ -114,20 +116,25 @@ class GapFillPanelWidget(QWidget):
             self._reaction_table.setItem(row, 0, QTableWidgetItem(rxn.id))
             self._reaction_table.setItem(row, 1, QTableWidgetItem(rxn.name))
 
+            tier_label = (
+                candidate.evidence_tier.label if candidate.evidence_tier else "—"
+            )
+            self._reaction_table.setItem(row, 2, QTableWidgetItem(tier_label))
+
             score_item = QTableWidgetItem()
             score_item.setData(Qt.ItemDataRole.DisplayRole, f"{candidate.penalty:.1f}")
             score_item.setData(Qt.ItemDataRole.UserRole, candidate.penalty)
             score_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._reaction_table.setItem(row, 2, score_item)
+            self._reaction_table.setItem(row, 3, score_item)
 
             gpr = candidate.assigned_gpr or "-"
-            self._reaction_table.setItem(row, 3, QTableWidgetItem(gpr))
+            self._reaction_table.setItem(row, 4, QTableWidgetItem(gpr))
 
             # Fixing task column left empty for now (populated by engine later)
-            self._reaction_table.setItem(row, 4, QTableWidgetItem(""))
+            self._reaction_table.setItem(row, 5, QTableWidgetItem(""))
 
         self._reaction_table.setSortingEnabled(True)
-        self._reaction_table.sortByColumn(2, Qt.SortOrder.DescendingOrder)
+        self._reaction_table.sortByColumn(3, Qt.SortOrder.DescendingOrder)
 
         # Infeasible tasks
         if result.infeasible_tasks:
@@ -147,6 +154,7 @@ class GapFillPanelWidget(QWidget):
 
     def set_partial_result(self, result: GapFillResult) -> None:
         """Display partial results from a cancelled workflow."""
+        self._result = result
         phase = result.completed_phase
         added = len(result.added_reactions)
 
@@ -164,24 +172,30 @@ class GapFillPanelWidget(QWidget):
                 self._reaction_table.setItem(row, 0, QTableWidgetItem(rxn.id))
                 self._reaction_table.setItem(row, 1, QTableWidgetItem(rxn.name))
 
+                tier_label = (
+                    candidate.evidence_tier.label if candidate.evidence_tier else "—"
+                )
+                self._reaction_table.setItem(row, 2, QTableWidgetItem(tier_label))
+
                 score_item = QTableWidgetItem()
                 score_item.setData(Qt.ItemDataRole.DisplayRole, f"{candidate.penalty:.1f}")
                 score_item.setData(Qt.ItemDataRole.UserRole, candidate.penalty)
                 score_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self._reaction_table.setItem(row, 2, score_item)
+                self._reaction_table.setItem(row, 3, score_item)
 
                 gpr = candidate.assigned_gpr or "-"
-                self._reaction_table.setItem(row, 3, QTableWidgetItem(gpr))
-                self._reaction_table.setItem(row, 4, QTableWidgetItem(""))
+                self._reaction_table.setItem(row, 4, QTableWidgetItem(gpr))
+                self._reaction_table.setItem(row, 5, QTableWidgetItem(""))
 
             self._reaction_table.setSortingEnabled(True)
-            self._reaction_table.sortByColumn(2, Qt.SortOrder.DescendingOrder)
+            self._reaction_table.sortByColumn(3, Qt.SortOrder.DescendingOrder)
 
         self._apply_btn.setEnabled(False)
         self._export_sbml_btn.setEnabled(False)
         self._export_report_btn.setEnabled(added > 0)
 
     def clear(self) -> None:
+        self._result = None
         self._summary_label.setText("No gap-filling results")
         self._summary_label.setStyleSheet("")
         self._reaction_table.setRowCount(0)
