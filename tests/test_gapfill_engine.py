@@ -638,6 +638,38 @@ class TestGapFillEngine:
             "R_TARGET",
         }
 
+    def test_prune_universal_keeps_unevidenced_reactions(self) -> None:
+        """KEGG evidence weights candidates; it must NOT filter the universe.
+
+        Regression guard against the reverted "strict KEGG-only" universe
+        filter: a metabolite-compatible reaction with no KEGG annotation must
+        survive pruning exactly like a KEGG-annotated one, so gap-fill can still
+        add unevidenced reactions when a task needs them.
+        """
+        config = Config(
+            gapfill_universal_prune_threshold=1,
+            gapfill_prune_to_model_metabolites=True,
+        )
+        engine = GapFillEngine(config)
+
+        model = cobra.Model("draft")
+        a = cobra.Metabolite("a_c", compartment="c")
+        b = cobra.Metabolite("b_c", compartment="c")
+        model.add_metabolites([a, b])
+
+        universal = cobra.Model("universal")
+        kegg_rxn = cobra.Reaction("R_KEGG")
+        kegg_rxn.add_metabolites({a.copy(): -1.0, b.copy(): 1.0})
+        kegg_rxn.annotation = {"kegg.reaction": "R00001"}
+        nokegg_rxn = cobra.Reaction("R_NOKEGG")
+        nokegg_rxn.add_metabolites({a.copy(): -1.0, b.copy(): 1.0})
+        universal.add_reactions([kegg_rxn, nokegg_rxn])
+
+        pruned = engine._prune_universal_for_gapfill(universal, model, [])
+
+        # Both survive — the unevidenced reaction is not filtered out.
+        assert {rxn.id for rxn in pruned.reactions} == {"R_KEGG", "R_NOKEGG"}
+
     def test_lower_bound_for_strict_greater_uses_extra_tolerance(
         self, engine: GapFillEngine
     ) -> None:
