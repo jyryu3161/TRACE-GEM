@@ -1,8 +1,11 @@
 """Offline regression guard for the KEGG-only tier invariants.
 
-Locks the publication-critical property — a deliberately-wrong reaction is never
-scored High — into CI without touching the network. The full statistical
-validation lives in ``scripts/validate_evidence_tiers.py`` (run against iML1515).
+Locks the candidate-selection-critical property — a deliberately-wrong reaction
+is never scored High — into CI without touching the network. The full statistical
+validation lives in ``scripts/validate_evidence_tiers.py``, which judges universal
+gap-fill CANDIDATES against a gold-standard GEM (iML1515). This guard mocks KEGG
+so the wrong-identity / metabolite-shuffle decoy invariants and the candidate
+path are exercised deterministically and offline.
 """
 
 from __future__ import annotations
@@ -12,8 +15,16 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.api.kegg_client import KEGGClient
-from src.core.models import EvidenceTier, ReactionEvidence
+from src.core.models import (
+    CandidateReaction,
+    EvidenceTier,
+    ExternalIDs,
+    Reaction,
+    ReactionEvidence,
+)
+from src.evidence.engine import EvidenceEngine
 from src.evidence.scoring import ConfidenceScorer
+from src.utils.config import Config
 
 # KEGG flat-file entries (compounds chosen outside the currency set).
 _ENTRIES = {
@@ -103,3 +114,49 @@ async def test_ec_discordance_caps_full_at_moderate():
     # R1 metabolites match fully, but the model EC (9.9.9.9) disagrees with R1's.
     tier = await _tier(client, scorer, ["R1"], ["C10001"], ["C10002"], ["9.9.9.9"])
     assert tier == EvidenceTier.MODERATE
+
+
+class _FakeMapper:
+    """Deterministic offline stand-in for IdentifierMapper.resolve."""
+
+    def __init__(self, ext: ExternalIDs) -> None:
+        self._ext = ext
+
+    async def resolve(self, reaction, *, universal: bool = False) -> ExternalIDs:
+        return self._ext
+
+
+@pytest.mark.asyncio
+async def test_meaningful_candidate_scores_high_via_candidate_path():
+    """A universal candidate with a KEGG id + matching metabolites + concordant EC
+    scores High when evaluated through ``EvidenceEngine.evaluate_candidate``.
+
+    Exercises the real candidate scoring path (resolve(universal=True) ->
+    kegg_client.check_evidence -> ConfidenceScorer) with KEGG mocked, so the
+    validation script's positive-set logic is covered offline.
+    """
+    engine = EvidenceEngine(Config(kegg_organism_code="eco", organism_name="eco"))
+    engine._kegg = _make_client()
+    engine._mapper = _FakeMapper(
+        ExternalIDs(
+            reaction_id="cand1",
+            kegg_reaction_ids=["R1"],
+            kegg_substrate_ids=["C10001"],
+            kegg_product_ids=["C10002"],
+            ec_numbers=["1.1.1.1"],
+        )
+    )
+
+    reaction = Reaction(
+        id="cand1",
+        name="meaningful candidate",
+        equation="a_c <=> b_c",
+        reactants={"a_c": 1.0},
+        products={"b_c": 1.0},
+    )
+    candidate = CandidateReaction(reaction=reaction, source_model="bigg_universal")
+
+    evidence = await engine.evaluate_candidate(candidate)
+
+    assert evidence.status.value == "evaluated"
+    assert evidence.evidence_tier == EvidenceTier.HIGH
