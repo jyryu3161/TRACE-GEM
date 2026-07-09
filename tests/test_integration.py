@@ -158,9 +158,11 @@ class TestEndToEndMocked:
                     description="KEGG reaction R00658 — substrate match: 100%, product match: 100%",
                     raw_data={
                         "kegg_id": "R00658",
+                        "kegg_anchored": True,
+                        "reconciliation_state": "full",
+                        "ec_concordance_state": "concordant",
                         "substrate_match": 1.0,
                         "product_match": 1.0,
-                        "directionality_match": True,
                     },
                 ),
             ]

@@ -151,6 +151,23 @@ class TestCLIGapFillMode:
         medium = load_medium_argument("glc__D_e(-10);EX_o2_e(-1000)", None)
         assert medium == {"EX_glc__D_e": -10.0, "EX_o2_e": -1000.0}
 
+    def test_inline_medium_positive_converts_to_uptake(self) -> None:
+        """Inline positive values are uptake capacities → negative lower bounds.
+
+        Regression: previously the inline path stored the raw value, so
+        ``glc__D_e(10)`` forced efflux while JSON ``{glc__D_e: 10}`` allowed
+        uptake — the same intent produced opposite biology.
+        """
+        medium = load_medium_argument("glc__D_e(10);o2_e(1000)", None)
+        assert medium == {"EX_glc__D_e": -10.0, "EX_o2_e": -1000.0}
+
+    def test_missing_medium_file_raises_clear_error(self, tmp_path) -> None:
+        """A path-like --medium that does not exist errors as a missing file,
+        not as an inline-syntax error."""
+        missing = tmp_path / "does_not_exist.csv"
+        with pytest.raises(FileNotFoundError, match="Medium file not found"):
+            load_medium_argument(str(missing), None)
+
     def test_json_medium_parsed(self, tmp_path) -> None:
         """JSON medium maps positive uptake values to negative lower bounds."""
         path = tmp_path / "medium.json"

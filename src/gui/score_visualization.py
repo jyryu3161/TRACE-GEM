@@ -131,7 +131,12 @@ class ScoreVisualizationWidget(QWidget):
         self._update_subsystem_chart(evidence, subsystem_map or {})
 
     def _update_tier_distribution(self, evidence: list[ReactionEvidence]) -> None:
-        tiers = [EvidenceTier.HIGH, EvidenceTier.MODERATE, EvidenceTier.LOW]
+        tiers = [
+            EvidenceTier.HIGH,
+            EvidenceTier.MODERATE,
+            EvidenceTier.LOW,
+            EvidenceTier.NOT_ASSESSABLE,
+        ]
         counts = [sum(1 for ev in evidence if ev.evidence_tier == tier) for tier in tiers]
         labels = [tier.label for tier in tiers]
         colors = [pg.mkBrush(self._tier_color(tier)) for tier in tiers]
@@ -267,7 +272,12 @@ class ScoreVisualizationWidget(QWidget):
             sub = subsystem_map.get(rxn_id, "Unknown")
             counts = sub_counts.setdefault(
                 sub,
-                {EvidenceTier.HIGH: 0, EvidenceTier.MODERATE: 0, EvidenceTier.LOW: 0},
+                {
+                    EvidenceTier.HIGH: 0,
+                    EvidenceTier.MODERATE: 0,
+                    EvidenceTier.LOW: 0,
+                    EvidenceTier.NOT_ASSESSABLE: 0,
+                },
             )
             counts[ev.evidence_tier] += 1
 
@@ -290,7 +300,7 @@ class ScoreVisualizationWidget(QWidget):
 
         y = list(range(len(names)))
         left = [0] * len(names)
-        for tier in (EvidenceTier.HIGH, EvidenceTier.MODERATE, EvidenceTier.LOW):
+        for tier in (EvidenceTier.HIGH, EvidenceTier.MODERATE, EvidenceTier.LOW, EvidenceTier.NOT_ASSESSABLE):
             widths = [counts[tier] for _, counts in sorted_subs]
             if any(widths):
                 bar = pg.BarGraphItem(
@@ -314,7 +324,7 @@ class ScoreVisualizationWidget(QWidget):
 
         legend_y = max(len(names) - 0.1, 0.5)
         legend_x = max(max_total * 0.04, 0.05)
-        for i, tier in enumerate((EvidenceTier.HIGH, EvidenceTier.MODERATE, EvidenceTier.LOW)):
+        for i, tier in enumerate((EvidenceTier.HIGH, EvidenceTier.MODERATE, EvidenceTier.LOW, EvidenceTier.NOT_ASSESSABLE)):
             label = pg.TextItem(tier.label, color=self._tier_color(tier), anchor=(0, 1))
             label.setPos(legend_x + i * max(max_total * 0.22, 1.2), legend_y)
             self._subsystem_widget.addItem(label)
@@ -332,4 +342,6 @@ class ScoreVisualizationWidget(QWidget):
             return THEME.score_high
         if tier == EvidenceTier.MODERATE:
             return THEME.score_mid
-        return THEME.score_low
+        if tier == EvidenceTier.LOW:
+            return THEME.score_low
+        return THEME.score_none  # Not assessable — neutral grey, distinct from Low

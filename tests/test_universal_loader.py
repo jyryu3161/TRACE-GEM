@@ -132,6 +132,67 @@ class TestLoadSbml:
             loader.load_sbml("/nonexistent/model.xml")
 
 
+class TestCompartmentBackfill:
+    """Regression: the BiGG universal JSON ships empty-compartment metabolites.
+
+    Left unfixed, copying such metabolites into a user model during gap-fill
+    writes an ``id``-less ``<compartment>``, producing an SBML file COBRApy
+    cannot re-read (breaking --output-model, GUI export, and version restore).
+    """
+
+    @staticmethod
+    def _universal_with_empty_compartments() -> cobra.Model:
+        model = cobra.Model("universal")
+        prpp = cobra.Metabolite("prpp_c", compartment="")
+        glc = cobra.Metabolite("glc__D_e", compartment="")
+        rxn = cobra.Reaction("PRPPS")
+        rxn.add_metabolites({prpp: -1.0, glc: 1.0})
+        model.add_reactions([rxn])
+        return model
+
+    def test_backfill_assigns_compartment_from_id_suffix(
+        self, loader: UniversalLoader, tmp_path: Path
+    ) -> None:
+        fake_file = tmp_path / "universal.json"
+        fake_file.touch()
+        model = self._universal_with_empty_compartments()
+
+        with patch(
+            "src.core.universal_loader.cobra.io.load_json_model", return_value=model
+        ):
+            result = loader.load_json(fake_file)
+
+        assert result.metabolites.get_by_id("prpp_c").compartment == "c"
+        assert result.metabolites.get_by_id("glc__D_e").compartment == "e"
+        # Referenced compartments must be registered with a name for SBML output.
+        assert result.compartments.get("c")
+        assert result.compartments.get("e")
+        assert all(met.compartment for met in result.metabolites)
+
+    def test_gapfilled_model_roundtrips_through_sbml(
+        self, loader: UniversalLoader, tmp_path: Path
+    ) -> None:
+        """Adding a backfilled universal reaction yields a re-readable SBML."""
+        fake_file = tmp_path / "universal.json"
+        fake_file.touch()
+        universal = self._universal_with_empty_compartments()
+        with patch(
+            "src.core.universal_loader.cobra.io.load_json_model", return_value=universal
+        ):
+            universal = loader.load_json(fake_file)
+
+        # Simulate the gap-fill add path: copy a universal reaction into a model.
+        user_model = cobra.Model("draft")
+        user_model.add_reactions([universal.reactions.get_by_id("PRPPS").copy()])
+
+        out = tmp_path / "gapfilled.xml"
+        cobra.io.write_sbml_model(user_model, str(out))
+        reloaded = cobra.io.read_sbml_model(str(out))  # would raise before the fix
+
+        assert {m.id for m in reloaded.metabolites} == {"prpp_c", "glc__D_e"}
+        assert all(met.compartment for met in reloaded.metabolites)
+
+
 class TestLoadAutoDetect:
     def test_load_auto_detect_json(self, loader: UniversalLoader) -> None:
         """load() routes .json to load_json."""

@@ -7,7 +7,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable
 
-from src.api.base_client import BaseAPIClient
+from src.api.base_client import APIUnavailableError, BaseAPIClient
 from src.cache.cache_manager import CacheManager
 from src.core.id_mapper import IdentifierMapper
 from src.core.mapping_data import MappingData
@@ -181,7 +181,7 @@ class OrganismFilter:
             return list(cached_genes)
 
         cache_key = f"organism_genes:{self._organism}:{kegg_reaction_id}"
-        data = await self._kegg_client.get(
+        data = await self._safe_kegg_get(
             f"/link/{self._organism}/rn:{kegg_reaction_id}",
             cache_key=cache_key,
             cache_ttl=ORGANISM_FILTER_CACHE_TTL,
@@ -206,6 +206,29 @@ class OrganismFilter:
     async def close(self) -> None:
         """Close the KEGG client session."""
         await self._kegg_client.close()
+
+    async def _safe_kegg_get(
+        self,
+        path: str,
+        *,
+        cache_key: str | None = None,
+        cache_ttl: int | None = None,
+    ) -> dict | str | None:
+        """KEGG GET that tolerates an unavailable service.
+
+        Organism gene/reaction annotation is an optional enhancement to
+        gap-fill, so an unreachable KEGG (open circuit, exhausted retries, or a
+        4xx/5xx organism-link endpoint) degrades to "no organism data" rather
+        than aborting the entire gap-fill run. This is deliberately different
+        from the evidence path, where a KEGG outage is surfaced as an error.
+        """
+        try:
+            return await self._kegg_client.get(
+                path, cache_key=cache_key, cache_ttl=cache_ttl
+            )
+        except APIUnavailableError as exc:
+            logger.warning("[organism_filter] KEGG unavailable for %s: %s", path, exc)
+            return None
 
     async def _load_organism_reactions(self) -> set[str]:
         """Load organism-specific reactions via KEGG KO and EC links.
@@ -252,7 +275,7 @@ class OrganismFilter:
     ) -> dict[str, set[str]]:
         """Return feature ID -> organism genes for KO or EC annotations."""
         cache_key = f"organism_{feature_db}:{self._organism}"
-        data = await self._kegg_client.get(
+        data = await self._safe_kegg_get(
             f"/link/{feature_db}/{self._organism}",
             cache_key=cache_key,
             cache_ttl=ORGANISM_FILTER_CACHE_TTL,
@@ -262,7 +285,7 @@ class OrganismFilter:
     async def _load_feature_reactions(self, feature_db: str) -> dict[str, set[str]]:
         """Return KO/EC feature ID -> KEGG reaction IDs."""
         cache_key = f"kegg_{feature_db}_reaction_links"
-        data = await self._kegg_client.get(
+        data = await self._safe_kegg_get(
             f"/link/rn/{feature_db}",
             cache_key=cache_key,
             cache_ttl=ORGANISM_FILTER_CACHE_TTL,

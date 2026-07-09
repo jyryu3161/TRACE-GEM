@@ -18,11 +18,15 @@ def _make_evidence(
     score: float,
     kegg_ids: list[str] | None = None,
     tier: EvidenceTier = EvidenceTier.HIGH,
+    verified: bool = True,
 ) -> ReactionEvidence:
     ev = ReactionEvidence(reaction_id="TEST_RXN")
     ev.confidence_score = score
     ev.evidence_tier = tier
     ev.kegg_reaction_ids = kegg_ids or []
+    # The no-KEGG penalty keys on *verified* KEGG IDs; annotated-only IDs that
+    # KEGG verification rejected do not count.
+    ev.verified_kegg_reaction_ids = list(kegg_ids or []) if verified else []
     return ev
 
 
@@ -70,6 +74,27 @@ class TestPenaltyCalculator:
         penalty = calc.calculate(candidate, evidence)
         expected = 5.0 * 2.0
         assert penalty == pytest.approx(expected, rel=1e-3)
+
+    def test_unverified_kegg_id_still_gets_no_kegg_multiplier(
+        self, calc: PenaltyCalculator
+    ) -> None:
+        """An annotated KEGG ID that was NOT verified must not dodge the no-KEGG
+        multiplier (no laundering of rejected/unverified IDs)."""
+        candidate = _make_candidate(organism_exists=True)
+        evidence = _make_evidence(
+            0.50, kegg_ids=["R00001"], tier=EvidenceTier.MODERATE, verified=False
+        )
+        penalty = calc.calculate(candidate, evidence)
+        assert penalty == pytest.approx(5.0 * 2.0, rel=1e-3)
+
+    def test_not_assessable_tier_penalty(self, calc: PenaltyCalculator) -> None:
+        """Not-assessable candidates are penalized like Low (plus no-KEGG)."""
+        candidate = _make_candidate(organism_exists=True)
+        evidence = _make_evidence(
+            0.0, kegg_ids=[], tier=EvidenceTier.NOT_ASSESSABLE, verified=False
+        )
+        penalty = calc.calculate(candidate, evidence)
+        assert penalty == pytest.approx(25.0 * 2.0, rel=1e-3)
 
     def test_no_evidence_applies_kegg_multiplier(self, calc: PenaltyCalculator) -> None:
         """None evidence applies no_kegg_mult."""

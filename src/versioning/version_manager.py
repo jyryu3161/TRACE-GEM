@@ -35,11 +35,28 @@ class VersionManager:
     # ------------------------------------------------------------------
 
     def set_base_model(self, cobra_model: cobra.Model, model_id: str) -> None:
-        """Save the initial model load as v001.
+        """Save the initial model load as v001, or resume an existing history.
 
-        Called once when a model is first loaded.
+        Called when a model is loaded. If versions already exist for this
+        ``model_id``, the existing chain is resumed — its most recent version
+        becomes the current version — instead of grafting a second parentless
+        root. Reopening a model (or reloading one whose id matches) would
+        otherwise orphan its prior edit history and split the graph into
+        disconnected roots.
         """
         self._model_id = model_id
+
+        existing = self._storage.load_history(model_id)
+        if existing:
+            self._current_version = existing[-1]
+            self._previous_model = cobra_model.copy()
+            logger.info(
+                "Resumed existing history for %s at %s (%d version(s))",
+                model_id,
+                existing[-1].version_id,
+                len(existing),
+            )
+            return
 
         # Build a diff that captures the full model as "added"
         empty = cobra.Model("empty")

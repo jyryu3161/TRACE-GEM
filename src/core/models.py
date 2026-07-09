@@ -17,10 +17,15 @@ class EvidenceTier(Enum):
     HIGH = "high"
     MODERATE = "moderate"
     LOW = "low"
+    # A KEGG identity anchor could not be obtained at all (no annotated/mapped
+    # KEGG reaction and no EC route), so the reaction could not be assessed.
+    # Distinct from LOW, which means a KEGG anchor exists but the evidence is
+    # weak or contradicts.
+    NOT_ASSESSABLE = "not_assessable"
 
     @property
     def label(self) -> str:
-        return self.value.title()
+        return self.value.replace("_", " ").title()
 
     @property
     def rank(self) -> int:
@@ -28,6 +33,7 @@ class EvidenceTier(Enum):
             EvidenceTier.HIGH: 3,
             EvidenceTier.MODERATE: 2,
             EvidenceTier.LOW: 1,
+            EvidenceTier.NOT_ASSESSABLE: 0,
         }[self]
 
 
@@ -265,13 +271,26 @@ class ReactionEvidence:
     status: EvaluationStatus = EvaluationStatus.NOT_EVALUATED
     error_message: str | None = None
 
-    # Per-source scores
+    # Per-source scores. bigg_score is retained (always 0.0 under the KEGG-only
+    # scheme) so legacy projects/exports still deserialize; it is no longer a
+    # tier input.
     kegg_score: float = 0.0
     bigg_score: float = 0.0
 
     # Cross-reference IDs resolved
     ec_numbers: list[str] = field(default_factory=list)
     kegg_reaction_ids: list[str] = field(default_factory=list)
+    # KEGG reaction IDs whose entry was retrieved AND did not contradict the
+    # model reaction (non-mismatch). Used by gap-fill penalties and provenance;
+    # distinct from kegg_reaction_ids, which includes annotated-but-unverified IDs.
+    verified_kegg_reaction_ids: list[str] = field(default_factory=list)
+
+    # Rule-based tier provenance (KEGG-only scheme)
+    kegg_anchored: bool = False
+    reconciliation_state: str = "unverifiable"  # full|partial|none_contradictory|unverifiable
+    ec_concordance_state: str = "unknown"  # concordant|discordant|unknown
+    # 1 = legacy blended-score scheme; 2 = rule-based KEGG-only scheme.
+    tier_schema_version: int = 2
 
     # Reaction verification results
     substrate_match_ratio: float = 0.0
@@ -289,6 +308,11 @@ class ReactionEvidence:
             "bigg_score": self.bigg_score,
             "ec_numbers": self.ec_numbers,
             "kegg_reaction_ids": self.kegg_reaction_ids,
+            "verified_kegg_reaction_ids": self.verified_kegg_reaction_ids,
+            "kegg_anchored": self.kegg_anchored,
+            "reconciliation_state": self.reconciliation_state,
+            "ec_concordance_state": self.ec_concordance_state,
+            "tier_schema_version": self.tier_schema_version,
             "substrate_match_ratio": self.substrate_match_ratio,
             "product_match_ratio": self.product_match_ratio,
             "items": [item.to_dict() for item in self.items],
@@ -302,10 +326,16 @@ class ReactionEvidence:
                 items.append(EvidenceItem.from_dict(item_data))
             except ValueError:
                 continue
+        # Tolerate unknown/removed tier values from older or newer snapshots
+        # rather than raising ValueError and failing the whole project load.
+        try:
+            tier = EvidenceTier(data.get("evidence_tier", EvidenceTier.LOW.value))
+        except ValueError:
+            tier = EvidenceTier.LOW
         return cls(
             reaction_id=data["reaction_id"],
             confidence_score=data.get("confidence_score", 0.0),
-            evidence_tier=EvidenceTier(data.get("evidence_tier", EvidenceTier.LOW.value)),
+            evidence_tier=tier,
             evidence_rationale=data.get("evidence_rationale", ""),
             status=EvaluationStatus(data.get("status", "not_evaluated")),
             error_message=data.get("error_message"),
@@ -313,6 +343,12 @@ class ReactionEvidence:
             bigg_score=data.get("bigg_score", 0.0),
             ec_numbers=data.get("ec_numbers", []),
             kegg_reaction_ids=data.get("kegg_reaction_ids", []),
+            verified_kegg_reaction_ids=data.get("verified_kegg_reaction_ids", []),
+            kegg_anchored=data.get("kegg_anchored", False),
+            reconciliation_state=data.get("reconciliation_state", "unverifiable"),
+            ec_concordance_state=data.get("ec_concordance_state", "unknown"),
+            # Absent key ⇒ a pre-redesign snapshot scored under the legacy scheme.
+            tier_schema_version=data.get("tier_schema_version", 1),
             substrate_match_ratio=data.get("substrate_match_ratio", 0.0),
             product_match_ratio=data.get("product_match_ratio", 0.0),
             items=items,
@@ -346,6 +382,9 @@ class CandidateReaction:
     assigned_gpr: str = ""
     penalty: float = 1.0
     selected: bool = False
+    # KEGG evidence tier used to weight this candidate during gap-fill
+    # (provenance for the gap-fill report). None until evaluated.
+    evidence_tier: EvidenceTier | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -356,10 +395,16 @@ class CandidateReaction:
             "assigned_gpr": self.assigned_gpr,
             "penalty": self.penalty,
             "selected": self.selected,
+            "evidence_tier": self.evidence_tier.value if self.evidence_tier else None,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> CandidateReaction:
+        tier_val = data.get("evidence_tier")
+        try:
+            tier = EvidenceTier(tier_val) if tier_val else None
+        except ValueError:
+            tier = None
         return cls(
             reaction=Reaction.from_dict(data["reaction"]),
             source_model=data.get("source_model", "bigg_universal"),
@@ -368,6 +413,7 @@ class CandidateReaction:
             assigned_gpr=data.get("assigned_gpr", ""),
             penalty=data.get("penalty", 1.0),
             selected=data.get("selected", False),
+            evidence_tier=tier,
         )
 
 

@@ -472,6 +472,25 @@ class TaskRunner:
         logger.info("Task results: %d/%d passed", passed, total)
         return results
 
+    @staticmethod
+    def _unique_objective_reaction_id(model: cobra.Model, base_id: str) -> str:
+        """Return a reaction ID not already used in ``model``.
+
+        The task objective reaction must be added fresh: cobra silently ignores
+        ``add_reactions`` for a duplicate ID, so a base ID that collides with a
+        pre-existing reaction (e.g. the model's own ``DM_atp_c``) would bind the
+        objective to that reaction's bounds/stoichiometry and yield a wrong
+        task verdict.
+        """
+        if base_id not in model.reactions:
+            return base_id
+        candidate = f"{base_id}_taskobj"
+        i = 1
+        while candidate in model.reactions:
+            i += 1
+            candidate = f"{base_id}_taskobj{i}"
+        return candidate
+
     def _make_demand_reaction(
         self,
         model: cobra.Model,
@@ -506,7 +525,9 @@ class TaskRunner:
                     break
 
             if all_present and stoich:
-                rxn = cobra.Reaction(f"TURNOVER_{actual_met_id}")
+                rxn = cobra.Reaction(
+                    self._unique_objective_reaction_id(model, f"TURNOVER_{actual_met_id}")
+                )
                 rxn.add_metabolites(stoich)
                 rxn.lower_bound = 0.0
                 rxn.upper_bound = 1000.0
@@ -523,7 +544,9 @@ class TaskRunner:
 
         # Fallback: simple demand reaction
         met = model.metabolites.get_by_id(actual_met_id)
-        rxn = cobra.Reaction(f"DM_{actual_met_id}")
+        rxn = cobra.Reaction(
+            self._unique_objective_reaction_id(model, f"DM_{actual_met_id}")
+        )
         rxn.add_metabolites({met: -1.0})
         rxn.lower_bound = 0.0
         rxn.upper_bound = 1000.0
