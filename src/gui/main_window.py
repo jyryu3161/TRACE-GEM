@@ -33,7 +33,9 @@ from src.core.models import (
     WorkflowCheckpoint,
 )
 from src.evidence.engine import EvidenceEngine
+from src.gui.build_panel import BuildPanelWidget
 from src.gui.candidate_table import CandidateTableWidget
+from src.gui.controllers.construct_ctrl import ConstructController
 from src.gui.controllers.evaluation_ctrl import EvaluationController
 from src.gui.controllers.export_ctrl import ExportController
 from src.gui.controllers.gapfill_ctrl import GapFillController
@@ -98,6 +100,7 @@ class MainWindow(QMainWindow):
         self._gapfill_ctrl = GapFillController(self)
         self._export_ctrl = ExportController(self)
         self._version_ctrl = VersionController(self)
+        self._construct_ctrl = ConstructController(self)
 
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.setMinimumSize(1200, 800)
@@ -147,6 +150,9 @@ class MainWindow(QMainWindow):
 
         # Analysis menu
         analysis_menu = menubar.addMenu("&Analysis")
+        analysis_menu.addAction(
+            "&Build Model (CarveMe)...", self._construct_ctrl.open_build_panel, "Ctrl+B"
+        )
         analysis_menu.addAction("Task-Based &Gap-Filling...", self._gapfill_ctrl.start_workflow, "Ctrl+W")
 
         # Export menu
@@ -238,6 +244,22 @@ class MainWindow(QMainWindow):
         self._gapfill_panel.export_sbml_requested.connect(self._export_ctrl.export_improved_sbml)
         self._gapfill_panel.export_report_requested.connect(self._export_ctrl.export_gapfill_report)
         right_tabs.addTab(self._gapfill_panel, "Gap-Fill")
+
+        # Construct (CarveMe) tab
+        self._build_panel = BuildPanelWidget()
+        self._build_panel.build_requested.connect(
+            lambda: self._construct_ctrl.start_single_build(False)
+        )
+        self._build_panel.batch_build_requested.connect(self._construct_ctrl.start_batch_build)
+        self._build_panel.build_and_refine_requested.connect(
+            lambda: self._construct_ctrl.start_single_build(True)
+        )
+        self._build_panel.cancel_requested.connect(self._construct_ctrl.cancel)
+        self._build_panel.send_to_evaluator_requested.connect(
+            self._construct_ctrl.send_to_evaluator
+        )
+        self._build_panel.refine_selected_requested.connect(self._construct_ctrl.refine_selected)
+        right_tabs.addTab(self._build_panel, "Construct")
 
         # Versions tab
         self._version_panel = VersionPanelWidget()
