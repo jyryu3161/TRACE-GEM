@@ -76,7 +76,7 @@ def get_ordered_sources() -> list[tuple[EvidenceSource, SourceConfig]]:
 
 def get_active_sources(config: object) -> list[EvidenceSource]:
     """Get list of enabled sources based on config flags."""
-    active = []
+    active: list[EvidenceSource] = []
     for source, sc in get_ordered_sources():
         if source == EvidenceSource.KEGG:
             active.append(source)  # KEGG is always active

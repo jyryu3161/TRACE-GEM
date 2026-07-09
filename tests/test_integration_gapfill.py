@@ -14,6 +14,7 @@ from src.cli import (
 )
 from src.core.models import (
     CandidateReaction,
+    EvidenceTier,
     GapFillResult,
     MetabolicTask,
     ModelData,
@@ -339,6 +340,18 @@ class TestTaskBeforeAfterComparison:
                     ),
                     penalty=1.5,
                     assigned_gpr="b0485",
+                    evidence_tier=EvidenceTier.HIGH,
+                ),
+                # An unevidenced reaction is still added when a task needs it;
+                # its tier column falls back to the "—" placeholder.
+                CandidateReaction(
+                    reaction=Reaction(
+                        id="PRPPS",
+                        name="Phosphoribosylpyrophosphate synthetase",
+                        equation="r5p + atp -> prpp + amp",
+                    ),
+                    penalty=25.0,
+                    evidence_tier=None,
                 ),
             ],
             task_results_before=[
@@ -362,13 +375,25 @@ class TestTaskBeforeAfterComparison:
 
         # Check summary section
         assert rows[0] == ["Gap-Fill Summary"]
-        assert rows[1] == ["Reactions Added", "1"]
+        assert rows[1] == ["Reactions Added", "2"]
         assert rows[2] == ["Tasks Fixed", "1"]
 
-        # Check added reactions section
+        # Check added reactions section, including KEGG evidence provenance
         added_header_idx = next(i for i, r in enumerate(rows) if r == ["Added Reactions"])
-        assert rows[added_header_idx + 1][0] == "Reaction ID"
-        assert rows[added_header_idx + 2][0] == "GLNS"
+        header = rows[added_header_idx + 1]
+        assert header[0] == "Reaction ID"
+        assert header[5] == "Evidence Tier"
+        assert header[6] == "Weight (penalty)"
+        tier_col = header.index("Evidence Tier")
+        weight_col = header.index("Weight (penalty)")
+
+        added_rows = {r[0]: r for r in rows[added_header_idx + 2:] if r and r[0]}
+        # Evidence-backed reaction carries its tier label + penalty weight.
+        assert added_rows["GLNS"][tier_col] == "High"
+        assert added_rows["GLNS"][weight_col] == "1.50"
+        # Unevidenced reaction is present with the "—" tier placeholder.
+        assert added_rows["PRPPS"][tier_col] == "—"
+        assert added_rows["PRPPS"][weight_col] == "25.00"
 
         # Check task results section
         task_header_idx = next(i for i, r in enumerate(rows) if r == ["Task Results"])
