@@ -1,4 +1,4 @@
-# MetaTaskGapFill pipeline config — build → refine → evaluate in one run.
+# MetaTaskGapFill pipeline config — build → refine (task-aware gap-fill) in one run.
 #   metatask-gapfill-cli --config examples/pipeline.yaml
 #   metatask-gapfill-cli --config examples/pipeline.yaml --config-validate   # dry run
 #
@@ -35,9 +35,7 @@ refine:
   include_exchange_gapfill: false
   output_model: out/{label}_refined.xml
   output_report: out/{label}_report.csv
-
-# EVALUATE — KEGG/BiGG reaction evidence per model (optional; needs network).
-evaluate:
-  enabled: false
-  skip_exchange: true
-  output: out/{label}_evidence.csv        # .csv or .json
+# Note: model quality is judged by metabolic tasks (see refine.tasks). During
+# gap-fill, universal candidate reactions are weighted by KEGG evidence unless
+# skip_evaluation is true; there is no separate per-reaction model-evaluation
+# stage.

@@ -88,6 +88,9 @@ class PipelineSpec:
 
 @dataclass
 class PipelineResult:
+    # Count of models successfully resolved — whether newly built by CarveMe or
+    # loaded from an existing SBML (the `models:` list). Used as the "did any
+    # model make it through resolution" guard, so it must include loaded models.
     models_built: int = 0
     models_failed: int = 0
     models_refined: int = 0
@@ -342,8 +345,8 @@ async def run_pipeline(
             logger.exception("Pipeline model '%s' failed", label)
 
     _log(
-        f"Pipeline complete: {result.models_built} built, {result.models_failed} failed, "
-        f"{result.models_refined} refined"
+        f"Pipeline complete: {result.models_built} resolved, "
+        f"{result.models_failed} failed, {result.models_refined} refined"
     )
     return result
 

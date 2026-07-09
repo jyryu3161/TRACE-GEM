@@ -870,7 +870,7 @@ def _run_pipeline_config(
 
     if result.models_failed > 0 or result.models_built == 0:
         _eprint(
-            f"Pipeline finished with failures: {result.models_built} built, "
+            f"Pipeline finished with failures: {result.models_built} resolved, "
             f"{result.models_failed} failed"
         )
         sys.exit(1)
