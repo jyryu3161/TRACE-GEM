@@ -52,7 +52,6 @@ class GapFillEngine:
         self._penalty_calc = PenaltyCalculator(config)
         self._gpr_assigner: GPRAssigner | None = None
         self._organism_filter: OrganismFilter | None = None
-        self._mapping_data: MappingData | None = None
 
     async def initialize(
         self,
@@ -61,7 +60,6 @@ class GapFillEngine:
         mapping_data: MappingData | None = None,
     ) -> None:
         """Initialize organism filter and GPR assigner."""
-        self._mapping_data = mapping_data
         self._organism_filter = OrganismFilter(
             organism_code=organism_code,
             cache_manager=cache_manager,
@@ -413,18 +411,6 @@ class GapFillEngine:
         after_failed = {r.task.task_id for r in result.task_results_after if not r.passed}
         result.tasks_fixed = len(before_failed & after_passed)
         result.tasks_broken = len(before_passed & after_failed)
-
-        # Under strict KEGG-only gap-fill, gapfillable tasks that were failing
-        # and remain failing had no KEGG-mapped reaction available to restore
-        # them — report them distinctly rather than filling with unverified
-        # (KEGG-less) reactions.
-        if self._config.gapfill_require_kegg_mapping:
-            still_failing = before_failed & after_failed
-            result.unfillable_no_kegg = sorted(
-                t.task_id
-                for t in tasks
-                if t.task_id in still_failing and self._is_gapfillable_task(t)
-            )
 
         if result.tasks_broken:
             logger.warning(
@@ -851,22 +837,6 @@ class GapFillEngine:
 
         raise RuntimeError(f"Unknown task type: {task.task_type}")
 
-    def _has_kegg_mapping(self, rxn: cobra.Reaction) -> bool:
-        """True if the universal reaction maps to a KEGG reaction.
-
-        Checks the reaction's own annotation and the offline BiGG→KEGG map
-        (which the MetaNetX ``reac_xref.tsv`` enrichment expands).
-        """
-        ann = rxn.annotation or {}
-        if ann.get("KEGG Reaction") or ann.get("kegg.reaction"):
-            return True
-        md = self._mapping_data
-        if md is not None:
-            base = rxn.id[2:] if rxn.id.startswith("R_") else rxn.id
-            if md.rxn_bigg_to_kegg.get(rxn.id) or md.rxn_bigg_to_kegg.get(base):
-                return True
-        return False
-
     def _prune_universal_for_gapfill(
         self,
         universal: cobra.Model,
@@ -881,48 +851,42 @@ class GapFillEngine:
         helping restore removed reactions. Keep reactions compatible with the
         current model metabolite set, while preserving explicit task targets.
         """
-        require_kegg = self._config.gapfill_require_kegg_mapping
+        if not self._config.gapfill_prune_to_model_metabolites:
+            return universal
+
         threshold = max(0, self._config.gapfill_universal_prune_threshold)
-        do_met_prune = (
-            self._config.gapfill_prune_to_model_metabolites
-            and threshold > 0
-            and len(universal.reactions) > threshold
-        )
-        # Nothing to do if neither the metabolite prune nor the strict KEGG
-        # filter is active.
-        if not do_met_prune and not require_kegg:
+        if threshold == 0 or len(universal.reactions) <= threshold:
             return universal
 
         try:
             allowed_metabolites = set(user_model.metabolites.list_attr("id"))
         except Exception:
-            allowed_metabolites = set()
+            return universal
 
-        # Explicit task targets are always kept, even if not KEGG-mapped, so a
-        # removed task-target reaction can still be restored.
-        keep_task_targets: set[str] = set()
+        if not allowed_metabolites:
+            return universal
+
+        # Prune only for MILP size: keep reactions whose metabolites are already
+        # in the draft model, plus explicit task targets. KEGG evidence is NOT a
+        # filter here — it only weights candidate penalties, so the gap-filler
+        # prefers evidence-backed reactions but can still add unevidenced ones to
+        # satisfy a task.
+        keep_reaction_ids: set[str] = set()
         universal_rxn_map, universal_met_map, _ = self._task_runner._build_id_maps(universal)
         for task in tasks:
             if task.task_type == "Reaction":
                 rxn_id = self._task_runner._resolve_reaction(task.target_id, universal_rxn_map)
                 if rxn_id:
-                    keep_task_targets.add(rxn_id)
+                    keep_reaction_ids.add(rxn_id)
             elif task.task_type == "Metabolite":
                 met_id = self._task_runner._resolve_metabolite(task.target_id, universal_met_map)
                 if met_id:
                     allowed_metabolites.add(met_id)
 
-        keep_reaction_ids: set[str] = set(keep_task_targets)
         for rxn in universal.reactions:
-            if rxn.id in keep_task_targets:
-                continue
-            if do_met_prune:
-                metabolite_ids = {met.id for met in rxn.metabolites}
-                if not (metabolite_ids and metabolite_ids <= allowed_metabolites):
-                    continue
-            if require_kegg and not self._has_kegg_mapping(rxn):
-                continue
-            keep_reaction_ids.add(rxn.id)
+            metabolite_ids = {met.id for met in rxn.metabolites}
+            if metabolite_ids and metabolite_ids <= allowed_metabolites:
+                keep_reaction_ids.add(rxn.id)
 
         if not keep_reaction_ids or len(keep_reaction_ids) >= len(universal.reactions):
             return universal

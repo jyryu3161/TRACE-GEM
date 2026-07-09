@@ -591,7 +591,6 @@ class TestGapFillEngine:
         config = Config(
             gapfill_universal_prune_threshold=1,
             gapfill_prune_to_model_metabolites=True,
-            gapfill_require_kegg_mapping=False,  # isolate the metabolite-prune here
         )
         engine = GapFillEngine(config)
 
@@ -638,30 +637,6 @@ class TestGapFillEngine:
             "R_DROP",
             "R_TARGET",
         }
-
-    def test_strict_kegg_filter_keeps_only_kegg_mapped_reactions(self) -> None:
-        """With gapfill_require_kegg_mapping, only KEGG-annotated universal
-        reactions survive (plus explicit task targets)."""
-        config = Config(
-            gapfill_require_kegg_mapping=True,
-            gapfill_prune_to_model_metabolites=False,  # isolate the KEGG filter
-        )
-        engine = GapFillEngine(config)
-
-        model = cobra.Model("draft")
-        model.add_metabolites([cobra.Metabolite("a_c", compartment="c")])
-
-        universal = cobra.Model("universal")
-        kegg_rxn = cobra.Reaction("R_KEGG")
-        kegg_rxn.add_metabolites({cobra.Metabolite("p_c", compartment="c"): -1.0})
-        kegg_rxn.annotation = {"KEGG Reaction": ["R00001"]}
-        no_kegg = cobra.Reaction("R_NOKEGG")
-        no_kegg.add_metabolites({cobra.Metabolite("q_c", compartment="c"): -1.0})
-        universal.add_reactions([kegg_rxn, no_kegg])
-
-        pruned = engine._prune_universal_for_gapfill(universal, model, tasks=[])
-
-        assert {rxn.id for rxn in pruned.reactions} == {"R_KEGG"}
 
     def test_lower_bound_for_strict_greater_uses_extra_tolerance(
         self, engine: GapFillEngine

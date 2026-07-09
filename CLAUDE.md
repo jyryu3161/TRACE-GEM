@@ -204,5 +204,6 @@ src/
   - negative/upper-bound task skipping,
   - reaction copy semantics,
   - large universal pruning,
-  - strict KEGG-only candidate universe (only KEGG-mapped reactions addable),
-  - candidate KEGG evidence weighting (tier → penalty) and gap-fill report provenance.
+  - candidate KEGG evidence weighting (tier → penalty; evidence-backed reactions
+    are preferred but unevidenced ones are still added when needed to satisfy a
+    task) and gap-fill report provenance.

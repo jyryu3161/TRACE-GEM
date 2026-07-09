@@ -502,9 +502,6 @@ class GapFillResult:
     total_tasks: int = 0
     iterations: int = 0
     infeasible_tasks: list[str] = field(default_factory=list)
-    # Tasks left failing because no KEGG-mapped universal reaction could fill
-    # them under strict KEGG-only gap-fill (distinct from generic infeasibility).
-    unfillable_no_kegg: list[str] = field(default_factory=list)
 
     # Cancel recovery fields
     completed_phase: int = 0  # 0~5, completed phase number

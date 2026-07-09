@@ -7,7 +7,8 @@ MetaTaskGapFill turns a protein FASTA into a draft genome-scale metabolic model
 (via [CarveMe](https://carveme.readthedocs.io)), then validates and repairs it
 against a curated set of metabolic tasks using COBRApy MILP gap-filling. During
 gap-filling, candidate reactions from the universal model are weighted by KEGG
-evidence so only well-identified reactions are added. Every operation is available
+evidence so well-identified reactions are preferred (unevidenced ones are still
+added when needed to satisfy a task). Every operation is available
 through a desktop GUI (PySide6/Qt6) and a feature-equivalent command-line
 interface, and can be orchestrated end-to-end from a single YAML configuration file.
 

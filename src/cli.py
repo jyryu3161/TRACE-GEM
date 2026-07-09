@@ -625,15 +625,6 @@ def _save_gapfill_report(
             ])
         writer.writerow([])
 
-        # Section 2b: Tasks that could not be gap-filled because no KEGG-mapped
-        # universal reaction was available (strict KEGG-only gap-fill).
-        if result.unfillable_no_kegg:
-            writer.writerow(["Unfillable (no KEGG-mapped reaction)"])
-            writer.writerow(["Task ID"])
-            for task_id in result.unfillable_no_kegg:
-                writer.writerow([task_id])
-            writer.writerow([])
-
         # Section 3: Task results
         writer.writerow(["Task Results"])
         writer.writerow([
