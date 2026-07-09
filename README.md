@@ -1,14 +1,15 @@
 # MetaTaskGapFill
 
-**A task-aware platform for building, evaluating, and gap-filling genome-scale
+**A task-aware platform for building and gap-filling genome-scale
 metabolic models.**
 
 MetaTaskGapFill turns a protein FASTA into a draft genome-scale metabolic model
-(via [CarveMe](https://carveme.readthedocs.io)), validates and repairs it against
-a curated set of metabolic tasks using COBRApy MILP gap-filling, and scores
-reaction evidence against KEGG and BiGG. Every operation is available through a
-desktop GUI (PySide6/Qt6) and a feature-equivalent command-line interface, and
-can be orchestrated end-to-end from a single YAML configuration file.
+(via [CarveMe](https://carveme.readthedocs.io)), then validates and repairs it
+against a curated set of metabolic tasks using COBRApy MILP gap-filling. During
+gap-filling, candidate reactions from the universal model are weighted by KEGG
+evidence so only well-identified reactions are added. Every operation is available
+through a desktop GUI (PySide6/Qt6) and a feature-equivalent command-line
+interface, and can be orchestrated end-to-end from a single YAML configuration file.
 
 ---
 
@@ -31,13 +32,18 @@ can be orchestrated end-to-end from a single YAML configuration file.
 
 ## Overview
 
-The platform implements a reproducible **build → refine → evaluate** workflow:
+The platform implements a reproducible **build → gap-fill** workflow, with model
+quality judged by metabolic tasks:
 
 | Stage | What it does | Engine |
 |-------|--------------|--------|
 | **Build** | Reconstruct a draft model from a protein FASTA (single or batch) | CarveMe (`carve`) |
-| **Refine** | Task-aware gap-filling: add the minimal reaction set that lets failing metabolic tasks pass, without breaking passing ones | COBRApy MILP |
-| **Evaluate** | Score each reaction's evidence (High / Moderate / Low) against KEGG and BiGG | Async KEGG/BiGG clients |
+| **Gap-fill** | Task-aware gap-filling: add the minimal reaction set that lets failing metabolic tasks pass, without breaking passing ones. Candidate reactions from the universal model are weighted by **KEGG evidence** so the gap-filler prefers well-identified reactions (High/Moderate/Low/Not-assessable). | COBRApy MILP + KEGG evidence |
+| **Validate** | Model quality is judged by metabolic-task pass/fail — not by per-reaction scores. | TaskRunner |
+
+> Evidence is **KEGG-only** and applies **only to gap-fill candidates** (to weight
+> what to add). There is no standalone "evaluate the whole model" mode; use the
+> metabolic tasks to judge a model.
 
 Key properties:
 
@@ -45,7 +51,7 @@ Key properties:
   command line and vice-versa; both share the same engines and produce identical
   results.
 - **Organism-aware.** A KEGG taxonomy code (e.g. `eco`, `cgb`) drives
-  organism-specific gap-fill penalties and evidence.
+  organism-specific gap-fill penalties and candidate KEGG evidence.
 - **Task-protected gap-filling.** Previously passing tasks are protected; candidate
   reaction sets that would regress them are rejected.
 - **Reproducible environments.** A single `environment.yml` (or `uv`) installs the
@@ -102,9 +108,9 @@ conda install -c bioconda diamond         # or:  brew install diamond
 # helper:  bash scripts/setup_env.sh uv
 ```
 
-### Option C — evaluation only (no model construction)
+### Option C — gap-filling only (no model construction)
 
-If you only need evidence evaluation / gap-filling of existing SBML models:
+If you only need to gap-fill existing SBML models:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -207,7 +213,7 @@ GPRs), and the per-task before/after pass table.
 
 ### Tutorial 4 — One-shot pipeline (YAML)
 
-Run build → refine (→ optional evaluate) for several organisms from one file:
+Run build → refine (gap-fill) for several organisms from one file:
 
 ```bash
 metatask-gapfill-cli --config examples/pipeline.yaml                # run
@@ -233,22 +239,16 @@ refine:                # applied to each model, one at a time
   tasks: data/universal_essential_tasks.csv
   skip_evaluation: true
   output_model: out/{label}_refined.xml
-  output_report: out/{label}_report.csv
-evaluate:              # KEGG/BiGG evidence per model (optional; needs network)
-  enabled: false
-  output: out/{label}_evidence.csv
+  output_report: out/{label}_report.csv   # includes each added reaction's KEGG evidence tier
 ```
 
 `{label}` / `{model}` in output paths are substituted per model; specify exactly
 one of `build` or `models`.
 
-### Tutorial 5 — Work with an existing model
+### Tutorial 5 — Gap-fill an existing model
 
 ```bash
-# Evidence evaluation -> CSV/JSON
-metatask-gapfill-cli data/iML1515.xml --organism eco -o iML1515_evidence.csv
-
-# Task-aware gap-filling of an existing draft
+# Task-aware gap-filling of an existing draft (candidates weighted by KEGG evidence)
 metatask-gapfill-cli data/iML1515.xml --gap-fill --organism eco \
     --universal data/bigg_universal_model_fixed.json \
     --tasks data/universal_essential_tasks.csv \
@@ -264,12 +264,11 @@ metatask-gapfill        # or:  python -m src.app
 1. **Build** — *Analysis ▸ Build Model (CarveMe)…* (`Ctrl+B`) opens the **Construct**
    tab. Choose single or batch mode, set the FASTA and KEGG code, then **Build** or
    **Build & Refine**. Configure the toolchain under *Settings ▸ Construction*.
-2. **Send to Evaluator** loads a built model into the evaluator (reaction table,
-   overview, version history).
-3. **Evaluate** — score reactions (*Evaluation ▸ Evaluate All*).
-4. **Gap-fill** — *Analysis ▸ Task-Based Gap-Filling…* (`Ctrl+W`); inspect added
-   reactions and before/after task results in the **Gap-Fill** and **Tasks** tabs.
-5. **Export** — *Export* menu (CSV / JSON / improved SBML).
+2. **Load** a built or existing model (reaction table, overview, version history).
+3. **Gap-fill** — *Analysis ▸ Task-Based Gap-Filling…* (`Ctrl+W`); inspect added
+   reactions (each with its KEGG evidence tier) and before/after task results in
+   the **Gap-Fill** and **Tasks** tabs.
+4. **Export** — improved SBML and the gap-fill report.
 
 The GUI runs headless for automated rendering with `QT_QPA_PLATFORM=offscreen`.
 
@@ -325,7 +324,7 @@ Persistent settings live in `~/.metataskgapfill/config.json` (edit via the GUI
 | Key | Default | Description |
 |-----|---------|-------------|
 | `kegg_organism_code` | `eco` | KEGG organism code |
-| `weight_kegg` / `weight_bigg` | `0.70` / `0.30` | Evidence weights |
+| `candidate_evidence_eager_limit` | `0` | Defer candidate KEGG evidence above this universal size (`0` = always evaluate) |
 | `default_universal_model` | `data/bigg_universal_model_fixed.json` | Gap-fill universal |
 | `default_task_file` | `data/universal_essential_tasks.csv` | Default task set |
 | `gapfill_iterations` / `gapfill_alternatives` | `5` / `5` | Gap-fill convergence / per-task alternatives |
@@ -389,15 +388,15 @@ src/
 │   ├── build_manifest.py   # batch manifest parsing + validation
 │   └── build_engine.py     # build → load → (refine) orchestration
 ├── core/              # Domain models, SBML/COBRA utilities, task runner
-├── evidence/          # KEGG/BiGG evidence engine + scoring
+├── evidence/          # KEGG-only candidate evidence engine + rule-based tier scoring
 ├── gapfill/           # Task-aware gap-filling
 │   ├── engine.py           # MILP gap-fill workflow (task-protected)
 │   └── refine.py           # reusable refinement core
 ├── gui/               # PySide6 desktop UI (panels, controllers, workers)
 ├── utils/             # Config, constants, logging
-├── pipeline.py        # YAML pipeline runner (build → refine → evaluate)
+├── pipeline.py        # YAML pipeline runner (build → refine/gap-fill)
 ├── app.py             # GUI entry point
-└── cli.py             # CLI entry point (evaluate / gap-fill / build / pipeline)
+└── cli.py             # CLI entry point (gap-fill / build / pipeline)
 ```
 
 ---

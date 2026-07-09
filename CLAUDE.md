@@ -1,9 +1,12 @@
 # MetaTaskGapFill
 
-Genome-scale metabolic model evidence evaluator and task-aware gap-filling
-platform. The application loads SBML/COBRA models, evaluates reaction evidence
-against KEGG and BiGG, checks metabolic tasks, repairs missing reactions with
-COBRApy gap-filling, and tracks model versions.
+Genome-scale metabolic model build + task-aware gap-filling platform. The
+application builds draft models (CarveMe), checks metabolic tasks, and repairs
+missing reactions with COBRApy gap-filling. During gap-filling, universal
+candidate reactions are weighted by **KEGG evidence** (KEGG-only) so the
+gap-filler prefers well-identified reactions. **Model quality is judged by
+metabolic tasks, not by per-reaction evidence** — there is no standalone
+"evaluate the whole model" feature. Model versions are tracked.
 
 ## Development Setup
 
@@ -43,27 +46,35 @@ mypy src/ --ignore-missing-imports
 
 ## Current Scope
 
-- Evidence sources are KEGG and BiGG only.
-- PubMed, Gemini, Perplexity, UniProt, MetaCyc, and LLM-based evidence paths are
-  intentionally not part of the active codebase.
-- User-facing evidence is categorical: High, Moderate, or Low. Numeric
-  confidence remains as a legacy/export ordering field, not a biological
-  probability.
-- KEGG evidence is the primary signal. Confirmed KEGG reaction evidence maps to
-  High; weak/partial KEGG maps to Moderate; BiGG-only support does not override
-  absent or mismatched KEGG evidence.
-- BiGG evidence is used as biological plausibility, not strain specificity. When
-  `bigg_models_reactions.txt` is absent, `BiGGLookup` falls back to
-  `data/bigg_universal_model_fixed.json` and treats universal-only presence as
-  weak BiGG support.
-- Do not redistribute a missing/absent source's weight into the remaining
-  source; a BiGG match with absent KEGG evidence must not become confidence
-  `1.0`.
-- KEGG IDs whose entries exist but whose substrates/products do not match the
-  model reaction should remain explicit absent KEGG evidence with mismatch
-  details, not a generic "not found" result.
-- KEGG substrate/product matching excludes common currency metabolites when
-  informative non-currency compounds remain on both sides.
+- **Evidence is KEGG-only and computed ONLY for gap-fill candidates** (universal
+  reactions being considered for addition). It weights candidate penalties; it is
+  not a model-quality signal. There is NO per-reaction model-evaluation feature —
+  do not re-add one. PubMed, Gemini, Perplexity, UniProt, MetaCyc, LLM, and BiGG
+  are intentionally NOT evidence sources.
+- BiGG's only role is the **KEGG↔BiGG reaction mapping** used to source/identify
+  gap-fill candidates (`MappingData.rxn_bigg_to_kegg`); it never contributes to
+  the evidence tier.
+- Tiers are **rule-based and threshold-free**, decided from three KEGG signals
+  (in `evidence/scoring.py` `_classify_tier`): `kegg_anchored` (a KEGG reaction
+  entry was retrieved), metabolite `reconciliation_state`
+  (full/partial/none_contradictory/unverifiable — currency-filtered set equality,
+  best-of-both-orientations), and `ec_concordance_state`
+  (concordant/discordant/unknown). Four tiers: **High / Moderate / Low /
+  Not-assessable** (Not-assessable = no KEGG anchor, distinct from Low). No
+  continuous cutoffs (`0.2/0.5/0.8` etc. were removed).
+- Conservative by construction (false positives are the priority for model
+  extension): metabolite contradiction → always Low; EC discordance never yields
+  High; `unverifiable + unknown EC` → Low; a KEGG ID rejected as a mismatch does
+  not count as verified (`verified_kegg_reaction_ids`) and does not dodge the
+  no-KEGG penalty.
+- Candidate metabolites resolve to KEGG via `MappingData.met_bigg_to_kegg`
+  (`id_mapper.resolve` runs metabolite mapping for the universal path too), so
+  candidates can be metabolite-reconciled and reach High.
+- `confidence_score` is a legacy tier-derived ordering/export field only, not a
+  biological probability.
+- KEGG substrate/product matching excludes common currency metabolites; a side
+  with no informative (non-currency) compounds on either the model or KEGG side
+  is `unverifiable`, not a match.
 - Default candidate evidence behavior is eager: all extracted candidate
   reactions are evaluated before gap-filling. `Config.candidate_evidence_eager_limit`
   is `0` by default; set it to a positive threshold to defer evidence for large
@@ -126,7 +137,7 @@ src/
 │   ├── sbml_parser.py
 │   ├── task_parser.py   # TaskParser and TaskRunner
 │   └── universal_loader.py
-├── evidence/            # KEGG/BiGG evidence orchestration and scoring
+├── evidence/            # KEGG-only candidate evidence orchestration + rule-based tiers
 │   ├── engine.py
 │   ├── evidence_types.py
 │   └── scoring.py
@@ -196,4 +207,5 @@ src/
   - negative/upper-bound task skipping,
   - reaction copy semantics,
   - large universal pruning,
-  - GUI worker evidence evaluation mode.
+  - strict KEGG-only candidate universe (only KEGG-mapped reactions addable),
+  - candidate KEGG evidence weighting (tier → penalty) and gap-fill report provenance.
