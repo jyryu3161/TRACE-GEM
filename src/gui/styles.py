@@ -1,4 +1,4 @@
-"""QSS stylesheet for the MetaTaskGapFill GUI.
+"""QSS stylesheet for the TRACE-GEM GUI.
 
 All colors are defined in theme.py. This module just re-exports the
 generated stylesheet for backward compatibility.

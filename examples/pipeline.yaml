@@ -1,4 +1,4 @@
-# MetaTaskGapFill pipeline config — build → refine (task-aware gap-fill) in one run.
+# TRACE-GEM pipeline config — build → refine (task-aware gap-fill) in one run.
 #   metatask-gapfill-cli --config examples/pipeline.yaml
 #   metatask-gapfill-cli --config examples/pipeline.yaml --config-validate   # dry run
 #

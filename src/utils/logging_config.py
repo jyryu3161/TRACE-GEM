@@ -1,4 +1,4 @@
-"""Logging configuration for the MetaTaskGapFill."""
+"""Logging configuration for TRACE-GEM."""
 
 import logging
 import sys

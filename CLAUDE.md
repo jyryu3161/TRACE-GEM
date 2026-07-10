@@ -1,4 +1,4 @@
-# MetaTaskGapFill
+# TRACE-GEM
 
 Genome-scale metabolic model build + task-aware gap-filling platform. The
 application builds draft models (CarveMe), checks metabolic tasks, and repairs

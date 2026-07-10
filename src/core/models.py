@@ -1,4 +1,4 @@
-"""Data models for the MetaTaskGapFill."""
+"""Data models for TRACE-GEM."""
 
 from __future__ import annotations
 

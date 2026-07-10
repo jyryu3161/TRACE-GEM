@@ -66,7 +66,7 @@ logger = logging.getLogger("metataskgapfill.gui")
 
 
 class MainWindow(QMainWindow):
-    """Main application window for MetaTaskGapFill."""
+    """Main application window for TRACE-GEM."""
 
     def __init__(self, config: Config) -> None:
         super().__init__()
@@ -700,11 +700,11 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.about(
             self,
-            "About MetaTaskGapFill",
+            f"About {APP_NAME}",
             f"<h2>{APP_NAME} v{APP_VERSION}</h2>"
-            "<p>Genome-Scale Metabolic Model Evidence Evaluator</p>"
-            "<p>Evaluates reactions in SBML models against KEGG and BiGG "
-            "to verify reaction evidence.</p>",
+            "<p>Task-guided Reconstruction And Curation with Evidence</p>"
+            "<p>Builds, validates, and gap-fills genome-scale metabolic models "
+            "using metabolic tasks and KEGG reaction evidence.</p>",
         )
 
     def _show_settings(self) -> None:

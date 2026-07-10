@@ -1,4 +1,4 @@
-"""MetaTaskGapFill — Application entry point."""
+"""TRACE-GEM — application entry point."""
 
 from __future__ import annotations
 

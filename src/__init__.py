@@ -1,1 +1,1 @@
-"""MetaTaskGapFill — Genome-Scale Metabolic Model Evidence Evaluator."""
+"""TRACE-GEM — task-guided reconstruction and curation with evidence."""

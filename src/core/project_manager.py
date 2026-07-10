@@ -1,4 +1,4 @@
-"""Project save/load manager for MetaTaskGapFill."""
+"""Project save/load manager for TRACE-GEM."""
 
 from __future__ import annotations
 

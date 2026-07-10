@@ -1,4 +1,4 @@
-"""Configuration management for the MetaTaskGapFill."""
+"""Configuration management for TRACE-GEM."""
 
 from __future__ import annotations
 

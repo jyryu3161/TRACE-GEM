@@ -1,4 +1,4 @@
-"""CLI for MetaTaskGapFill batch evaluation and task-aware gap-filling."""
+"""CLI for TRACE-GEM model construction and task-aware gap-filling."""
 
 from __future__ import annotations
 

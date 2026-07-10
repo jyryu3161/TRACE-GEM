@@ -1,4 +1,4 @@
-# MetaTaskGapFill — Style Guide
+# TRACE-GEM — Style Guide
 
 ## Python Conventions
 

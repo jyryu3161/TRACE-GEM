@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite the software release and the associated paper."
-title: "MetaTaskGapFill"
+title: "TRACE-GEM"
 type: software
 authors:
   - family-names: "Ryu"
@@ -9,5 +9,7 @@ version: 0.2.0
 date-released: 2026-07-10
 license: MIT
 abstract: >-
-  A metabolic-task-aware genome-scale model gap-filling platform using
-  categorical KEGG reaction evidence and explicit provenance.
+  A task-guided platform for reconstructing, validating, and curating
+  genome-scale metabolic models using categorical KEGG reaction evidence
+  and explicit provenance.
+repository-code: "https://github.com/jyryu3161/TRACE-GEM"

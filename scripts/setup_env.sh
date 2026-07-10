@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set up the MetaTaskGapFill + CarveMe environment.
+# Set up the TRACE-GEM + CarveMe environment.
 #
 #   scripts/setup_env.sh            # conda path (recommended, installs diamond)
 #   scripts/setup_env.sh uv         # uv path (fast Python deps; diamond separate)

@@ -1,9 +1,9 @@
-# MetaTaskGapFill
+# TRACE-GEM
 
-**A task-aware platform for building and gap-filling genome-scale
-metabolic models.**
+**Task-guided Reconstruction And Curation with Evidence for Genome-scale
+Metabolic models.**
 
-MetaTaskGapFill turns a protein FASTA into a draft genome-scale metabolic model
+TRACE-GEM turns a protein FASTA into a draft genome-scale metabolic model
 (via [CarveMe](https://carveme.readthedocs.io)), then validates and repairs it
 against a curated set of metabolic tasks using COBRApy MILP gap-filling. During
 gap-filling, candidate reactions from the universal model are weighted by KEGG
@@ -71,7 +71,7 @@ Key properties:
 | GUI | A display, or `QT_QPA_PLATFORM=offscreen` for headless use |
 
 > **DIAMOND is not pip-installable** (it is a compiled aligner). Install it from
-> bioconda or Homebrew. CarveMe's own default solver is CPLEX, so MetaTaskGapFill
+> bioconda or Homebrew. CarveMe's own default solver is CPLEX, so TRACE-GEM
 > always passes `--solver` explicitly (default: `gurobi`).
 
 ---
@@ -85,8 +85,8 @@ environment as the app. The recommended path uses conda because it can install t
 ### Option A — conda (recommended, fully reproducible)
 
 ```bash
-git clone https://github.com/jyryu3161/model_evaluator.git MetaTaskGapFill
-cd MetaTaskGapFill
+git clone https://github.com/jyryu3161/TRACE-GEM.git TRACE-GEM
+cd TRACE-GEM
 
 conda env create -f environment.yml     # app + CarveMe + solvers + diamond
 conda activate metatask
@@ -99,6 +99,10 @@ helper script wraps this and runs smoke checks:
 ```bash
 bash scripts/setup_env.sh         # conda path
 ```
+
+> The Python distribution (`metatask-gapfill`), CLI commands, Conda environment
+> (`metatask`), and existing configuration directory retain their legacy names
+> for backward compatibility.
 
 ### Option B — uv (fast Python install; install DIAMOND separately)
 
@@ -310,7 +314,7 @@ Core/partial models may fail production tasks whose pathways they lack; refineme
 attempts to repair only gap-fillable lower-bound production failures.
 
 > **Why the model's default medium is *not* merged.** When `--medium` is omitted,
-> MetaTaskGapFill uses each task's own medium and does **not** merge the draft
+> TRACE-GEM uses each task's own medium and does **not** merge the draft
 > model's default medium. Merging it would add nutrients (e.g. glucose) back into
 > negative-constraint tasks that omit them on purpose, silently breaking those
 > tests. Supply `--medium` only when you intend an explicit shared base medium; it
@@ -437,7 +441,7 @@ src/
 
 ## Citing and acknowledgements
 
-If you use MetaTaskGapFill in academic work, please cite this repository and the
+If you use TRACE-GEM in academic work, please cite this repository and the
 underlying tools:
 
 - **CarveMe** — Machado et al., *Nucleic Acids Research* (2018), "Fast automated

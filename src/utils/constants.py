@@ -1,11 +1,11 @@
-"""Constants for MetaTaskGapFill."""
+"""Constants for TRACE-GEM."""
 
 import site
 import sys
 import sysconfig
 from pathlib import Path
 
-APP_NAME = "MetaTaskGapFill"
+APP_NAME = "TRACE-GEM"
 APP_VERSION = "0.2.0"
 
 # Default directories

@@ -1,4 +1,4 @@
-"""Centralized theme system for MetaTaskGapFill GUI.
+"""Centralized theme system for TRACE-GEM GUI.
 
 Strategy: Fusion style + QPalette + minimal QSS.
 1. Fusion style — identical rendering on Windows/Mac/Linux.
