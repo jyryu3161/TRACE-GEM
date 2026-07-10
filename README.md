@@ -12,6 +12,10 @@ added when needed to satisfy a task). Every operation is available
 through a desktop GUI (PySide6/Qt6) and a feature-equivalent command-line
 interface, and can be orchestrated end-to-end from a single YAML configuration file.
 
+![TRACE-GEM graphical interface showing the iML1515 reaction table and metabolic task results](docs/images/trace-gem-gui.png)
+
+*TRACE-GEM displaying the iML1515 model and its 52 metabolic-task results.*
+
 ---
 
 ## Table of contents
