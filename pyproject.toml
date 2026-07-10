@@ -29,6 +29,8 @@ dev = [
     "pytest-qt>=4.3",
     "pytest-cov>=4.1",
     "aioresponses>=0.7",
+    "ruff>=0.12",
+    "mypy>=1.10",
 ]
 # Model construction toolchain (CarveMe + MILP solvers). The `diamond` binary
 # is NOT pip-installable — install it via conda (bioconda) or brew. See
