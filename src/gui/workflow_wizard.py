@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from src.core.models import ModelData
+from src.core.models import MetabolicTask, ModelData
 from src.utils.config import Config
 from src.utils.constants import DEFAULT_TASK_FILE, DEFAULT_UNIVERSAL_MODEL
 
@@ -44,7 +44,7 @@ class WorkflowWizard(QDialog):
         model: ModelData | None = None,
         parent=None,
         universal_path: str | None = None,
-        loaded_tasks: list | None = None,
+        loaded_tasks: list[MetabolicTask] | None = None,
     ) -> None:
         super().__init__(parent)
         self._config = config
@@ -272,7 +272,7 @@ class WorkflowWizard(QDialog):
 
     # --- Public API ---
 
-    def get_selections(self) -> dict:
+    def get_selections(self) -> dict[str, object]:
         """Return all wizard selections as a dictionary.
 
         Keys:
@@ -296,7 +296,7 @@ class WorkflowWizard(QDialog):
             )
 
         # Task file path
-        use_preloaded = self._task_preloaded.isChecked() and self._preloaded_tasks
+        use_preloaded = self._task_preloaded.isChecked() and bool(self._preloaded_tasks)
         if self._task_skip.isChecked():
             task_path = None
         elif use_preloaded:
@@ -310,7 +310,7 @@ class WorkflowWizard(QDialog):
                 else DEFAULT_TASK_FILE
             )
 
-        result = {
+        result: dict[str, object] = {
             "organism_code": self._organism_code.text().strip().lower(),
             "organism_name": self._organism_name.text().strip(),
             "universal_model_path": universal_path,

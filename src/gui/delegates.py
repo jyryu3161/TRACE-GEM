@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from PySide6.QtCore import QModelIndex, QRect, Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
@@ -29,21 +31,22 @@ class ScoreBarDelegate(QStyledItemDelegate):
             self._paint_tier(painter, option, str(value))
             return
 
+        view_option = cast(Any, option)  # PySide stubs omit inherited style attributes.
         painter.save()
 
         # Draw background
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(option.rect, option.palette.highlight())
+        if view_option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(view_option.rect, view_option.palette.highlight())
         else:
-            painter.fillRect(option.rect, option.palette.base())
+            painter.fillRect(view_option.rect, view_option.palette.base())
 
         # Score bar dimensions
         margin = 4
         bar_rect = QRect(
-            option.rect.left() + margin,
-            option.rect.top() + margin,
-            option.rect.width() - 2 * margin,
-            option.rect.height() - 2 * margin,
+            view_option.rect.left() + margin,
+            view_option.rect.top() + margin,
+            view_option.rect.width() - 2 * margin,
+            view_option.rect.height() - 2 * margin,
         )
 
         # Background bar
@@ -80,18 +83,19 @@ class ScoreBarDelegate(QStyledItemDelegate):
         option: QStyleOptionViewItem,
         value: str,
     ) -> None:
+        view_option = cast(Any, option)  # PySide stubs omit inherited style attributes.
         painter.save()
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(option.rect, option.palette.highlight())
+        if view_option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(view_option.rect, view_option.palette.highlight())
         else:
-            painter.fillRect(option.rect, option.palette.base())
+            painter.fillRect(view_option.rect, view_option.palette.base())
 
         margin = 5
         badge_rect = QRect(
-            option.rect.left() + margin,
-            option.rect.top() + margin,
-            option.rect.width() - 2 * margin,
-            option.rect.height() - 2 * margin,
+            view_option.rect.left() + margin,
+            view_option.rect.top() + margin,
+            view_option.rect.width() - 2 * margin,
+            view_option.rect.height() - 2 * margin,
         )
         color = QColor(evidence_tier_color(value))
         painter.setPen(QPen(color, 1))

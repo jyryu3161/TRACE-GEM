@@ -54,6 +54,7 @@ from src.gui.version_panel import VersionPanelWidget
 from src.gui.workers import (
     CloseEngineWorker,
     EvaluateBatchWorker,
+    EvaluateCandidatesWorker,
     GapFillWorkflowWorker,
     InitEngineWorker,
     LoadModelWorker,
@@ -74,7 +75,7 @@ class MainWindow(QMainWindow):
         self._model: ModelData | None = None
         self._engine: EvidenceEngine | None = None
         self._thread_pool = QThreadPool.globalInstance()
-        self._batch_worker: EvaluateBatchWorker | None = None
+        self._batch_worker: EvaluateBatchWorker | EvaluateCandidatesWorker | None = None
         self._engine_init_in_progress = False
         self._engine_close_in_progress = False
         self._pending_engine_init = False

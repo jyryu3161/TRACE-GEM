@@ -7,6 +7,7 @@ from typing import Any
 from PySide6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
+    QPersistentModelIndex,
     QSortFilterProxyModel,
     Qt,
     Signal,
@@ -95,7 +96,7 @@ class CandidateTableModel(QAbstractTableModel):
             return self.COLUMNS[section]
         return None
 
-    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+    def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
         base = super().flags(index)
         if index.column() == self.COL_SELECTED:
             return base | Qt.ItemFlag.ItemIsUserCheckable
