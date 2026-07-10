@@ -85,7 +85,7 @@ class TestConfigPersistence:
         config = Config()
         weights = config.weights
         # Evidence is KEGG-only: BiGG is no longer a weighted source.
-        assert "kegg" in weights
+        assert weights["kegg"] == 1.0
         assert "bigg" not in weights
 
     def test_recent_files(self):
@@ -116,12 +116,28 @@ class TestConfigPersistence:
 
     def test_load_corrupted_file(self, tmp_path, monkeypatch):
         import src.utils.config as config_mod
+        from src.utils.config import ConfigError
 
         cfg_file = tmp_path / "config.json"
         cfg_file.write_text("not valid json{{{")
         monkeypatch.setattr(config_mod, "CONFIG_FILE_PATH", cfg_file)
-        config = Config.load()
-        assert config.kegg_organism_code == "eco"  # falls back to default
+        with pytest.raises(ConfigError, match="Cannot load"):
+            Config.load()
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"batch_size": 0}, "batch_size"),
+            ({"candidate_evidence_max_error_fraction": 1.1}, "error_fraction"),
+            ({"gapfill_penalty_high": 10.0}, "tier penalties"),
+            ({"carveme_solver": "invalid"}, "carveme_solver"),
+        ],
+    )
+    def test_invalid_config_is_rejected(self, kwargs, message):
+        from src.utils.config import ConfigError
+
+        with pytest.raises(ConfigError, match=message):
+            Config(**kwargs)
 
 
 class TestEndToEndMocked:

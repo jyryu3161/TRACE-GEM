@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 
 import pytest
+from cobra import Model, Reaction
+from cobra.io import read_sbml_model
 
 from src.core.models import (
     EvaluationStatus,
@@ -140,10 +142,16 @@ class TestTaskResultSerialization:
 
     def test_task_result_roundtrip(self):
         task = MetabolicTask(
-            task_id="T1", task_type="Reaction", target_id="PFK",
+            task_id="T1",
+            task_type="Reaction",
+            target_id="PFK",
         )
         result = TaskResult(
-            task=task, passed=True, actual_value=0.42, phase="before",
+            task=task,
+            passed=True,
+            actual_value=0.42,
+            phase="before",
+            solver_status="optimal",
         )
         d = result.to_dict()
         restored = TaskResult.from_dict(d)
@@ -151,6 +159,7 @@ class TestTaskResultSerialization:
         assert restored.passed is True
         assert restored.actual_value == 0.42
         assert restored.phase == "before"
+        assert restored.solver_status == "optimal"
         assert restored.task.task_id == "T1"
         assert restored.task.target_id == "PFK"
 
@@ -158,7 +167,7 @@ class TestTaskResultSerialization:
 class TestProjectData:
     def test_default_creation(self):
         project = ProjectData()
-        assert project.format_version == "1.0"
+        assert project.format_version == "2.0"
         assert project.sbml_path == ""
         assert project.evaluation_results == {}
         assert project.project_path is None
@@ -175,6 +184,11 @@ class TestProjectData:
 
 
 class TestProjectManager:
+    def test_json_sanitizer_preserves_tuple_structure(self):
+        from src.core.project_manager import _sanitize_for_json
+
+        assert _sanitize_for_json({"bounds": (-10.0, 1000.0)}) == {"bounds": [-10.0, 1000.0]}
+
     def test_save_and_load_roundtrip(self, tmp_path):
         project = ProjectData(
             sbml_path="/path/to/model.xml",
@@ -210,6 +224,60 @@ class TestProjectManager:
         assert loaded.current_version_id == "v003"
         assert loaded.scoring_weights["kegg"] == 0.3
         assert loaded.project_path == path
+
+    def test_embedded_snapshot_preserves_modified_model(self, tmp_path):
+        model = Model("modified")
+        reaction = Reaction("GAP_FILLED_RXN")
+        reaction.lower_bound = 0.0
+        reaction.upper_bound = 1000.0
+        model.add_reactions([reaction])
+        project = ProjectData(
+            sbml_path="/original/model.xml",
+            model_id=model.id,
+            cobra_model=model,
+        )
+
+        path = tmp_path / "portable.json"
+        ProjectManager.save(str(path), project)
+        raw = json.loads(path.read_text())
+        assert raw["model"]["snapshot"]["sha256"]
+        assert raw["model"]["snapshot"]["encoding"] == "gzip+base64"
+
+        loaded = ProjectManager.load(str(path))
+        restored = read_sbml_model(loaded.sbml_path)
+        assert restored.id == "modified"
+        assert "GAP_FILLED_RXN" in restored.reactions
+
+    def test_corrupt_embedded_snapshot_is_rejected(self, tmp_path):
+        from src.core.project_manager import ProjectFormatError
+
+        model = Model("m")
+        path = tmp_path / "corrupt.json"
+        ProjectManager.save(str(path), ProjectData(model_id="m", cobra_model=model))
+        raw = json.loads(path.read_text())
+        raw["model"]["snapshot"]["sha256"] = "0" * 64
+        path.write_text(json.dumps(raw))
+
+        with pytest.raises(ProjectFormatError, match="SHA-256"):
+            ProjectManager.load(str(path))
+
+    def test_relative_paths_resolve_from_project_directory(self, tmp_path):
+        universal = tmp_path / "assets" / "universal.json"
+        universal.parent.mkdir()
+        universal.write_text("{}")
+        tasks = tmp_path / "assets" / "tasks.csv"
+        tasks.write_text("Task ID")
+        path = tmp_path / "portable.json"
+
+        ProjectManager.save(
+            str(path),
+            ProjectData(universal_path=str(universal), tasks_path=str(tasks)),
+        )
+        raw = json.loads(path.read_text())
+        assert raw["gapfill"]["universal_path"] == "assets/universal.json"
+        loaded = ProjectManager.load(str(path))
+        assert loaded.universal_path == str(universal.resolve())
+        assert loaded.tasks_path == str(tasks.resolve())
 
     def test_save_sets_timestamps(self, tmp_path):
         project = ProjectData(model_id="test")
@@ -254,7 +322,7 @@ class TestProjectManager:
         # Should be readable as JSON
         with open(path) as f:
             data = json.load(f)
-        assert data["format_version"] == "1.0"
+        assert data["format_version"] == "2.0"
         assert data["model"]["model_id"] == "test"
 
     def test_empty_evaluation_results(self, tmp_path):
@@ -267,7 +335,9 @@ class TestProjectManager:
 
     def test_gapfill_state_roundtrip(self, tmp_path):
         task = MetabolicTask(
-            task_id="T1", task_type="Reaction", target_id="ENO",
+            task_id="T1",
+            task_type="Reaction",
+            target_id="ENO",
         )
         result = TaskResult(task=task, passed=True, actual_value=0.5, phase="before")
 

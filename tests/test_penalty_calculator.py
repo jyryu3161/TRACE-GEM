@@ -67,6 +67,16 @@ class TestPenaltyCalculator:
         expected = 5.0 * 3.0
         assert penalty == pytest.approx(expected, rel=1e-3)
 
+    def test_all_penalty_parameters_are_exportable(self, calc: PenaltyCalculator) -> None:
+        parameters = calc.parameters()
+        assert parameters["tier_base_penalty"] == {
+            "high": 1.0,
+            "moderate": 5.0,
+            "low": 25.0,
+            "not_assessable": 25.0,
+        }
+        assert parameters["organism_unknown_multiplier"] == 3.0
+
     def test_no_kegg_multiplier(self, calc: PenaltyCalculator) -> None:
         """No KEGG reaction IDs applies no_kegg_mult (2x)."""
         candidate = _make_candidate(organism_exists=True)

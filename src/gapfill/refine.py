@@ -152,24 +152,15 @@ async def refine_model_data(
         if skip_evaluation:
             _log("Skipping candidate evidence evaluation")
         else:
-            # Honor candidate_evidence_eager_limit (matches CLI + GUI): defer
-            # candidate evidence for large universals, leaving default penalties.
-            eager_limit = max(0, config.candidate_evidence_eager_limit)
-            if eager_limit and len(candidates) > eager_limit:
-                _log(
-                    f"Deferring candidate evidence: {len(candidates)} candidates "
-                    f"exceeds eager limit ({eager_limit})"
-                )
-            else:
-                _log(f"Evaluating {len(candidates)} candidate reactions...")
+            _log(f"Evaluating {len(candidates)} candidate reactions...")
 
-                def _cand_progress(c: int, t: int, rxn_id: str) -> None:
-                    if progress_callback:
-                        progress_callback("evaluating_candidates", c, t, rxn_id)
+            def _cand_progress(c: int, t: int, rxn_id: str) -> None:
+                if progress_callback:
+                    progress_callback("evaluating_candidates", c, t, rxn_id)
 
-                evidence_results = await engine.evaluate_candidates_batch(
-                    candidates, progress_callback=_cand_progress
-                )
+            evidence_results = await engine.evaluate_candidates_batch(
+                candidates, progress_callback=_cand_progress
+            )
 
         gapfill_engine = GapFillEngine(config)
         try:

@@ -66,12 +66,8 @@ class TestDiffEngineReactions:
         assert diff.reactions_modified == []
 
     def test_modified_bounds(self, diff_engine: DiffEngine) -> None:
-        old = _make_model(
-            reactions=[{"id": "R1", "lower_bound": 0.0, "upper_bound": 1000.0}]
-        )
-        new = _make_model(
-            reactions=[{"id": "R1", "lower_bound": -1000.0, "upper_bound": 500.0}]
-        )
+        old = _make_model(reactions=[{"id": "R1", "lower_bound": 0.0, "upper_bound": 1000.0}])
+        new = _make_model(reactions=[{"id": "R1", "lower_bound": -1000.0, "upper_bound": 500.0}])
 
         diff = diff_engine.compute_diff(old, new)
 
@@ -84,12 +80,8 @@ class TestDiffEngineReactions:
         assert "upper_bound" in fields
 
     def test_modified_gpr(self, diff_engine: DiffEngine) -> None:
-        old = _make_model(
-            reactions=[{"id": "R1", "gene_reaction_rule": "g1"}]
-        )
-        new = _make_model(
-            reactions=[{"id": "R1", "gene_reaction_rule": "g1 or g2"}]
-        )
+        old = _make_model(reactions=[{"id": "R1", "gene_reaction_rule": "g1"}])
+        new = _make_model(reactions=[{"id": "R1", "gene_reaction_rule": "g1 or g2"}])
 
         diff = diff_engine.compute_diff(old, new)
 
@@ -117,29 +109,38 @@ class TestDiffEngineReactions:
         assert len(diff.reactions_modified) == 1
         assert diff.reactions_modified[0].field == "subsystem"
 
+    def test_modified_stoichiometry_and_annotation(self, diff_engine: DiffEngine) -> None:
+        old = cobra.Model("m")
+        new = cobra.Model("m")
+        for model, coefficient, annotation in (
+            (old, -1.0, {"kegg.reaction": ["R00001"]}),
+            (new, -2.0, {"kegg.reaction": ["R00002"]}),
+        ):
+            metabolite = cobra.Metabolite("a_c", compartment="c")
+            reaction = cobra.Reaction("R1")
+            reaction.add_metabolites({metabolite: coefficient})
+            reaction.annotation = annotation
+            model.add_reactions([reaction])
+
+        diff = diff_engine.compute_diff(old, new)
+        fields = {change.field for change in diff.reactions_modified}
+        assert {"stoichiometry", "annotation"} <= fields
+
 
 class TestDiffEngineGenes:
     """Tests for gene set diff."""
 
     def test_genes_added(self, diff_engine: DiffEngine) -> None:
-        old = _make_model(
-            reactions=[{"id": "R1", "gene_reaction_rule": "g1"}]
-        )
-        new = _make_model(
-            reactions=[{"id": "R1", "gene_reaction_rule": "g1 or g2"}]
-        )
+        old = _make_model(reactions=[{"id": "R1", "gene_reaction_rule": "g1"}])
+        new = _make_model(reactions=[{"id": "R1", "gene_reaction_rule": "g1 or g2"}])
 
         diff = diff_engine.compute_diff(old, new)
 
         assert "g2" in diff.genes_added
 
     def test_genes_removed(self, diff_engine: DiffEngine) -> None:
-        old = _make_model(
-            reactions=[{"id": "R1", "gene_reaction_rule": "g1 or g2"}]
-        )
-        new = _make_model(
-            reactions=[{"id": "R1", "gene_reaction_rule": "g1"}]
-        )
+        old = _make_model(reactions=[{"id": "R1", "gene_reaction_rule": "g1 or g2"}])
+        new = _make_model(reactions=[{"id": "R1", "gene_reaction_rule": "g1"}])
 
         diff = diff_engine.compute_diff(old, new)
 
@@ -165,14 +166,27 @@ class TestDiffEngineMetabolites:
 
         assert "m2" in diff.metabolites_removed
 
+    def test_metabolite_formula_change_is_recorded(self, diff_engine: DiffEngine) -> None:
+        old = _make_model(metabolites=["m1"])
+        new = _make_model(metabolites=["m1"])
+        old.metabolites.m1.formula = "H2O"
+        new.metabolites.m1.formula = "H2O2"
+
+        diff = diff_engine.compute_diff(old, new)
+
+        assert any(
+            change.entity_type == "metabolite"
+            and change.entity_id == "m1"
+            and change.field == "formula"
+            for change in diff.entity_changes
+        )
+
 
 class TestDiffEngineEmpty:
     """Tests for empty / no-change scenarios."""
 
     def test_identical_models(self, diff_engine: DiffEngine) -> None:
-        model_spec = [
-            {"id": "R1", "name": "rxn1", "lower_bound": 0.0, "upper_bound": 1000.0}
-        ]
+        model_spec = [{"id": "R1", "name": "rxn1", "lower_bound": 0.0, "upper_bound": 1000.0}]
         old = _make_model(reactions=model_spec, metabolites=["m1"])
         new = _make_model(reactions=model_spec, metabolites=["m1"])
 

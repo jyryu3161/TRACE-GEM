@@ -103,7 +103,7 @@ class PipelineResult:
 def load_pipeline(path: str | Path) -> PipelineSpec:
     """Parse and validate a pipeline YAML. Raises PipelineError listing all issues."""
     try:
-        import yaml
+        import yaml  # type: ignore[import-untyped]
     except ModuleNotFoundError as exc:  # pragma: no cover - dependency present in env
         raise PipelineError(
             "PyYAML is required for --config. Install it: pip install pyyaml"
@@ -123,9 +123,7 @@ def load_pipeline(path: str | Path) -> PipelineSpec:
     errors: list[str] = []
     spec = _build_spec(raw, errors)
     if errors:
-        raise PipelineError(
-            "Pipeline config invalid:\n  " + "\n  ".join(errors)
-        )
+        raise PipelineError("Pipeline config invalid:\n  " + "\n  ".join(errors))
     return spec
 
 
@@ -156,9 +154,7 @@ def _build_spec(raw: dict, errors: list[str]) -> PipelineSpec:
     models = _parse_models(raw.get("models"), errors) if has_models else []
     refine = _parse_refine(_as_section(raw, "refine", errors), errors)
 
-    return PipelineSpec(
-        carveme=carveme, build=build, models=models, refine=refine
-    )
+    return PipelineSpec(carveme=carveme, build=build, models=models, refine=refine)
 
 
 def _parse_carveme(cm: dict, errors: list[str]) -> CarveMeDefaults:
@@ -170,7 +166,8 @@ def _parse_carveme(cm: dict, errors: list[str]) -> CarveMeDefaults:
         # Soft warning (mirrors build_manifest): carve accepts custom universes.
         logger.warning(
             "carveme.universe '%s' is not a standard template %s; passing through",
-            universe, VALID_UNIVERSES[1:],
+            universe,
+            VALID_UNIVERSES[1:],
         )
     timeout = cm.get("timeout")
     if timeout is not None and not _is_int(timeout):
@@ -315,6 +312,7 @@ async def run_pipeline(
     """
     _log = log or logger.info
     apply_carveme_defaults(config, spec.carveme, cli_overridden)
+    config.validate()
 
     result = PipelineResult()
     models = _dedupe_labels(_resolve_models(spec, config, _log, result), _log)
@@ -497,5 +495,3 @@ async def _run_refine(
         skip_evaluation=refine.skip_evaluation,
         include_exchange_gapfill=refine.include_exchange_gapfill,
     )
-
-

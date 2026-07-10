@@ -56,6 +56,9 @@ class KEGGReactionData:
     is_reversible: bool = True
     substrates: list[str] = field(default_factory=list)
     products: list[str] = field(default_factory=list)
+    substrate_stoichiometry: dict[str, float] = field(default_factory=dict)
+    product_stoichiometry: dict[str, float] = field(default_factory=dict)
+    stoichiometry_complete: bool = False
     pathway_ids: list[str] = field(default_factory=list)
 
 
@@ -123,6 +126,9 @@ def parse_kegg_reaction(text: str) -> KEGGReactionData | None:
 
         data.substrates = _extract_compound_ids(left)
         data.products = _extract_compound_ids(right)
+        data.substrate_stoichiometry, substrate_complete = _extract_stoichiometry(left)
+        data.product_stoichiometry, product_complete = _extract_stoichiometry(right)
+        data.stoichiometry_complete = substrate_complete and product_complete
 
     for line in text.splitlines():
         if line.startswith("///"):
@@ -149,6 +155,27 @@ def parse_kegg_reaction(text: str) -> KEGGReactionData | None:
 def _extract_compound_ids(side: str) -> list[str]:
     """Extract KEGG compound IDs (Cxxxxx, Gxxxxx) from one side of an equation."""
     return re.findall(r"\b([CG]\d{5})\b", side)
+
+
+def _extract_stoichiometry(side: str) -> tuple[dict[str, float], bool]:
+    """Parse numeric KEGG coefficients; flag symbolic coefficients as incomplete."""
+    stoichiometry: dict[str, float] = {}
+    complete = True
+    for term in side.split("+"):
+        compound_ids = _extract_compound_ids(term)
+        if not compound_ids:
+            continue
+        for compound_id in compound_ids:
+            prefix = term.split(compound_id, 1)[0].strip()
+            if not prefix:
+                coefficient = 1.0
+            elif re.fullmatch(r"\d+(?:\.\d+)?", prefix):
+                coefficient = float(prefix)
+            else:
+                complete = False
+                continue
+            stoichiometry[compound_id] = stoichiometry.get(compound_id, 0.0) + coefficient
+    return stoichiometry, complete and bool(stoichiometry)
 
 
 def compute_match_ratio(model_ids: list[str], kegg_ids: list[str]) -> float:
@@ -247,6 +274,13 @@ def reconciliation_state(
     model_products: list[str],
     kegg_substrates: list[str],
     kegg_products: list[str],
+    *,
+    model_substrate_stoichiometry: dict[str, float] | None = None,
+    model_product_stoichiometry: dict[str, float] | None = None,
+    kegg_substrate_stoichiometry: dict[str, float] | None = None,
+    kegg_product_stoichiometry: dict[str, float] | None = None,
+    model_stoichiometry_complete: bool = False,
+    kegg_stoichiometry_complete: bool = False,
 ) -> tuple[str, dict]:
     """Best-of-both-orientation metabolite reconciliation state + detail.
 
@@ -255,25 +289,89 @@ def reconciliation_state(
     """
     m_sub, m_prod = set(_filter_currency(model_substrates)), set(_filter_currency(model_products))
     k_sub, k_prod = set(_filter_currency(kegg_substrates)), set(_filter_currency(kegg_products))
+    stoichiometry_requested = (
+        model_substrate_stoichiometry is not None or model_product_stoichiometry is not None
+    )
 
     orientations = [
-        ("forward", (m_sub, k_sub), (m_prod, k_prod)),
-        ("reverse", (m_sub, k_prod), (m_prod, k_sub)),
+        (
+            "forward",
+            (m_sub, k_sub),
+            (m_prod, k_prod),
+            kegg_substrate_stoichiometry or {},
+            kegg_product_stoichiometry or {},
+        ),
+        (
+            "reverse",
+            (m_sub, k_prod),
+            (m_prod, k_sub),
+            kegg_product_stoichiometry or {},
+            kegg_substrate_stoichiometry or {},
+        ),
     ]
-    best: tuple[str, str, tuple, tuple] | None = None
-    for name, (ms1, ks1), (ms2, ks2) in orientations:
+    best: tuple[str, str, tuple, tuple, str] | None = None
+    for name, (ms1, ks1), (ms2, ks2), k_stoich1, k_stoich2 in orientations:
         agg = _aggregate_reconciliation(_reconcile_side(ms1, ks1), _reconcile_side(ms2, ks2))
+        stoichiometry = "unverifiable"
+        if agg == RECON_FULL and stoichiometry_requested:
+            if model_stoichiometry_complete and kegg_stoichiometry_complete:
+                concordant = _stoichiometry_is_proportional(
+                    model_substrate_stoichiometry or {},
+                    model_product_stoichiometry or {},
+                    k_stoich1,
+                    k_stoich2,
+                )
+                stoichiometry = "concordant" if concordant else "discordant"
+                if not concordant:
+                    agg = RECON_CONTRADICTORY
+            else:
+                # Compound sets agree, but identity is not fully reconciled until
+                # coefficients can also be checked.
+                agg = RECON_PARTIAL
         if best is None or _RECON_RANK[agg] > _RECON_RANK[best[0]]:
-            best = (agg, name, (ms1, ks1), (ms2, ks2))
-    agg, name, (ms1, ks1), (ms2, ks2) = best  # type: ignore[misc]
+            best = (agg, name, (ms1, ks1), (ms2, ks2), stoichiometry)
+    agg, name, (ms1, ks1), (ms2, ks2), stoichiometry = best  # type: ignore[misc]
     info = {
         "orientation": name,
         "sub_matched": len(ms1 & ks1),
         "sub_total": len(ms1 | ks1),
         "prod_matched": len(ms2 & ks2),
         "prod_total": len(ms2 | ks2),
+        "stoichiometry_state": stoichiometry,
     }
     return agg, info
+
+
+def _stoichiometry_is_proportional(
+    model_substrates: dict[str, float],
+    model_products: dict[str, float],
+    kegg_substrates: dict[str, float],
+    kegg_products: dict[str, float],
+) -> bool:
+    """Return True when both sides share one global coefficient scale."""
+    entries: list[tuple[float, float]] = []
+    for model_side, kegg_side in (
+        (model_substrates, kegg_substrates),
+        (model_products, kegg_products),
+    ):
+        model_filtered = {
+            compound: coefficient
+            for compound, coefficient in model_side.items()
+            if compound not in _CURRENCY_COMPOUND_IDS
+        }
+        kegg_filtered = {
+            compound: coefficient
+            for compound, coefficient in kegg_side.items()
+            if compound not in _CURRENCY_COMPOUND_IDS
+        }
+        if set(model_filtered) != set(kegg_filtered) or not model_filtered:
+            return False
+        entries.extend(
+            (model_filtered[compound], kegg_filtered[compound])
+            for compound in sorted(model_filtered)
+        )
+    scale = entries[0][0] / entries[0][1]
+    return all(abs(model - (kegg * scale)) <= 1e-9 for model, kegg in entries)
 
 
 def ec_concordance_state(model_ec: list[str], kegg_ec: list[str]) -> str:
@@ -329,6 +427,9 @@ class KEGGClient(BaseAPIClient):
         kegg_reaction_ids: list[str] | None = None,
         model_substrates_kegg: list[str] | None = None,
         model_products_kegg: list[str] | None = None,
+        model_substrate_stoichiometry: dict[str, float] | None = None,
+        model_product_stoichiometry: dict[str, float] | None = None,
+        model_stoichiometry_complete: bool = False,
         **kwargs,
     ) -> list[EvidenceItem]:
         """KEGG-based reaction verification.
@@ -345,7 +446,15 @@ class KEGGClient(BaseAPIClient):
         best_result = None  # Track best match across all KEGG IDs
 
         for kid in kegg_ids:
-            result = await self._verify_reaction(kid, substrates, products, ec_nums)
+            result = await self._verify_reaction(
+                kid,
+                substrates,
+                products,
+                ec_nums,
+                model_substrate_stoichiometry=model_substrate_stoichiometry,
+                model_product_stoichiometry=model_product_stoichiometry,
+                model_stoichiometry_complete=model_stoichiometry_complete,
+            )
             if self._is_better_kegg_result(result, best_result):
                 best_result = result
 
@@ -355,7 +464,15 @@ class KEGGClient(BaseAPIClient):
             for ec in ec_nums[:3]:
                 ec_rxn_ids = await self._find_reactions_by_ec(ec)
                 for kid in ec_rxn_ids[:3]:
-                    result = await self._verify_reaction(kid, substrates, products, ec_nums)
+                    result = await self._verify_reaction(
+                        kid,
+                        substrates,
+                        products,
+                        ec_nums,
+                        model_substrate_stoichiometry=model_substrate_stoichiometry,
+                        model_product_stoichiometry=model_product_stoichiometry,
+                        model_stoichiometry_complete=model_stoichiometry_complete,
+                    )
                     if result is not None:
                         result["via_ec"] = ec
                         if self._is_better_kegg_result(result, best_result):
@@ -388,7 +505,10 @@ class KEGGClient(BaseAPIClient):
         if current is None:
             return True
         r = (_RECON_RANK[result["reconciliation_state"]], _EC_RANK[result["ec_concordance_state"]])
-        c = (_RECON_RANK[current["reconciliation_state"]], _EC_RANK[current["ec_concordance_state"]])
+        c = (
+            _RECON_RANK[current["reconciliation_state"]],
+            _EC_RANK[current["ec_concordance_state"]],
+        )
         return r > c
 
     # Legacy per-item strength (drives the display-only kegg_score, NOT the tier).
@@ -405,6 +525,10 @@ class KEGGClient(BaseAPIClient):
         model_substrates: list[str],
         model_products: list[str],
         model_ec: list[str] | None = None,
+        *,
+        model_substrate_stoichiometry: dict[str, float] | None = None,
+        model_product_stoichiometry: dict[str, float] | None = None,
+        model_stoichiometry_complete: bool = False,
     ) -> dict | None:
         """Verify a single KEGG reaction against model data. Returns result dict or None.
 
@@ -418,7 +542,16 @@ class KEGGClient(BaseAPIClient):
 
         url = f"https://www.kegg.jp/entry/{kegg_id}"
         recon, info = reconciliation_state(
-            model_substrates, model_products, parsed.substrates, parsed.products
+            model_substrates,
+            model_products,
+            parsed.substrates,
+            parsed.products,
+            model_substrate_stoichiometry=model_substrate_stoichiometry,
+            model_product_stoichiometry=model_product_stoichiometry,
+            kegg_substrate_stoichiometry=parsed.substrate_stoichiometry,
+            kegg_product_stoichiometry=parsed.product_stoichiometry,
+            model_stoichiometry_complete=model_stoichiometry_complete,
+            kegg_stoichiometry_complete=parsed.stoichiometry_complete,
         )
         ec_state = ec_concordance_state(model_ec or [], parsed.enzyme)
         strength = self._RECON_STRENGTH[recon]
@@ -451,6 +584,7 @@ class KEGGClient(BaseAPIClient):
                     "kegg_anchored": True,
                     "reconciliation_state": recon,
                     "ec_concordance_state": ec_state,
+                    "stoichiometry_state": info["stoichiometry_state"],
                     "reconciliation_detail": info,
                     "substrate_match": sub_ratio,
                     "product_match": prod_ratio,

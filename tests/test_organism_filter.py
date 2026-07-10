@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.api.base_client import APIUnavailableError
 from src.core.models import CandidateReaction, Reaction
 from src.gapfill.organism_filter import OrganismFilter
 
@@ -55,18 +56,11 @@ def sample_candidates() -> list[CandidateReaction]:
     ]
 
 
-MOCK_ORGANISM_KO = (
-    "eco:b0485\tko:K01915\n"
-    "eco:b1297\tko:K01915\n"
-    "eco:b2388\tko:K00850\n"
-)
+MOCK_ORGANISM_KO = "eco:b0485\tko:K01915\neco:b1297\tko:K01915\neco:b2388\tko:K00850\n"
 
 MOCK_ORGANISM_EC = "eco:b1779\tec:1.1.1.1\n"
 
-MOCK_KO_REACTIONS = (
-    "ko:K01915\trn:R00253\n"
-    "ko:K00850\trn:R00756\n"
-)
+MOCK_KO_REACTIONS = "ko:K01915\trn:R00253\nko:K00850\trn:R00756\n"
 
 MOCK_EC_REACTIONS = "ec:1.1.1.1\trn:R00200\n"
 
@@ -169,9 +163,7 @@ class TestOrganismFilter:
         assert ids == ["R12345"]
 
     @pytest.mark.asyncio
-    async def test_resolve_kegg_ids_from_bigg_mapping(
-        self, mock_mapping_data: MagicMock
-    ) -> None:
+    async def test_resolve_kegg_ids_from_bigg_mapping(self, mock_mapping_data: MagicMock) -> None:
         """KEGG IDs are resolved via BiGG mapping when annotation is empty."""
         filt = OrganismFilter("eco", mapping_data=mock_mapping_data)
         candidate = CandidateReaction(
@@ -186,9 +178,7 @@ class TestOrganismFilter:
         assert "R00756" in ids
 
     @pytest.mark.asyncio
-    async def test_resolve_kegg_ids_from_ec_mapping(
-        self, mock_mapping_data: MagicMock
-    ) -> None:
+    async def test_resolve_kegg_ids_from_ec_mapping(self, mock_mapping_data: MagicMock) -> None:
         """KEGG IDs are resolved via EC number mapping as fallback."""
         filt = OrganismFilter("eco", mapping_data=mock_mapping_data)
         candidate = CandidateReaction(
@@ -207,17 +197,32 @@ class TestOrganismFilter:
         """Empty KEGG response results in empty organism reaction set."""
         filt = OrganismFilter("unknown_org")
 
-        with patch.object(
-            filt._kegg_client, "get", new_callable=AsyncMock, return_value=None
-        ):
+        with patch.object(filt._kegg_client, "get", new_callable=AsyncMock, return_value=None):
             await filt.initialize()
 
         assert filt._organism_reactions == set()
+        assert filt._organism_data_complete is False
 
     @pytest.mark.asyncio
-    async def test_progress_callback(
+    async def test_unavailable_organism_data_is_unknown_not_absent(
         self, sample_candidates: list[CandidateReaction]
     ) -> None:
+        filt = OrganismFilter("eco")
+        with patch.object(
+            filt._kegg_client,
+            "get",
+            new_callable=AsyncMock,
+            side_effect=APIUnavailableError("offline"),
+        ):
+            await filt.initialize()
+            result = await filt.filter_candidates(sample_candidates)
+
+        assert result[0].organism_exists is None
+        assert result[1].organism_exists is None
+        assert result[2].organism_exists is None
+
+    @pytest.mark.asyncio
+    async def test_progress_callback(self, sample_candidates: list[CandidateReaction]) -> None:
         """Progress callback is invoked for each candidate."""
         filt = OrganismFilter("eco")
         callback = MagicMock()

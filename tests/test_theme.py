@@ -6,7 +6,9 @@ import re
 from dataclasses import FrozenInstanceError
 
 import pytest
-from PySide6.QtGui import QColor, QPalette
+
+pytest.importorskip("PySide6")
+from PySide6.QtGui import QColor, QPalette  # noqa: E402
 
 from src.gui.theme import THEME, ThemeColors, build_palette, generate_stylesheet, score_color
 

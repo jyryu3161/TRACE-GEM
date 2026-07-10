@@ -143,6 +143,9 @@ async def test_meaningful_candidate_scores_high_via_candidate_path():
             kegg_reaction_ids=["R1"],
             kegg_substrate_ids=["C10001"],
             kegg_product_ids=["C10002"],
+            kegg_substrate_stoichiometry={"C10001": 1.0},
+            kegg_product_stoichiometry={"C10002": 1.0},
+            kegg_stoichiometry_complete=True,
             ec_numbers=["1.1.1.1"],
         )
     )

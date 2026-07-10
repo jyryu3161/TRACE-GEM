@@ -1,5 +1,7 @@
 """Tests for cache manager."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from src.cache.cache_manager import CacheManager
@@ -129,3 +131,21 @@ class TestCacheManager:
         assert stats["total"] == 2
         assert stats["expired"] >= 1
         assert stats["active"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_event_loop_reconnect_closes_previous_connection(self, tmp_path, monkeypatch):
+        import aiosqlite
+
+        cm = CacheManager(db_path=tmp_path / "loop.db")
+        old_connection = AsyncMock()
+        new_connection = AsyncMock()
+        cm._db = old_connection
+        cm._bound_loop = object()
+        connect = AsyncMock(return_value=new_connection)
+        monkeypatch.setattr(aiosqlite, "connect", connect)
+
+        await cm._ensure_connection()
+
+        old_connection.close.assert_awaited_once()
+        connect.assert_awaited_once_with(str(tmp_path / "loop.db"))
+        assert cm._db is new_connection

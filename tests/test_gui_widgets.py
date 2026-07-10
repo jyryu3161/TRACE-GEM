@@ -205,7 +205,9 @@ class TestReactionRemovalDialog:
         from src.gui.reaction_removal_dialog import ReactionRemovalDialog
 
         task = MetabolicTask(
-            task_id="T1", task_type="Reaction", target_id="ENO",
+            task_id="T1",
+            task_type="Reaction",
+            target_id="ENO",
         )
         current_result = TaskResult(task=task, passed=True, actual_value=1.0)
         # Without cobra_model, we test instantiation only (no simulation)
@@ -223,7 +225,9 @@ class TestReactionRemovalDialog:
         from src.gui.reaction_removal_dialog import ReactionRemovalDialog
 
         task = MetabolicTask(
-            task_id="T1", task_type="Reaction", target_id="ENO",
+            task_id="T1",
+            task_type="Reaction",
+            target_id="ENO",
         )
         current_result = TaskResult(task=task, passed=True, actual_value=1.0)
         dialog = ReactionRemovalDialog(

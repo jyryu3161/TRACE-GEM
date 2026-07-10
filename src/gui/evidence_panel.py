@@ -118,7 +118,9 @@ class EvidencePanelWidget(QWidget):
                     s_total = len(s_model_set | s_kegg_set)
                     sub_detail = f"{s_overlap}/{s_total} ({evidence.substrate_match_ratio:.0%})"
                     sub_breakdown = self._format_compound_breakdown(
-                        s_model_set, s_kegg_set, "Substrate",
+                        s_model_set,
+                        s_kegg_set,
+                        "Substrate",
                     )
                 model_prods = rd.get("model_products", [])
                 kegg_prods = rd.get("kegg_products", [])
@@ -129,7 +131,9 @@ class EvidencePanelWidget(QWidget):
                     p_total = len(p_model_set | p_kegg_set)
                     prod_detail = f"{p_overlap}/{p_total} ({evidence.product_match_ratio:.0%})"
                     prod_breakdown = self._format_compound_breakdown(
-                        p_model_set, p_kegg_set, "Product",
+                        p_model_set,
+                        p_kegg_set,
+                        "Product",
                     )
 
             parts.append(
@@ -168,7 +172,9 @@ class EvidencePanelWidget(QWidget):
 
     @staticmethod
     def _format_compound_breakdown(
-        model_set: set[str], kegg_set: set[str], label: str,
+        model_set: set[str],
+        kegg_set: set[str],
+        label: str,
     ) -> str:
         """Format matched/unmatched compound IDs for display."""
         matched = sorted(model_set & kegg_set)

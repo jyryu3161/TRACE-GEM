@@ -73,7 +73,10 @@ class SBMLParser:
         if total and miss / total >= 0.05:
             logger.warning(
                 "Subsystem lookup miss rate %.1f%% (%d/%d) for %s",
-                miss / total * 100, miss, total, model_id,
+                miss / total * 100,
+                miss,
+                total,
+                model_id,
             )
 
     def _convert_model(self, cobra_model: cobra.Model) -> ModelData:

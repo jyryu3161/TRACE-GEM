@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import csv
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -72,25 +72,29 @@ class ExportController:
         if not filepath:
             return
 
-        with open(filepath, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(
-                ["Reaction ID", "Name", "Evidence Tier", "Weight", "GPR", "Selected"]
-            )
-            for candidate in result.added_reactions:
-                rxn = candidate.reaction
-                tier = (
-                    candidate.evidence_tier.label if candidate.evidence_tier else "—"
-                )
-                writer.writerow(
-                    [
-                        rxn.id,
-                        rxn.name,
-                        tier,
-                        f"{candidate.penalty:.2f}",
-                        candidate.assigned_gpr or "",
-                        "yes",
-                    ]
-                )
+        from src.cli import _save_gapfill_report
+        from src.utils.provenance import (
+            build_gapfill_manifest,
+            write_evidence_snapshot,
+            write_manifest,
+        )
+
+        tasks = [task_result.task for task_result in result.task_results_before]
+        _save_gapfill_report(filepath, result, tasks)
+        evidence_path = Path(filepath).with_suffix(".evidence.json.gz")
+        write_evidence_snapshot(evidence_path, result)
+        manifest = build_gapfill_manifest(
+            config=self._w._config,
+            result=result,
+            model=self._w._model.cobra_model,
+            inputs={
+                "draft_model": getattr(self._w, "_sbml_filepath", None),
+                "universal_model": self._w._loaded_universal_path,
+                "task_file": self._w._loaded_tasks_path,
+            },
+            outputs={"report": filepath, "evidence_snapshot": evidence_path},
+            command=["metatask-gapfill", "GUI"],
+        )
+        write_manifest(Path(filepath).with_suffix(".manifest.json"), manifest)
 
         self._w._statusbar.showMessage(f"Report exported to {filepath}")

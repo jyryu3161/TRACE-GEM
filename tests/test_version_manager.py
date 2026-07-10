@@ -66,9 +66,7 @@ class TestVersionStorageSaveLoad:
         assert (path / "model.xml").exists()
         assert (path / "meta.json").exists()
 
-        loaded_model, loaded_version = tmp_storage.load_version(
-            "test_model", "v001"
-        )
+        loaded_model, loaded_version = tmp_storage.load_version("test_model", "v001")
         assert loaded_version.version_id == "v001"
         assert loaded_version.change_type == "initial_load"
         assert len(loaded_model.reactions) == 1
@@ -105,11 +103,20 @@ class TestVersionStorageSaveLoad:
         assert version.change_type == "restore"
         assert version.restore_source_version_id == "v003"
 
-    def test_load_missing_version_raises(
-        self, tmp_storage: VersionStorage
-    ) -> None:
+    def test_load_missing_version_raises(self, tmp_storage: VersionStorage) -> None:
         with pytest.raises(FileNotFoundError):
             tmp_storage.load_version("no_model", "v999")
+
+    def test_unsafe_model_id_is_mapped_inside_storage(self, tmp_storage: VersionStorage) -> None:
+        model = _make_cobra_model()
+        version = _make_version(model_id="../E. coli model")
+
+        path = tmp_storage.save_version("../E. coli model", version, model)
+
+        assert path.is_relative_to(tmp_storage._base_dir)
+        assert ".." not in path.relative_to(tmp_storage._base_dir).parts
+        loaded, _ = tmp_storage.load_version("../E. coli model", "v001")
+        assert loaded.id == model.id
 
 
 class TestVersionStorageHistory:
@@ -132,18 +139,20 @@ class TestVersionStorageHistory:
         assert history[0].version_id == "v001"
         assert history[1].version_id == "v002"
 
-    def test_corrupt_history_degrades_gracefully(
-        self, tmp_storage: VersionStorage
-    ) -> None:
-        """A truncated/corrupt history index returns [] instead of crashing."""
+    def test_corrupt_history_is_not_silently_replaced(self, tmp_storage: VersionStorage) -> None:
+        """A corrupt index must stop saves rather than become an empty history."""
+        from src.versioning.storage import VersionHistoryError
+
         model = _make_cobra_model()
         tmp_storage.save_version("test_model", _make_version("v001"), model)
 
         history_path = tmp_storage._model_dir("test_model") / "history.json"
         history_path.write_text('[{"version_id": "v001", trunca', encoding="utf-8")
 
-        # Must not raise JSONDecodeError up into save_version/get_next_version_id.
-        assert tmp_storage.load_history("test_model") == []
+        with pytest.raises(VersionHistoryError, match="unreadable"):
+            tmp_storage.load_history("test_model")
+        with pytest.raises(VersionHistoryError, match="unreadable"):
+            tmp_storage.save_version("test_model", _make_version("v002"), model)
 
     def test_save_history_is_atomic(self, tmp_storage: VersionStorage) -> None:
         """History is written atomically and leaves no leftover temp file."""
@@ -162,6 +171,7 @@ class TestVersionStorageCleanup:
         model = _make_cobra_model()
         for i in range(1, 6):
             v = _make_version(version_id=f"v{i:03d}")
+            v.parent_version_id = f"v{i - 1:03d}" if i > 1 else None
             tmp_storage.save_version("test_model", v, model)
 
         deleted = tmp_storage.cleanup_old_versions("test_model", max_keep=3)
@@ -170,10 +180,50 @@ class TestVersionStorageCleanup:
         history = tmp_storage.load_history("test_model")
         assert len(history) == 3
         assert history[0].version_id == "v003"
+        assert history[0].parent_version_id is None
+        _, metadata = tmp_storage.load_version("test_model", "v003")
+        assert metadata.parent_version_id is None
 
-    def test_cleanup_noop_under_limit(
+    def test_rename_updates_parent_and_restore_references(
         self, tmp_storage: VersionStorage
     ) -> None:
+        model = _make_cobra_model()
+        first = _make_version("v001")
+        second = _make_version("v002", change_type="restore")
+        second.parent_version_id = "v001"
+        second.restore_source_version_id = "v001"
+        tmp_storage.save_version("test_model", first, model)
+        tmp_storage.save_version("test_model", second, model)
+
+        tmp_storage.rename_version("test_model", "v001", "baseline")
+
+        history = tmp_storage.load_history("test_model")
+        restored = next(version for version in history if version.version_id == "v002")
+        assert restored.parent_version_id == "baseline"
+        assert restored.restore_source_version_id == "baseline"
+        _, metadata = tmp_storage.load_version("test_model", "v002")
+        assert metadata.parent_version_id == "baseline"
+        assert metadata.restore_source_version_id == "baseline"
+
+    def test_delete_reparents_children_and_clears_restore_source(
+        self, tmp_storage: VersionStorage
+    ) -> None:
+        model = _make_cobra_model()
+        versions = [_make_version(f"v{i:03d}") for i in range(1, 4)]
+        versions[1].parent_version_id = "v001"
+        versions[2].parent_version_id = "v002"
+        versions[2].restore_source_version_id = "v002"
+        for version in versions:
+            tmp_storage.save_version("test_model", version, model)
+
+        tmp_storage.delete_version("test_model", "v002")
+
+        history = tmp_storage.load_history("test_model")
+        child = next(version for version in history if version.version_id == "v003")
+        assert child.parent_version_id == "v001"
+        assert child.restore_source_version_id is None
+
+    def test_cleanup_noop_under_limit(self, tmp_storage: VersionStorage) -> None:
         model = _make_cobra_model()
         v = _make_version()
         tmp_storage.save_version("test_model", v, model)
@@ -255,9 +305,7 @@ class TestVersionManagerSetBase:
         assert len(history) == 1
         assert history[0].version_id == "v001"
 
-    async def test_reopening_resumes_existing_history(
-        self, vm_config: Config
-    ) -> None:
+    async def test_reopening_resumes_existing_history(self, vm_config: Config) -> None:
         """Reopening a model with existing history resumes its tip, not a new root.
 
         Regression: previously every load appended a fresh parentless
@@ -266,9 +314,7 @@ class TestVersionManagerSetBase:
         """
         vm1 = VersionManager(vm_config)
         vm1.set_base_model(_make_model_with_rxns(["PFK"]), "test_model")  # v001
-        await vm1.save_version(
-            _make_model_with_rxns(["PFK", "ENO"]), "gap_fill"
-        )  # v002
+        await vm1.save_version(_make_model_with_rxns(["PFK", "ENO"]), "gap_fill")  # v002
 
         # Simulate reopening the model: a fresh manager over the same storage.
         vm2 = VersionManager(vm_config)
@@ -280,6 +326,18 @@ class TestVersionManagerSetBase:
         assert vm2.current_version.version_id == "v002"  # resumed at the tip
         roots = [v for v in history if v.parent_version_id is None]
         assert len(roots) == 1  # exactly one parentless root remains
+
+    def test_different_model_with_same_id_gets_separate_history(self, vm_config: Config) -> None:
+        first = VersionManager(vm_config)
+        first.set_base_model(_make_model_with_rxns(["PFK"]), "same_id")
+
+        second = VersionManager(vm_config)
+        second.set_base_model(_make_model_with_rxns(["ENO"]), "same_id")
+
+        assert second.current_version is not None
+        assert second.current_version.model_id.startswith("same_id__")
+        assert len(first.get_history()) == 1
+        assert len(second.get_history()) == 1
 
 
 class TestVersionManagerSave:
@@ -299,9 +357,7 @@ class TestVersionManagerSave:
     async def test_saves_with_task_results(self, vm: VersionManager) -> None:
         vm.set_base_model(_make_model_with_rxns(["PFK"]), "test_model")
 
-        task = MetabolicTask(
-            task_id="T1", task_type="Reaction", target_id="PFK"
-        )
+        task = MetabolicTask(task_id="T1", task_type="Reaction", target_id="PFK")
         results = [
             TaskResult(task=task, passed=True, actual_value=1.0),
             TaskResult(task=task, passed=False, actual_value=0.0),
@@ -315,9 +371,7 @@ class TestVersionManagerSave:
         )
         assert version.task_pass_rate == "2/3"
 
-    async def test_saves_with_custom_description(
-        self, vm: VersionManager
-    ) -> None:
+    async def test_saves_with_custom_description(self, vm: VersionManager) -> None:
         vm.set_base_model(_make_model_with_rxns(["PFK"]), "test_model")
 
         version = await vm.save_version(
@@ -330,22 +384,16 @@ class TestVersionManagerSave:
     async def test_updates_current_version(self, vm: VersionManager) -> None:
         vm.set_base_model(_make_model_with_rxns(["PFK"]), "test_model")
 
-        await vm.save_version(
-            _make_model_with_rxns(["PFK", "ENO"]), "gap_fill"
-        )
+        await vm.save_version(_make_model_with_rxns(["PFK", "ENO"]), "gap_fill")
         assert vm.current_version.version_id == "v002"
 
-        await vm.save_version(
-            _make_model_with_rxns(["PFK", "ENO", "GAPD"]), "gap_fill"
-        )
+        await vm.save_version(_make_model_with_rxns(["PFK", "ENO", "GAPD"]), "gap_fill")
         assert vm.current_version.version_id == "v003"
 
     async def test_raises_without_base(self, vm_config: Config) -> None:
         mgr = VersionManager(vm_config)
         with pytest.raises(RuntimeError, match="No base model"):
-            await mgr.save_version(
-                _make_model_with_rxns(["PFK"]), "gap_fill"
-            )
+            await mgr.save_version(_make_model_with_rxns(["PFK"]), "gap_fill")
 
     async def test_cleanup_old_versions(self, vm_config: Config) -> None:
         vm_config.max_versions = 3
@@ -362,15 +410,9 @@ class TestVersionManagerSave:
 
 
 class TestVersionManagerRestore:
-    async def test_restore_creates_new_version(
-        self, vm: VersionManager
-    ) -> None:
-        vm.set_base_model(
-            _make_model_with_rxns(["PFK", "ENO"]), "test_model"
-        )
-        await vm.save_version(
-            _make_model_with_rxns(["PFK", "ENO", "GLNS"]), "gap_fill"
-        )
+    async def test_restore_creates_new_version(self, vm: VersionManager) -> None:
+        vm.set_base_model(_make_model_with_rxns(["PFK", "ENO"]), "test_model")
+        await vm.save_version(_make_model_with_rxns(["PFK", "ENO", "GLNS"]), "gap_fill")
 
         restored_model = vm.restore_version("v001")
         assert vm.current_version.version_id == "v003"
@@ -384,12 +426,8 @@ class TestVersionManagerRestore:
         assert "GLNS" not in rxn_ids
 
     async def test_restore_diff_captured(self, vm: VersionManager) -> None:
-        vm.set_base_model(
-            _make_model_with_rxns(["PFK", "ENO"]), "test_model"
-        )
-        await vm.save_version(
-            _make_model_with_rxns(["PFK", "ENO", "GLNS"]), "gap_fill"
-        )
+        vm.set_base_model(_make_model_with_rxns(["PFK", "ENO"]), "test_model")
+        await vm.save_version(_make_model_with_rxns(["PFK", "ENO", "GLNS"]), "gap_fill")
 
         vm.restore_version("v001")
         diff = vm.current_version.diff
@@ -400,12 +438,8 @@ class TestVersionManagerRestore:
 class TestVersionManagerHistory:
     async def test_returns_all_versions(self, vm: VersionManager) -> None:
         vm.set_base_model(_make_model_with_rxns(["PFK"]), "test_model")
-        await vm.save_version(
-            _make_model_with_rxns(["PFK", "ENO"]), "gap_fill"
-        )
-        await vm.save_version(
-            _make_model_with_rxns(["PFK", "ENO", "GAPD"]), "gap_fill"
-        )
+        await vm.save_version(_make_model_with_rxns(["PFK", "ENO"]), "gap_fill")
+        await vm.save_version(_make_model_with_rxns(["PFK", "ENO", "GAPD"]), "gap_fill")
 
         history = vm.get_history()
         assert len(history) == 3
@@ -414,24 +448,16 @@ class TestVersionManagerHistory:
 
 class TestVersionManagerCompare:
     async def test_compare_two_versions(self, vm: VersionManager) -> None:
-        vm.set_base_model(
-            _make_model_with_rxns(["PFK", "ENO"]), "test_model"
-        )
-        await vm.save_version(
-            _make_model_with_rxns(["PFK", "ENO", "GLNS"]), "gap_fill"
-        )
+        vm.set_base_model(_make_model_with_rxns(["PFK", "ENO"]), "test_model")
+        await vm.save_version(_make_model_with_rxns(["PFK", "ENO", "GLNS"]), "gap_fill")
 
         diff = vm.compare_versions("v001", "v002")
         assert "GLNS" in diff.reactions_added
         assert diff.reactions_removed == []
 
     async def test_compare_reverse_order(self, vm: VersionManager) -> None:
-        vm.set_base_model(
-            _make_model_with_rxns(["PFK", "ENO"]), "test_model"
-        )
-        await vm.save_version(
-            _make_model_with_rxns(["PFK", "ENO", "GLNS"]), "gap_fill"
-        )
+        vm.set_base_model(_make_model_with_rxns(["PFK", "ENO"]), "test_model")
+        await vm.save_version(_make_model_with_rxns(["PFK", "ENO", "GLNS"]), "gap_fill")
 
         diff = vm.compare_versions("v002", "v001")
         assert "GLNS" in diff.reactions_removed

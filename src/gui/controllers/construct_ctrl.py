@@ -85,9 +85,7 @@ class ConstructController:
         self._worker = worker
         self._w._active_workers.append(worker)
         worker.signals.line.connect(panel.append_log)
-        worker.signals.result.connect(
-            lambda built: self._on_single_built(built, refine_after)
-        )
+        worker.signals.result.connect(lambda built: self._on_single_built(built, refine_after))
         worker.signals.error.connect(self._on_build_error)
         worker.signals.finished.connect(lambda: self._on_worker_finished(worker))
         self._w._thread_pool.start(worker)
@@ -203,9 +201,7 @@ class ConstructController:
     def _engine_ready(self) -> bool:
         w = self._w
         return (
-            w._engine is not None
-            and not w._engine_init_in_progress
-            and not w._pending_engine_init
+            w._engine is not None and not w._engine_init_in_progress and not w._pending_engine_init
         )
 
     def _start_refine_when_engine_ready(self) -> None:

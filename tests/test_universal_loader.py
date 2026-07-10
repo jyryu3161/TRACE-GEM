@@ -77,7 +77,9 @@ class TestLoadJson:
         mock_model.reactions = []
         mock_model.metabolites = []
 
-        with patch("src.core.universal_loader.cobra.io.load_json_model", return_value=mock_model) as mock_load:
+        with patch(
+            "src.core.universal_loader.cobra.io.load_json_model", return_value=mock_model
+        ) as mock_load:
             result = loader.load_json(fake_file)
 
         mock_load.assert_called_once_with(str(fake_file))
@@ -120,7 +122,9 @@ class TestLoadSbml:
         mock_model.reactions = []
         mock_model.metabolites = []
 
-        with patch("src.core.universal_loader.cobra.io.read_sbml_model", return_value=mock_model) as mock_load:
+        with patch(
+            "src.core.universal_loader.cobra.io.read_sbml_model", return_value=mock_model
+        ) as mock_load:
             result = loader.load_sbml(fake_file)
 
         mock_load.assert_called_once_with(str(fake_file))
@@ -157,9 +161,7 @@ class TestCompartmentBackfill:
         fake_file.touch()
         model = self._universal_with_empty_compartments()
 
-        with patch(
-            "src.core.universal_loader.cobra.io.load_json_model", return_value=model
-        ):
+        with patch("src.core.universal_loader.cobra.io.load_json_model", return_value=model):
             result = loader.load_json(fake_file)
 
         assert result.metabolites.get_by_id("prpp_c").compartment == "c"
@@ -176,9 +178,7 @@ class TestCompartmentBackfill:
         fake_file = tmp_path / "universal.json"
         fake_file.touch()
         universal = self._universal_with_empty_compartments()
-        with patch(
-            "src.core.universal_loader.cobra.io.load_json_model", return_value=universal
-        ):
+        with patch("src.core.universal_loader.cobra.io.load_json_model", return_value=universal):
             universal = loader.load_json(fake_file)
 
         # Simulate the gap-fill add path: copy a universal reaction into a model.

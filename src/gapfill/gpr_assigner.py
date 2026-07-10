@@ -10,7 +10,7 @@ import aiohttp
 
 from src.api.rate_limiter import RateLimiter
 from src.cache.cache_manager import CacheManager
-from src.core.models import CandidateReaction
+from src.core.models import CandidateReaction, ReactionEvidence
 from src.utils.constants import KEGG_API_BASE, ORGANISM_FILTER_CACHE_TTL
 
 logger = logging.getLogger("metataskgapfill.gapfill.gpr")
@@ -92,8 +92,8 @@ class GPRAssigner:
 
         if self._cache:
             cached = await self._cache.get(cache_key)
-            if cached is not None:
-                return cached
+            if isinstance(cached, list):
+                return [str(gene) for gene in cached]
 
         text = await self._kegg_get(f"link/{self._organism}/ko:{ko_id}")
         genes: list[str] = []
@@ -101,24 +101,26 @@ class GPRAssigner:
             genes = self._parse_link_response(text)
 
         if self._cache:
-            await self._cache.set(
-                cache_key, genes, ttl=ORGANISM_FILTER_CACHE_TTL
-            )
+            await self._cache.set(cache_key, genes, ttl=ORGANISM_FILTER_CACHE_TTL)
 
         return genes
 
     async def assign_gpr(
-        self, kegg_reaction_id: str
+        self,
+        kegg_reaction_id: str,
+        *,
+        allowed_gene_ids: set[str] | None = None,
     ) -> tuple[str, list[str]]:
         """Assign GPR rule and gene list for a KEGG reaction.
 
         Returns:
             (gene_reaction_rule, [gene_ids])
 
-        GPR construction rules:
-            - 1 KO with multiple genes: "gene1 or gene2" (isozymes)
-            - Multiple KOs: "( ko1_genes ) and ( ko2_genes )" (subunits)
-            - 0 KOs: ("", [])
+        A reaction-to-KO link does not encode whether multiple KOs are subunits
+        or alternative enzymes. Therefore a GPR is emitted only when exactly one
+        KO group has matching organism genes. Multiple genes within that KO are
+        treated as isozymes (OR). With multiple KO groups, genes are returned as
+        provenance but no unsupported Boolean rule is invented.
         """
         ko_ids = await self._get_ko_ids(kegg_reaction_id)
         if not ko_ids:
@@ -129,6 +131,8 @@ class GPRAssigner:
 
         for ko_id in ko_ids:
             genes = await self._get_genes_for_ko(ko_id)
+            if allowed_gene_ids is not None:
+                genes = [gene for gene in genes if gene in allowed_gene_ids]
             if genes:
                 ko_gene_groups.append(genes)
                 all_genes.extend(genes)
@@ -136,27 +140,28 @@ class GPRAssigner:
         if not ko_gene_groups:
             return ("", [])
 
-        # Build GPR rule
+        # A single KO can safely expose multiple matching organism genes as
+        # alternative isozymes. Multiple KO links do not establish a complex.
         if len(ko_gene_groups) == 1:
-            # Single KO: isozymes joined with "or"
             genes = ko_gene_groups[0]
             gpr = genes[0] if len(genes) == 1 else " or ".join(genes)
         else:
-            # Multiple KOs: subunit complex joined with "and"
-            parts: list[str] = []
-            for genes in ko_gene_groups:
-                if len(genes) == 1:
-                    parts.append(genes[0])
-                else:
-                    parts.append("( " + " or ".join(genes) + " )")
-            gpr = " and ".join(parts)
+            logger.info(
+                "Not assigning GPR for %s: %d KO groups do not establish complex stoichiometry",
+                kegg_reaction_id,
+                len(ko_gene_groups),
+            )
+            gpr = ""
 
-        return (gpr, all_genes)
+        return (gpr, list(dict.fromkeys(all_genes)))
 
     async def assign_batch(
         self,
         candidates: list[CandidateReaction],
         progress_callback: Callable[[int, int, str], None] | None = None,
+        *,
+        allowed_gene_ids: set[str] | None = None,
+        evidence_results: dict[str, ReactionEvidence] | None = None,
     ) -> None:
         """Assign GPR rules to all candidates with KEGG reaction IDs.
 
@@ -164,18 +169,26 @@ class GPRAssigner:
         """
         total = len(candidates)
         for i, candidate in enumerate(candidates):
-            kegg_ids = candidate.reaction.annotation.get(
-                "kegg.reaction", []
-            ) or candidate.reaction.annotation.get("KEGG Reaction", [])
+            evidence = (evidence_results or {}).get(candidate.reaction.id)
+            kegg_ids = list(evidence.verified_kegg_reaction_ids) if evidence else []
+            if not kegg_ids:
+                kegg_ids = candidate.reaction.annotation.get(
+                    "kegg.reaction", []
+                ) or candidate.reaction.annotation.get("KEGG Reaction", [])
 
             if kegg_ids:
                 # Use the first KEGG reaction ID
                 kegg_id = _extract_kegg_reaction_id(kegg_ids[0])
                 if not kegg_id:
                     continue
-                gpr, genes = await self.assign_gpr(kegg_id)
+                gpr, genes = await self.assign_gpr(
+                    kegg_id,
+                    allowed_gene_ids=allowed_gene_ids,
+                )
                 candidate.assigned_gpr = gpr
-                candidate.kegg_organism_genes = genes
+                candidate.kegg_organism_genes = list(
+                    dict.fromkeys(candidate.kegg_organism_genes + genes)
+                )
 
             if progress_callback:
                 progress_callback(i + 1, total, candidate.reaction.id)

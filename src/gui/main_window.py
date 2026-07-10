@@ -31,6 +31,7 @@ from src.core.models import (
     TaskResult,
     WorkflowCheckpoint,
 )
+from src.core.project_manager import ProjectData
 from src.evidence.engine import EvidenceEngine
 from src.gui.build_panel import BuildPanelWidget
 from src.gui.candidate_table import CandidateTableWidget
@@ -53,6 +54,7 @@ from src.gui.version_panel import VersionPanelWidget
 from src.gui.workers import (
     CloseEngineWorker,
     EvaluateBatchWorker,
+    GapFillWorkflowWorker,
     InitEngineWorker,
     LoadModelWorker,
 )
@@ -79,7 +81,7 @@ class MainWindow(QMainWindow):
         self._engine_init_token = 0
         self._engine_error: str | None = None
         self._active_workers: list[object] = []  # prevent GC of QRunnable
-        self._gapfill_worker = None
+        self._gapfill_worker: GapFillWorkflowWorker | None = None
         self._version_manager: VersionManager | None = None
         self._workflow_checkpoint: WorkflowCheckpoint | None = None
         self._loaded_universal_path: str | None = None
@@ -89,8 +91,8 @@ class MainWindow(QMainWindow):
         # Project save/load state
         self._project_path: str | None = None
         self._project_dirty: bool = False
-        self._pending_project = None
-        self._pending_restore = None  # Deferred project restore (wait for engine)
+        self._pending_project: ProjectData | None = None
+        self._pending_restore: ProjectData | None = None
         self._skip_organism_dialog: bool = False
 
         # Controllers
@@ -144,7 +146,9 @@ class MainWindow(QMainWindow):
         analysis_menu.addAction(
             "&Build Model (CarveMe)...", self._construct_ctrl.open_build_panel, "Ctrl+B"
         )
-        analysis_menu.addAction("Task-Based &Gap-Filling...", self._gapfill_ctrl.start_workflow, "Ctrl+W")
+        analysis_menu.addAction(
+            "Task-Based &Gap-Filling...", self._gapfill_ctrl.start_workflow, "Ctrl+W"
+        )
 
         # Export menu
         export_menu = menubar.addMenu("E&xport")
@@ -185,7 +189,9 @@ class MainWindow(QMainWindow):
         # Universal tab
         self._universal_table = CandidateTableWidget()
         self._universal_table.candidate_selected.connect(self._gapfill_ctrl.on_universal_selected)
-        self._universal_table.evaluate_requested.connect(self._gapfill_ctrl.evaluate_universal_candidates)
+        self._universal_table.evaluate_requested.connect(
+            self._gapfill_ctrl.evaluate_universal_candidates
+        )
         self._left_tabs.addTab(self._universal_table, "Universal")
 
         left_layout.addWidget(self._left_tabs)
@@ -373,7 +379,9 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage(f"Engine init failed: {error}")
 
     def _on_engine_init_finished(self, token: int) -> None:
-        self._active_workers = [w for w in self._active_workers if not isinstance(w, InitEngineWorker)]
+        self._active_workers = [
+            w for w in self._active_workers if not isinstance(w, InitEngineWorker)
+        ]
         if token != self._engine_init_token:
             return
         self._engine_init_in_progress = False
@@ -397,7 +405,9 @@ class MainWindow(QMainWindow):
         self._thread_pool.start(worker)
 
     def _on_engine_closed_for_reinit(self) -> None:
-        self._active_workers = [w for w in self._active_workers if not isinstance(w, CloseEngineWorker)]
+        self._active_workers = [
+            w for w in self._active_workers if not isinstance(w, CloseEngineWorker)
+        ]
         self._engine_close_in_progress = False
         self._start_engine_init()
 
@@ -405,11 +415,13 @@ class MainWindow(QMainWindow):
         worker = CloseEngineWorker(engine)
         worker.setAutoDelete(False)
         worker.signals.error.connect(lambda e: logger.warning("Engine close failed: %s", e))
-        worker.signals.finished.connect(
-            lambda: self._active_workers.__contains__(worker) and self._active_workers.remove(worker)
-        )
+        worker.signals.finished.connect(lambda: self._discard_worker(worker))
         self._active_workers.append(worker)
         self._thread_pool.start(worker)
+
+    def _discard_worker(self, worker: object) -> None:
+        if worker in self._active_workers:
+            self._active_workers.remove(worker)
 
     # --- File operations ---
 
@@ -430,9 +442,7 @@ class MainWindow(QMainWindow):
         worker.setAutoDelete(False)
         worker.signals.result.connect(self._on_model_loaded)
         worker.signals.error.connect(self._on_model_error)
-        worker.signals.finished.connect(
-            lambda: worker in self._active_workers and self._active_workers.remove(worker)
-        )
+        worker.signals.finished.connect(lambda: self._discard_worker(worker))
         self._active_workers.append(worker)
         self._thread_pool.start(worker)
 
@@ -519,6 +529,7 @@ class MainWindow(QMainWindow):
         self._workflow_checkpoint = None  # Clear checkpoint on new model load
 
         # Skip organism dialog when loading from a project file
+        result: tuple[str, str] | None
         if self._skip_organism_dialog:
             self._skip_organism_dialog = False
             result = (self._config.kegg_organism_code, self._config.organism_name)
@@ -570,9 +581,7 @@ class MainWindow(QMainWindow):
                     if self._version_manager.current_version
                     else None
                 )
-                self._version_panel.set_history(
-                    self._version_manager.get_history(), current_vid
-                )
+                self._version_panel.set_history(self._version_manager.get_history(), current_vid)
             except Exception as e:
                 logger.warning("Version manager init failed: %s", e)
                 self._version_manager = None
@@ -650,7 +659,10 @@ class MainWindow(QMainWindow):
         """Remove reaction from both cobra and internal models."""
         import cobra
 
-        cm = self._model.cobra_model
+        model = self._model
+        if model is None:
+            return
+        cm = model.cobra_model
         if isinstance(cm, cobra.Model):
             try:
                 cobra_rxn = cm.reactions.get_by_id(reaction_id)
@@ -658,19 +670,15 @@ class MainWindow(QMainWindow):
             except KeyError:
                 pass
 
-        self._model.remove_reaction(reaction_id)
+        model.remove_reaction(reaction_id)
 
         # Refresh UI
-        self._reaction_table.set_model_data(self._model)
+        self._reaction_table.set_model_data(model)
         self._reaction_detail.clear()
-        self._overview.set_model(self._model)
+        self._overview.set_model(model)
 
         # Auto-save version
-        if (
-            self._config.auto_save_on_edit
-            and self._version_manager
-            and self._model.cobra_model
-        ):
+        if self._config.auto_save_on_edit and self._version_manager and model.cobra_model:
             self._version_ctrl.auto_save_version("reaction_removal")
 
         self._mark_dirty()
@@ -809,17 +817,14 @@ class MainWindow(QMainWindow):
             self._update_recent_projects_menu()
             self._statusbar.showMessage(f"Project saved: {path}", 5000)
         except Exception as e:
-            QMessageBox.critical(
-                self, "Save Error", f"Failed to save project:\n{e}"
-            )
+            QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{e}")
             import traceback
+
             traceback.print_exc()
 
     def _open_project(self) -> None:
         """Open a project file."""
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open Project", "", "GEM Project (*.json)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "Open Project", "", "GEM Project (*.json)")
         if path:
             self._load_project(path)
 
@@ -827,11 +832,11 @@ class MainWindow(QMainWindow):
         """Load project and restore state."""
         import json as _json
 
-        from src.core.project_manager import ProjectManager
+        from src.core.project_manager import ProjectFormatError, ProjectManager
 
         try:
             project = ProjectManager.load(path)
-        except (_json.JSONDecodeError, KeyError) as e:
+        except (_json.JSONDecodeError, KeyError, ProjectFormatError) as e:
             QMessageBox.critical(self, "Error", f"Invalid project file:\n{e}")
             return
 
@@ -872,7 +877,7 @@ class MainWindow(QMainWindow):
         self._config.save()
         self._update_recent_projects_menu()
 
-    def _restore_project_state(self, project: object) -> None:
+    def _restore_project_state(self, project: ProjectData) -> None:
         """Restore evaluation results, universal candidates, and gap-fill state."""
         from src.core.models import (
             CandidateReaction,
@@ -881,10 +886,7 @@ class MainWindow(QMainWindow):
 
         # Restore universal candidates (does not depend on engine)
         if project.universal_candidates:
-            candidates = [
-                CandidateReaction.from_dict(d)
-                for d in project.universal_candidates
-            ]
+            candidates = [CandidateReaction.from_dict(d) for d in project.universal_candidates]
             self._universal_table.set_candidates(candidates)
         elif project.universal_path and self._model:
             # Candidates weren't saved — reload from universal model file
@@ -915,7 +917,7 @@ class MainWindow(QMainWindow):
                 logger.info("Engine not ready — deferring evaluation result restore")
                 self._pending_restore = project
 
-    def _apply_deferred_restore(self, project: object) -> None:
+    def _apply_deferred_restore(self, project: ProjectData) -> None:
         """Apply evaluation results to the current (ready) engine."""
         from src.core.models import ReactionEvidence
 
@@ -932,7 +934,9 @@ class MainWindow(QMainWindow):
         if self._universal_table.get_candidates():
             self._universal_table._model.set_evidence(all_results)
 
-        logger.info("Project evaluation results restored: %d reactions", len(project.evaluation_results))
+        logger.info(
+            "Project evaluation results restored: %d reactions", len(project.evaluation_results)
+        )
 
     def _reload_universal_from_path(self, filepath: str) -> None:
         """Reload universal candidates from file when not saved in project."""
@@ -946,7 +950,10 @@ class MainWindow(QMainWindow):
 
             loader = UniversalLoader()
             universal_model = loader.load(filepath)
-            candidates = loader.extract_candidates(universal_model, self._model)
+            model = self._model
+            if model is None:
+                return
+            candidates = loader.extract_candidates(universal_model, model)
 
             total = len(universal_model.reactions)
             excluded = total - len(candidates)
@@ -958,7 +965,9 @@ class MainWindow(QMainWindow):
             )
             self._universal_table.set_candidates(candidates)
             logger.info(
-                "Universal model reloaded from %s: %d candidates", filepath, len(candidates),
+                "Universal model reloaded from %s: %d candidates",
+                filepath,
+                len(candidates),
             )
         except Exception as e:
             logger.warning("Failed to reload universal model: %s", e)

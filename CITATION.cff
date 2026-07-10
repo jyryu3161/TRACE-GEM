@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the software release and the associated paper."
+title: "MetaTaskGapFill"
+type: software
+authors:
+  - family-names: "Ryu"
+    given-names: "Jaeyong"
+version: 0.2.0
+date-released: 2026-07-10
+license: MIT
+abstract: >-
+  A metabolic-task-aware genome-scale model gap-filling platform using
+  categorical KEGG reaction evidence and explicit provenance.

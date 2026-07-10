@@ -40,19 +40,19 @@ class SaveDialog(QDialog):
 
         # Change type dropdown
         self._change_type = QComboBox()
-        self._change_type.addItems([
-            "manual_edit",
-            "gap_fill",
-            "initial_load",
-            "restore",
-        ])
+        self._change_type.addItems(
+            [
+                "manual_edit",
+                "gap_fill",
+                "initial_load",
+                "restore",
+            ]
+        )
         form.addRow("Change Type:", self._change_type)
 
         # Description text
         self._description = QTextEdit()
-        self._description.setPlaceholderText(
-            "Describe the changes (auto-generated if left empty)"
-        )
+        self._description.setPlaceholderText("Describe the changes (auto-generated if left empty)")
         self._description.setMaximumHeight(80)
         form.addRow("Description:", self._description)
 
@@ -76,8 +76,7 @@ class SaveDialog(QDialog):
 
         # Buttons
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Cancel
-            | QDialogButtonBox.StandardButton.Save
+            QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Save
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)

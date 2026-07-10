@@ -20,33 +20,25 @@ mypy src/ --ignore-missing-imports
 
 ## Active Product Scope
 
-- Evidence is KEGG and BiGG only.
+- Reaction evidence is KEGG-only. BiGG supplies the universal reaction pool and
+  offline KEGG cross-references; universal membership is not evidence.
 - PubMed, Gemini, Perplexity, UniProt, MetaCyc, and LLM evidence workflows are
   intentionally removed from active code and tests.
 - User-facing evidence is categorical: High, Moderate, or Low. Numeric
   confidence remains only as a legacy/export ordering field.
-- KEGG evidence is the primary signal. Confirmed KEGG reaction evidence maps to
-  High; weak/partial KEGG maps to Moderate; BiGG-only support does not override
-  absent or mismatched KEGG evidence.
-- BiGG evidence is used as biological plausibility, not strain specificity. When
-  `bigg_models_reactions.txt` is absent, `BiGGLookup` falls back to
-  `data/bigg_universal_model_fixed.json` and treats universal-only presence as
-  weak BiGG support.
-- Missing/absent KEGG evidence must not be redistributed into a 1.0 BiGG-only
-  score.
+- Confirmed KEGG reaction evidence maps to High; weak/partial KEGG maps to
+  Moderate. Missing/absent KEGG evidence must not be replaced by support from
+  universal-model membership.
 - KEGG entries with metabolite mismatches should be reported as explicit absent
   KEGG evidence with mismatch details, not as generic "not found".
 - KEGG substrate/product matching excludes common currency metabolites when
   informative non-currency compounds remain on both sides.
-- Default candidate evidence evaluation is eager for all candidates:
-  `Config.candidate_evidence_eager_limit = 0`.
-- Deferred evidence mode is still available by setting
-  `candidate_evidence_eager_limit` to a positive threshold. In that mode, large
-  candidate sets skip full pre-gap-fill evidence and evaluate only gap-filled
-  reactions.
+- Evidence-weighted gap-fill evaluates every candidate before optimization.
+  `--skip-evaluation` is the explicit unweighted mode; post-selection evidence
+  must never be presented as having influenced the solver.
 - CLI gap-fill mode takes a draft model, universal model, metabolic task CSV,
-  and optional `--medium`. If medium is omitted, use the draft COBRA model's
-  default medium; otherwise accept JSON, CSV/TSV, or inline specs like
+  and optional `--medium`. If medium is omitted, use the task file's explicit
+  background/task media; otherwise accept JSON, CSV/TSV, or inline specs like
   `glc__D_e(-10);o2_e(-1000)`.
 
 ## Gap-Filling Behavior
@@ -54,8 +46,8 @@ mypy src/ --ignore-missing-imports
 - Gap-fill is driven by metabolic tasks from
   `data/universal_essential_tasks.csv`.
 - `TaskRunner.prepare_task_model()` is the shared source of truth for task
-  environment setup. It handles task medium, free exchanges, trace elements,
-  cofactor turnover, constraints, and ID normalization.
+  environment setup. It handles explicit task/background medium, free water and
+  proton exchanges, balanced NTP turnover, constraints, and ID normalization.
 - `GapFillEngine` must use the same task environment as task evaluation.
 - Only lower-bound production tasks (`>` and `>=`) are gap-fillable. Negative,
   equality, and upper-bound tasks cannot generally be fixed by adding reactions.
@@ -82,11 +74,11 @@ mypy src/ --ignore-missing-imports
 ## Important Files
 
 ```text
-src/api/                 KEGG/BiGG clients, rate limiting, circuit breaker
+src/api/                 KEGG client, rate limiting, circuit breaker
 src/core/models.py       Domain dataclasses
 src/core/task_parser.py  TaskParser and TaskRunner
 src/core/universal_loader.py
-src/evidence/engine.py   KEGG/BiGG evidence orchestration
+src/evidence/engine.py   KEGG evidence orchestration
 src/evidence/scoring.py
 src/gapfill/engine.py    Task-aware gap-fill workflow
 src/gapfill/organism_filter.py

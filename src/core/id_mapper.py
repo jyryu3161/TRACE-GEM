@@ -19,9 +19,7 @@ class IdentifierMapper:
     def __init__(self, mapping_data: MappingData) -> None:
         self._mapping = mapping_data
 
-    async def resolve(
-        self, reaction: Reaction, *, universal: bool = False
-    ) -> ExternalIDs:
+    async def resolve(self, reaction: Reaction, *, universal: bool = False) -> ExternalIDs:
         """Resolve a reaction's external IDs via offline mapping.
 
         Args:
@@ -60,17 +58,32 @@ class IdentifierMapper:
 
         # 5-6. Map metabolites to KEGG compound IDs. Runs for universal
         # candidates too so they can be metabolite-reconciled during gap-fill.
-        for met_id in reaction.reactants:
+        ext.kegg_stoichiometry_complete = True
+        for met_id, coefficient in reaction.reactants.items():
             kegg_ids = self._resolve_metabolite_kegg(met_id)
+            if len(kegg_ids) != 1:
+                ext.kegg_stoichiometry_complete = False
             for kid in kegg_ids:
                 if kid not in ext.kegg_substrate_ids:
                     ext.kegg_substrate_ids.append(kid)
+            if len(kegg_ids) == 1:
+                kid = kegg_ids[0]
+                ext.kegg_substrate_stoichiometry[kid] = ext.kegg_substrate_stoichiometry.get(
+                    kid, 0.0
+                ) + abs(float(coefficient))
 
-        for met_id in reaction.products:
+        for met_id, coefficient in reaction.products.items():
             kegg_ids = self._resolve_metabolite_kegg(met_id)
+            if len(kegg_ids) != 1:
+                ext.kegg_stoichiometry_complete = False
             for kid in kegg_ids:
                 if kid not in ext.kegg_product_ids:
                     ext.kegg_product_ids.append(kid)
+            if len(kegg_ids) == 1:
+                kid = kegg_ids[0]
+                ext.kegg_product_stoichiometry[kid] = ext.kegg_product_stoichiometry.get(
+                    kid, 0.0
+                ) + abs(float(coefficient))
 
         return ext
 
@@ -137,9 +150,7 @@ class IdentifierMapper:
         """
         return await self.resolve(reaction, universal=True)
 
-    def _extract_from_universal_annotation(
-        self, reaction: Reaction, ext: ExternalIDs
-    ) -> None:
+    def _extract_from_universal_annotation(self, reaction: Reaction, ext: ExternalIDs) -> None:
         """Extract external IDs from universal model annotation.
 
         Supports annotation keys used by BiGG universal model:

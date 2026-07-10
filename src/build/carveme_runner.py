@@ -28,7 +28,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -67,15 +67,15 @@ class CarveMeRunError(CarveMeError):
 class CarveMeOptions:
     """Options passed to a single ``carve`` invocation."""
 
-    solver: str = "gurobi"          # --solver (gurobi|cplex|scip); "" = carve default
-    universe: str = ""              # -u (bacteria|grampos|gramneg|archaea|...); "" = default
-    universe_file: str = ""         # --universe-file (custom SBML universe)
-    gapfill_media: str = ""         # -g (carve's own gap-fill, e.g. "M9,LB")
-    init_medium: str = ""           # -i (e.g. "M9")
-    dna: bool = False               # --dna (INPUT is a nucleotide fasta)
-    gzip_output: bool = False       # write .xml.gz (carve infers from -o suffix)
-    verbose: bool = True            # -v (stream progress)
-    timeout: int = 1800             # seconds per model
+    solver: str = "gurobi"  # --solver (gurobi|cplex|scip); "" = carve default
+    universe: str = ""  # -u (bacteria|grampos|gramneg|archaea|...); "" = default
+    universe_file: str = ""  # --universe-file (custom SBML universe)
+    gapfill_media: str = ""  # -g (carve's own gap-fill, e.g. "M9,LB")
+    init_medium: str = ""  # -i (e.g. "M9")
+    dna: bool = False  # --dna (INPUT is a nucleotide fasta)
+    gzip_output: bool = False  # write .xml.gz (carve infers from -o suffix)
+    verbose: bool = True  # -v (stream progress)
+    timeout: int = 1800  # seconds per model
     extra_args: tuple[str, ...] = ()
 
     def output_suffix(self) -> str:
@@ -95,6 +95,8 @@ class CarveMeResult:
     error: str | None = None
     kegg_code: str | None = None  # carried through for the downstream evaluator
     label: str = ""
+    argv: list[str] = field(default_factory=list)
+    options: CarveMeOptions | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -171,6 +173,11 @@ class CarveMeRunner:
         self._executable = executable or "carve"
         self._conda_env = (conda_env or "").strip()
         self._diamond = diamond_executable or "diamond"
+        self._last_availability: CarveMeAvailability | None = None
+
+    @property
+    def last_availability(self) -> CarveMeAvailability | None:
+        return self._last_availability
 
     # -- command resolution -------------------------------------------------
 
@@ -212,6 +219,7 @@ class CarveMeRunner:
     def check_available(self, solver: str | None = None) -> CarveMeAvailability:
         """Probe carve, diamond, and (advisory) the requested MILP solver."""
         avail = CarveMeAvailability()
+        self._last_availability = avail
 
         # carve (validates the conda env exists, if configured)
         try:
@@ -262,8 +270,11 @@ class CarveMeRunner:
             )
             avail.diamond_ok = dproc.returncode == 0
             if avail.diamond_ok:
-                avail.diamond_version = (dproc.stdout or dproc.stderr).strip().splitlines()[0] \
-                    if (dproc.stdout or dproc.stderr).strip() else "unknown"
+                avail.diamond_version = (
+                    (dproc.stdout or dproc.stderr).strip().splitlines()[0]
+                    if (dproc.stdout or dproc.stderr).strip()
+                    else "unknown"
+                )
         except Exception:  # noqa: BLE001
             avail.diamond_ok = False
 
@@ -283,12 +294,13 @@ class CarveMeRunner:
             except Exception:  # noqa: BLE001
                 avail.solver_ok = False
 
-        parts = [f"carve: {'OK' if avail.carve_ok else 'MISSING'} ({avail.carve_version})",
-                 f"diamond: {'OK' if avail.diamond_ok else 'MISSING'} ({avail.diamond_version})"]
+        parts = [
+            f"carve: {'OK' if avail.carve_ok else 'MISSING'} ({avail.carve_version})",
+            f"diamond: {'OK' if avail.diamond_ok else 'MISSING'} ({avail.diamond_version})",
+        ]
         if avail.solver_name:
             parts.append(
-                f"solver {avail.solver_name}: "
-                + ("OK" if avail.solver_ok else "not importable")
+                f"solver {avail.solver_name}: " + ("OK" if avail.solver_ok else "not importable")
             )
         avail.message = "; ".join(parts)
         if not avail.ok:
@@ -360,6 +372,8 @@ class CarveMeRunner:
             cancelled=cancelled,
             kegg_code=kegg_code,
             label=spec.label,
+            argv=list(argv),
+            options=options,
         )
         if cancelled:
             result.error = "cancelled"
@@ -367,8 +381,7 @@ class CarveMeRunner:
         if returncode != 0:
             result.error = f"carve exited with code {returncode}"
             raise CarveMeRunError(
-                f"carve failed for {fasta_path.name} (exit {returncode}).\n"
-                f"Last output:\n{tail}"
+                f"carve failed for {fasta_path.name} (exit {returncode}).\nLast output:\n{tail}"
             )
         if not output_path.exists():
             result.error = "no output produced"
@@ -408,6 +421,8 @@ class CarveMeRunner:
                     error="cancelled",
                     kegg_code=spec.kegg_code,
                     label=spec.label,
+                    argv=self.build_argv(spec),
+                    options=spec.options,
                 )
             if on_item_start is not None:
                 on_item_start(index, spec)
@@ -435,6 +450,8 @@ class CarveMeRunner:
                     error=str(exc),
                     kegg_code=spec.kegg_code,
                     label=spec.label,
+                    argv=self.build_argv(spec),
+                    options=spec.options,
                 )
 
         if max_parallel == 1:
@@ -446,8 +463,7 @@ class CarveMeRunner:
         else:
             with ThreadPoolExecutor(max_workers=max_parallel) as pool:
                 futures = {
-                    pool.submit(_run_one, index, spec): index
-                    for index, spec in enumerate(specs)
+                    pool.submit(_run_one, index, spec): index for index, spec in enumerate(specs)
                 }
                 for future in as_completed(futures):
                     index = futures[future]
@@ -480,9 +496,7 @@ class CarveMeRunner:
         if os.name == "posix":
             popen_kwargs["start_new_session"] = True  # own process group -> killpg
         else:  # pragma: no cover - Windows
-            popen_kwargs["creationflags"] = getattr(
-                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
-            )
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
         proc = subprocess.Popen(argv, **popen_kwargs)
         line_q: queue.Queue[str | None] = queue.Queue()

@@ -75,24 +75,26 @@ mypy src/ --ignore-missing-imports
 - KEGG substrate/product matching excludes common currency metabolites; a side
   with no informative (non-currency) compounds on either the model or KEGG side
   is `unverifiable`, not a match.
-- Default candidate evidence behavior is eager: all extracted candidate
-  reactions are evaluated before gap-filling. `Config.candidate_evidence_eager_limit`
-  is `0` by default; set it to a positive threshold to defer evidence for large
-  universals and evaluate only gap-filled reactions.
+- Evidence-weighted runs evaluate every extracted candidate before gap-filling.
+  Candidate evaluation may only be omitted through the explicit unweighted
+  `--skip-evaluation` mode.
 - CLI gap-fill mode accepts draft model, universal model, metabolic task CSV,
-  and optional base medium. Metabolic tasks are self-contained — each task's
-  `Medium` column declares the full medium it needs, and `prepare_task_model`
-  opens trace elements/water/protons. The draft model's default medium is NOT
+  and optional base medium. The bundled task file has an explicit background;
+  each task's
+  first comment line declares the shared background and each `Medium` column
+  overrides it. `prepare_task_model` opens only water/protons. The draft model's
+  default medium is NOT
   auto-merged when `--medium` is omitted: doing so would add nutrients (e.g.
   glucose) back into negative-constraint tasks that omit them on purpose
   ("no X without carbon source"), breaking those tests and making CLI disagree
   with the GUI. Only an EXPLICIT `--medium` (JSON, CSV/TSV, or inline spec such
   as `glc__D_e(-10);o2_e(-1000)`) is merged as a base medium, in BOTH CLI and
-  GUI. A complete model (e.g. iML1515) passes all 52 universal tasks with
-  task-only media.
+  GUI. The E. coli iML1515 model passes all 52 bundled E. coli-oriented tasks
+  with file-declared media.
 - Gap-filling is metabolic-task-aware. Task evaluation and gap-fill setup share
-  `TaskRunner.prepare_task_model()` so medium, free exchanges, trace elements,
-  cofactor turnover, constraints, and ID normalization stay consistent.
+  `TaskRunner.prepare_task_model()` so explicit medium, free water/proton
+  exchanges, balanced NTP turnover, constraints, and ID normalization stay
+  consistent.
 - Negative or upper-bound tasks are not gap-fillable and are skipped by the
   reaction-addition repair step.
 - Exchange/demand/sink boundary reactions are excluded from gap-fill candidates

@@ -7,6 +7,7 @@ import logging
 import threading
 import traceback
 from contextlib import suppress
+from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
@@ -14,8 +15,10 @@ from src.core.models import CandidateReaction, GapFillResult, ModelData, Reactio
 from src.evidence.engine import EvidenceEngine
 from src.utils.config import Config
 
-TYPE_CHECKING = False
 if TYPE_CHECKING:
+    import cobra
+
+    from src.build.carveme_runner import CarveMeOptions
     from src.cache.cache_manager import CacheManager
     from src.core.mapping_data import MappingData
 
@@ -66,7 +69,9 @@ class EvaluateReactionWorker(QRunnable):
             loop = asyncio.new_event_loop()
             # asyncio.set_event_loop removed (deprecated in Python 3.12+)
             try:
-                result = loop.run_until_complete(self.engine.evaluate_reaction(self.reaction))
+                result = loop.run_until_complete(
+                    self.engine.evaluate_candidate(CandidateReaction(reaction=self.reaction))
+                )
                 _safe_emit(self.signals.result, result)
             finally:
                 loop.close()
@@ -106,8 +111,8 @@ class EvaluateBatchWorker(QRunnable):
 
             try:
                 results = loop.run_until_complete(
-                    self.engine.evaluate_batch(
-                        self.reactions,
+                    self.engine.evaluate_candidates_batch(
+                        [CandidateReaction(reaction=reaction) for reaction in self.reactions],
                         progress_callback=on_progress,
                         cancel_event=self._cancel_event,
                     )
@@ -222,8 +227,7 @@ class GapFillWorkflowWorker(QRunnable):
         evidence_engine: EvidenceEngine | None,
         options: dict,
         start_phase: int = 1,
-        preloaded_before: list | None = None,
-        preloaded_candidates: list[CandidateReaction] | None = None,
+        preloaded_result: GapFillResult | None = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -233,8 +237,7 @@ class GapFillWorkflowWorker(QRunnable):
         self.evidence_engine = evidence_engine
         self.options = options
         self._start_phase = start_phase
-        self._preloaded_before = preloaded_before
-        self._preloaded_candidates = preloaded_candidates
+        self._preloaded_result = preloaded_result
         self._cancel_event = threading.Event()
         self.signals = GapFillWorkerSignals()
         self.setAutoDelete(False)
@@ -273,22 +276,36 @@ class GapFillWorkflowWorker(QRunnable):
         def on_progress(phase: str, current: int, total: int, detail: str) -> None:
             _safe_emit(self.signals.progress, phase, current, total, detail)
 
+        checkpoint = self._preloaded_result or GapFillResult()
+        if checkpoint.working_model is not None:
+            working_model = cast("cobra.Model", checkpoint.working_model)
+        else:
+            source_model = self.model_data.cobra_model
+            if source_model is None:
+                raise RuntimeError("No cobra model available on ModelData")
+            working_model = source_model.copy()
+            checkpoint.working_model = working_model
+
+        def partial_result(total_tasks: int = 0) -> GapFillResult:
+            checkpoint.total_tasks = total_tasks
+            checkpoint.is_partial = True
+            checkpoint.working_model = working_model
+            return checkpoint
+
         # Step 1: Load universal model
         on_progress("loading", 0, 1, "Loading universal model...")
         loader = UniversalLoader()
         universal_model = loader.load(self.universal_path)
-        exclude_exchange_gapfill = bool(
-            self.options.get("exclude_exchange_gapfill", True)
-        )
+        exclude_exchange_gapfill = bool(self.options.get("exclude_exchange_gapfill", True))
         self.config.gapfill_exclude_exchange_reactions = exclude_exchange_gapfill
         on_progress("loading", 1, 1, "Universal model loaded")
 
         if self._is_cancelled():
-            return GapFillResult(total_tasks=0, is_partial=True, completed_phase=0)
+            return partial_result()
 
         # Step 2: Extract candidates (or use preloaded)
-        if self._preloaded_candidates:
-            candidates = self._preloaded_candidates
+        if checkpoint.all_candidates:
+            candidates = checkpoint.all_candidates
             on_progress("extracting", 1, 1, f"{len(candidates)} candidates (resumed)")
         else:
             on_progress("extracting", 0, 1, "Extracting candidates...")
@@ -297,10 +314,11 @@ class GapFillWorkflowWorker(QRunnable):
                 self.model_data,
                 exclude_exchange_reactions=exclude_exchange_gapfill,
             )
+            checkpoint.all_candidates = list(candidates)
             on_progress("extracting", 1, 1, f"{len(candidates)} candidates extracted")
 
         if self._is_cancelled():
-            return GapFillResult(total_tasks=0, is_partial=True, completed_phase=0)
+            return partial_result()
 
         # Step 3: Parse tasks
         tasks = []
@@ -315,57 +333,41 @@ class GapFillWorkflowWorker(QRunnable):
                 on_progress("parsing_tasks", 1, 1, f"{len(tasks)} tasks parsed")
 
         # Merge an EXPLICIT base medium only if one was provided (parity with the
-        # CLI --medium). Tasks are otherwise self-contained — never merge the
-        # model's default medium, which would break negative-constraint tasks.
+        # CLI --medium). Tasks otherwise use only their explicit file-declared
+        # background/task medium; never merge the model's default medium.
         medium_arg = self.options.get("medium")
         if medium_arg and tasks:
             from src.cli import load_medium_argument
             from src.gapfill.refine import apply_base_medium_to_tasks
 
-            base_medium = load_medium_argument(medium_arg, self.model_data.cobra_model)
+            base_medium = load_medium_argument(medium_arg, working_model)
             tasks = apply_base_medium_to_tasks(tasks, base_medium)
 
         if self._is_cancelled():
-            return GapFillResult(total_tasks=len(tasks), is_partial=True, completed_phase=0)
+            return partial_result(len(tasks))
 
         # Step 4: Evaluate candidates (optional, skip on resume)
-        evidence_results: dict = {}
-        defer_candidate_evidence = False
+        evidence_results = dict(checkpoint.evidence_results)
         if (
             self._start_phase <= 1
+            and not evidence_results
             and self.options.get("evaluate_candidates")
             and self.evidence_engine
         ):
-            eager_limit = max(0, self.config.candidate_evidence_eager_limit)
-            defer_candidate_evidence = eager_limit > 0 and len(candidates) > eager_limit
-            if defer_candidate_evidence:
-                on_progress(
-                    "evaluating",
-                    0,
-                    len(candidates),
-                    (
-                        f"{len(candidates)} candidates exceeds eager evidence limit "
-                        f"({eager_limit}); deferring evidence to gap-filled reactions"
-                    ),
-                )
-            else:
-                on_progress("evaluating", 0, len(candidates), "Evaluating candidates...")
+            on_progress("evaluating", 0, len(candidates), "Evaluating candidates...")
 
-                def eval_progress(current: int, total: int, rxn_id: str) -> None:
-                    _safe_emit(self.signals.progress, "evaluating", current, total, rxn_id)
+            def eval_progress(current: int, total: int, rxn_id: str) -> None:
+                _safe_emit(self.signals.progress, "evaluating", current, total, rxn_id)
 
-                evidence_results = await self.evidence_engine.evaluate_candidates_batch(
-                    candidates, progress_callback=eval_progress
-                )
+            evidence_results = await self.evidence_engine.evaluate_candidates_batch(
+                candidates, progress_callback=eval_progress
+            )
+            checkpoint.evidence_results = dict(evidence_results)
 
         if self._is_cancelled():
-            return GapFillResult(total_tasks=len(tasks), is_partial=True, completed_phase=0)
+            return partial_result(len(tasks))
 
         # Step 5: Run gap-fill engine
-        cobra_model = self.model_data.cobra_model
-        if cobra_model is None:
-            raise RuntimeError("No cobra model available on ModelData")
-
         engine = GapFillEngine(self.config)
         organism_code = self.model_data.kegg_organism_code or self.config.kegg_organism_code
         cache_mgr = self.evidence_engine.cache_manager if self.evidence_engine else None
@@ -377,7 +379,7 @@ class GapFillWorkflowWorker(QRunnable):
         )
         try:
             result = await engine.run(
-                user_model=cobra_model,
+                user_model=working_model,
                 universal_model=universal_model,
                 candidates=candidates,
                 tasks=tasks,
@@ -385,44 +387,12 @@ class GapFillWorkflowWorker(QRunnable):
                 progress_callback=on_progress,
                 cancel_event=self._cancel_event,
                 start_phase=self._start_phase,
-                preloaded_before=self._preloaded_before,
+                preloaded_result=checkpoint,
             )
         finally:
             await engine.close()
 
-        if (
-            defer_candidate_evidence
-            and self.evidence_engine
-            and isinstance(result, GapFillResult)
-            and result.added_reactions
-        ):
-            on_progress(
-                "evaluating",
-                0,
-                len(result.added_reactions),
-                "Evaluating gap-filled reactions...",
-            )
-
-            def added_eval_progress(current: int, total: int, rxn_id: str) -> None:
-                _safe_emit(self.signals.progress, "evaluating", current, total, rxn_id)
-
-            added_evidence = await self.evidence_engine.evaluate_candidates_batch(
-                result.added_reactions,
-                progress_callback=added_eval_progress,
-                cancel_event=self._cancel_event,
-            )
-            result.added_reactions.sort(
-                key=lambda c: (
-                    (
-                        added_evidence[c.reaction.id].evidence_tier.rank,
-                        added_evidence[c.reaction.id].confidence_score,
-                    )
-                    if c.reaction.id in added_evidence
-                    else (0, 0.0)
-                ),
-                reverse=True,
-            )
-
+        result.working_model = working_model
         return result
 
 
@@ -549,9 +519,7 @@ class OrganismFilterWorker(QRunnable):
         )
         await filt.initialize()
         try:
-            result = await filt.filter_candidates(
-                self.candidates, progress_callback=on_progress
-            )
+            result = await filt.filter_candidates(self.candidates, progress_callback=on_progress)
         finally:
             await filt.close()
         return result
@@ -582,7 +550,7 @@ class BuildModelWorker(QRunnable):
         config: Config,
         fasta_path: str,
         kegg_code: str | None,
-        options: object | None = None,
+        options: CarveMeOptions | None = None,
         output_path: str | None = None,
     ) -> None:
         super().__init__()
@@ -643,7 +611,7 @@ class BatchBuildWorker(QRunnable):
         self,
         config: Config,
         jobs: list,
-        options: object | None = None,
+        options: CarveMeOptions | None = None,
         output_dir: str | None = None,
     ) -> None:
         super().__init__()

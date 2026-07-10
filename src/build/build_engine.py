@@ -134,6 +134,7 @@ class BuildEngine:
             label=label or fasta_path.stem,
         )
         model_data = self._load_built(carve_result.output_path, kegg_code)
+        self._write_construction_manifest(carve_result)
         return BuiltModel(
             model_data=model_data,
             sbml_path=carve_result.output_path,
@@ -261,6 +262,7 @@ class BuildEngine:
 
     def _finalize_item(self, job: BuildJob, carve_result: CarveMeResult) -> BuildItemResult:
         if not carve_result.succeeded:
+            self._write_construction_manifest(carve_result)
             return BuildItemResult(
                 job=job,
                 carve_result=carve_result,
@@ -272,9 +274,9 @@ class BuildEngine:
         except Exception as exc:  # noqa: BLE001 - surface load failures per-item
             logger.error("Failed to load built model %s: %s", carve_result.output_path, exc)
             carve_result.error = f"model load failed: {exc}"
-            return BuildItemResult(
-                job=job, carve_result=carve_result, built=None, error=str(exc)
-            )
+            self._write_construction_manifest(carve_result)
+            return BuildItemResult(job=job, carve_result=carve_result, built=None, error=str(exc))
+        self._write_construction_manifest(carve_result)
         return BuildItemResult(
             job=job,
             carve_result=carve_result,
@@ -291,14 +293,26 @@ class BuildEngine:
         self._attach_organism(model_data, kegg_code)
         return model_data
 
+    def _write_construction_manifest(self, carve_result: CarveMeResult) -> None:
+        from src.utils.provenance import build_construction_manifest, write_manifest
+
+        availability = getattr(self._runner, "last_availability", None)
+        manifest = build_construction_manifest(
+            config=self._config,
+            carve_result=carve_result,
+            availability=availability,
+        )
+        manifest_path = carve_result.output_path.with_name(
+            carve_result.output_path.name + ".build.manifest.json"
+        )
+        write_manifest(manifest_path, manifest)
+
     @staticmethod
     def _attach_organism(model_data: ModelData, kegg_code: str | None) -> None:
         if not kegg_code:
             return
         model_data.kegg_organism_code = kegg_code
-        model_data.organism = KEGG_CODE_TO_NAME.get(
-            kegg_code, model_data.organism or kegg_code
-        )
+        model_data.organism = KEGG_CODE_TO_NAME.get(kegg_code, model_data.organism or kegg_code)
 
 
 __all__ = ["BuildEngine", "BuiltModel", "BuildItemResult", "GapFillResult"]

@@ -20,7 +20,7 @@ from src.core.models import (
     ExternalIDs,
     Reaction,
 )
-from src.evidence.engine import EvidenceEngine
+from src.evidence.engine import EvidenceBatchError, EvidenceEngine
 from src.utils.config import Config
 
 
@@ -92,9 +92,7 @@ class TestEvidenceEngine:
         assert ev.ec_numbers == ["4.2.1.11"]
 
     @pytest.mark.asyncio
-    async def test_kegg_outage_marks_error_not_absent(
-        self, mock_engine, sample_reaction
-    ):
+    async def test_kegg_outage_marks_error_not_absent(self, mock_engine, sample_reaction):
         """A KEGG outage must surface as ERROR, not a silent KEGG-absent score.
 
         Regression: an unreachable KEGG (circuit open / exhausted retries)
@@ -121,14 +119,39 @@ class TestEvidenceEngine:
     @pytest.mark.asyncio
     async def test_evaluate_candidates_batch(self, mock_engine):
         candidates = [
-            _candidate(
-                Reaction(id=f"RXN{i}", name=f"Reaction {i}", equation=f"a{i} -> b{i}")
-            )
+            _candidate(Reaction(id=f"RXN{i}", name=f"Reaction {i}", equation=f"a{i} -> b{i}"))
             for i in range(10)
         ]
         results = await mock_engine.evaluate_candidates_batch(candidates)
         assert len(results) == 10
         assert all(ev.status == EvaluationStatus.EVALUATED for ev in results.values())
+
+    @pytest.mark.asyncio
+    async def test_batch_does_not_return_stale_results(self, mock_engine):
+        stale = await mock_engine.evaluate_candidate(
+            _candidate(Reaction(id="STALE", name="stale", equation="a -> b"))
+        )
+        assert stale.status is EvaluationStatus.EVALUATED
+
+        results = await mock_engine.evaluate_candidates_batch(
+            [_candidate(Reaction(id="CURRENT", name="current", equation="a -> b"))]
+        )
+
+        assert set(results) == {"CURRENT"}
+        assert mock_engine.get_result("STALE") is not None
+
+    @pytest.mark.asyncio
+    async def test_batch_aborts_when_evidence_errors_exceed_policy(self, mock_engine):
+        mock_engine._kegg.check_evidence = AsyncMock(
+            side_effect=APIUnavailableError("KEGG unavailable")
+        )
+        candidates = [
+            _candidate(Reaction(id="R1", name="R1", equation="a -> b")),
+            _candidate(Reaction(id="R2", name="R2", equation="a -> b")),
+        ]
+
+        with pytest.raises(EvidenceBatchError, match="2/2"):
+            await mock_engine.evaluate_candidates_batch(candidates)
 
     @pytest.mark.asyncio
     async def test_get_result(self, mock_engine, sample_reaction):
@@ -172,14 +195,11 @@ class TestEvidenceEngine:
         import asyncio
 
         candidates = [
-            _candidate(Reaction(id=f"RXN{i}", name=f"R{i}", equation="a -> b"))
-            for i in range(20)
+            _candidate(Reaction(id=f"RXN{i}", name=f"R{i}", equation="a -> b")) for i in range(20)
         ]
         cancel = asyncio.Event()
         cancel.set()  # Cancel immediately
-        results = await mock_engine.evaluate_candidates_batch(
-            candidates, cancel_event=cancel
-        )
+        results = await mock_engine.evaluate_candidates_batch(candidates, cancel_event=cancel)
         # Should have stopped early
         assert len(results) < 20
 
@@ -192,12 +212,9 @@ class TestEvidenceEngine:
             progress_calls.append((current, total, rxn_id))
 
         candidates = [
-            _candidate(Reaction(id=f"RXN{i}", name=f"R{i}", equation="a -> b"))
-            for i in range(5)
+            _candidate(Reaction(id=f"RXN{i}", name=f"R{i}", equation="a -> b")) for i in range(5)
         ]
-        await mock_engine.evaluate_candidates_batch(
-            candidates, progress_callback=on_progress
-        )
+        await mock_engine.evaluate_candidates_batch(candidates, progress_callback=on_progress)
         assert len(progress_calls) >= 1
 
     @pytest.mark.asyncio

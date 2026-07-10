@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import cobra
 import pytest
 from cobra.exceptions import OptimizationError
 
+from src.core.cobra_utils import convert_cobra_reaction
 from src.core.models import (
     CandidateReaction,
     EvidenceTier,
@@ -25,7 +27,6 @@ from src.utils.config import Config
 def config() -> Config:
     return Config(
         gapfill_lower_bound=0.05,
-        gapfill_penalty_epsilon=0.01,
         gapfill_organism_penalty_multiplier=10.0,
         gapfill_no_kegg_penalty_multiplier=2.0,
     )
@@ -104,13 +105,9 @@ class TestGapFillEngine:
         mock_universal = MagicMock()
 
         # All tasks pass
-        passing_results = [
-            TaskResult(task=t, passed=True, actual_value=1.0) for t in sample_tasks
-        ]
+        passing_results = [TaskResult(task=t, passed=True, actual_value=1.0) for t in sample_tasks]
 
-        with patch.object(
-            engine._task_runner, "run_all", return_value=passing_results
-        ):
+        with patch.object(engine._task_runner, "run_all", return_value=passing_results):
             result = await engine.run(
                 mock_model,
                 mock_universal,
@@ -156,8 +153,10 @@ class TestGapFillEngine:
                 return before_results
             return after_results
 
-        with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
-             patch.object(engine, "_run_gapfill", new_callable=AsyncMock, return_value=[]):
+        with (
+            patch.object(engine._task_runner, "run_all", side_effect=mock_run_all),
+            patch.object(engine, "_run_gapfill", new_callable=AsyncMock, return_value=[]),
+        ):
             result = await engine.run(
                 mock_model,
                 mock_universal,
@@ -199,12 +198,14 @@ class TestGapFillEngine:
         def mock_gapfill_for_task(*args, **kwargs):
             raise RuntimeError("Infeasible")
 
-        with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
-             patch.object(
-                 engine,
-                 "_gapfill_solutions_for_task",
-                 side_effect=mock_gapfill_for_task,
-             ):
+        with (
+            patch.object(engine._task_runner, "run_all", side_effect=mock_run_all),
+            patch.object(
+                engine,
+                "_gapfill_solutions_for_task",
+                side_effect=mock_gapfill_for_task,
+            ),
+        ):
             result = await engine.run(
                 mock_model,
                 mock_universal,
@@ -242,11 +243,11 @@ class TestGapFillEngine:
         def raise_infeasible(*args, **kwargs):
             raise OptimizationError("MILP infeasible")
 
-        with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
-             patch.object(
-                 engine, "_gapfill_solutions_for_task", side_effect=raise_infeasible
-             ), \
-             patch.object(engine, "_retry_gapfill", return_value=[]) as mock_retry:
+        with (
+            patch.object(engine._task_runner, "run_all", side_effect=mock_run_all),
+            patch.object(engine, "_gapfill_solutions_for_task", side_effect=raise_infeasible),
+            patch.object(engine, "_retry_gapfill", return_value=[]) as mock_retry,
+        ):
             await engine.run(
                 mock_model,
                 mock_universal,
@@ -271,13 +272,9 @@ class TestGapFillEngine:
 
         def make_results(model, tasks, progress_callback=None):
             """Return fresh TaskResult objects each call."""
-            return [
-                TaskResult(task=t, passed=True, actual_value=1.0) for t in tasks
-            ]
+            return [TaskResult(task=t, passed=True, actual_value=1.0) for t in tasks]
 
-        with patch.object(
-            engine._task_runner, "run_all", side_effect=make_results
-        ):
+        with patch.object(engine._task_runner, "run_all", side_effect=make_results):
             result = await engine.run(
                 mock_model,
                 mock_universal,
@@ -304,13 +301,9 @@ class TestGapFillEngine:
         mock_universal = MagicMock()
         callback = MagicMock()
 
-        before_results = [
-            TaskResult(task=t, passed=True, actual_value=1.0) for t in sample_tasks
-        ]
+        before_results = [TaskResult(task=t, passed=True, actual_value=1.0) for t in sample_tasks]
 
-        with patch.object(
-            engine._task_runner, "run_all", return_value=before_results
-        ):
+        with patch.object(engine._task_runner, "run_all", return_value=before_results):
             await engine.run(
                 mock_model,
                 mock_universal,
@@ -363,9 +356,11 @@ class TestGapFillEngine:
         engine._gpr_assigner = MagicMock()
         engine._gpr_assigner.assign_batch = AsyncMock()
 
-        with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
-             patch.object(engine, "_run_gapfill", new_callable=AsyncMock, return_value=[mock_rxn]), \
-             patch.object(engine, "_apply_gapfill_results", return_value=[sample_candidates[0]]):
+        with (
+            patch.object(engine._task_runner, "run_all", side_effect=mock_run_all),
+            patch.object(engine, "_run_gapfill", new_callable=AsyncMock, return_value=[mock_rxn]),
+            patch.object(engine, "_apply_gapfill_results", return_value=[sample_candidates[0]]),
+        ):
             await engine.run(
                 mock_model,
                 mock_universal,
@@ -376,17 +371,33 @@ class TestGapFillEngine:
 
         engine._gpr_assigner.assign_batch.assert_called_once()
 
+    def test_apply_assigned_gpr_updates_cobra_and_candidate(self) -> None:
+        model = cobra.Model("draft")
+        metabolite = cobra.Metabolite("a_c", compartment="c")
+        reaction = cobra.Reaction("R_NEW")
+        reaction.add_metabolites({metabolite: -1.0})
+        model.add_reactions([reaction])
+        candidate = CandidateReaction(
+            reaction=convert_cobra_reaction(reaction),
+            assigned_gpr="gene_a or gene_b",
+        )
+
+        GapFillEngine._apply_assigned_gprs(model, [candidate])
+
+        assert model.reactions.get_by_id("R_NEW").gene_reaction_rule == "gene_a or gene_b"
+        assert candidate.reaction.gene_reaction_rule == "gene_a or gene_b"
+        assert candidate.reaction.genes == ["gene_a", "gene_b"]
+
     @pytest.mark.asyncio
     async def test_initialize_and_close(self, engine: GapFillEngine) -> None:
         """Initialize sets up filter and assigner; close tears them down."""
         mock_cache = MagicMock()
         mock_mapping = MagicMock()
 
-        with patch(
-            "src.gapfill.engine.OrganismFilter"
-        ) as MockFilter, patch(
-            "src.gapfill.engine.GPRAssigner"
-        ) as MockAssigner:
+        with (
+            patch("src.gapfill.engine.OrganismFilter") as MockFilter,
+            patch("src.gapfill.engine.GPRAssigner") as MockAssigner,
+        ):
             mock_filter_inst = MagicMock()
             mock_filter_inst.initialize = AsyncMock()
             mock_filter_inst.close = AsyncMock()
@@ -423,9 +434,7 @@ class TestGapFillEngine:
         mock_rxn = MagicMock()
         mock_rxn.id = "GLNS"
 
-        result = engine._apply_gapfill_results(
-            mock_model, [mock_rxn], sample_candidates
-        )
+        result = engine._apply_gapfill_results(mock_model, [mock_rxn], sample_candidates)
 
         assert len(result) == 1
         assert result[0].reaction.id == "GLNS"
@@ -467,9 +476,7 @@ class TestGapFillEngine:
         assert engine._is_gapfillable_task(negative) is False
         assert engine._is_gapfillable_task(upper_bound) is False
 
-    def test_gapfill_disables_cobra_auto_demand_reactions(
-        self, engine: GapFillEngine
-    ) -> None:
+    def test_gapfill_disables_cobra_auto_demand_reactions(self, engine: GapFillEngine) -> None:
         """Task objectives are explicit, so COBRApy demand auto-add must be off."""
         model = cobra.Model("draft")
         met = cobra.Metabolite("target_c", compartment="c")
@@ -566,9 +573,7 @@ class TestGapFillEngine:
         assert [r.id for r in result] == ["R_TARGET"]
         assert "R_TARGET" not in model.reactions
 
-    def test_apply_gapfill_results_creates_fallback_candidate(
-        self, engine: GapFillEngine
-    ) -> None:
+    def test_apply_gapfill_results_creates_fallback_candidate(self, engine: GapFillEngine) -> None:
         """Reactions absent from the candidate table are still reported."""
         model = cobra.Model("draft")
         rxn = cobra.Reaction("EX_so4_e")
@@ -670,6 +675,58 @@ class TestGapFillEngine:
         # Both survive — the unevidenced reaction is not filtered out.
         assert {rxn.id for rxn in pruned.reactions} == {"R_KEGG", "R_NOKEGG"}
 
+    def test_prune_universal_preserves_path_with_new_intermediate(self) -> None:
+        config = Config(
+            gapfill_universal_prune_threshold=1,
+            gapfill_prune_to_model_metabolites=True,
+        )
+        engine = GapFillEngine(config)
+
+        model = cobra.Model("draft")
+        a = cobra.Metabolite("a_c", compartment="c")
+        c = cobra.Metabolite("c_c", compartment="c")
+        source = cobra.Reaction("SRC_A")
+        source.add_metabolites({a: 1.0})
+        source.bounds = (0.0, 10.0)
+        model.add_reactions([source])
+        model.add_metabolites([c])
+
+        universal = cobra.Model("universal")
+        b = cobra.Metabolite("b_c", compartment="c")
+        a_to_b = cobra.Reaction("A_TO_B")
+        a_to_b.add_metabolites({a.copy(): -1.0, b: 1.0})
+        a_to_b.bounds = (0.0, 1000.0)
+        b_to_c = cobra.Reaction("B_TO_C")
+        b_to_c.add_metabolites({b: -1.0, c.copy(): 1.0})
+        b_to_c.bounds = (0.0, 1000.0)
+        unrelated = cobra.Reaction("UNRELATED")
+        unrelated.add_metabolites(
+            {
+                cobra.Metabolite("x_c", compartment="c"): -1.0,
+                cobra.Metabolite("y_c", compartment="c"): 1.0,
+            }
+        )
+        universal.add_reactions([a_to_b, b_to_c, unrelated])
+        task = MetabolicTask(
+            task_id="T_PATH",
+            task_type="Metabolite",
+            target_id="c_c",
+            expected_operator=">",
+            expected_value=0.0,
+        )
+
+        pruned = engine._prune_universal_for_gapfill(universal, model, [task])
+        solutions = engine._gapfill_solutions_for_task(
+            model,
+            pruned,
+            task,
+            penalties={},
+            lower_bound=0.05,
+        )
+
+        assert {reaction.id for reaction in pruned.reactions} == {"A_TO_B", "B_TO_C"}
+        assert {reaction.id for reaction in solutions[0]} == {"A_TO_B", "B_TO_C"}
+
     def test_lower_bound_for_strict_greater_uses_extra_tolerance(
         self, engine: GapFillEngine
     ) -> None:
@@ -685,9 +742,7 @@ class TestGapFillEngine:
 
         assert engine._lower_bound_for_task(task) == pytest.approx(1.000002)
 
-    def test_retry_discards_subthreshold_solution(
-        self, engine: GapFillEngine
-    ) -> None:
+    def test_retry_discards_subthreshold_solution(self, engine: GapFillEngine) -> None:
         """Relaxed-bound retry must not keep reactions that fail the real check."""
         task = MetabolicTask(
             task_id="HI",
@@ -700,8 +755,10 @@ class TestGapFillEngine:
         mock_rxn = MagicMock()
         mock_rxn.id = "R1"
 
-        with patch.object(engine, "_gapfill_solutions_for_task", return_value=[[mock_rxn]]), \
-             patch.object(engine, "_reactions_satisfy_task", return_value=False):
+        with (
+            patch.object(engine, "_gapfill_solutions_for_task", return_value=[[mock_rxn]]),
+            patch.object(engine, "_reactions_satisfy_task", return_value=False),
+        ):
             out = engine._retry_gapfill(
                 MagicMock(), MagicMock(), task, {}, required=1.0, result=result
             )
@@ -722,8 +779,10 @@ class TestGapFillEngine:
         mock_rxn = MagicMock()
         mock_rxn.id = "R1"
 
-        with patch.object(engine, "_gapfill_solutions_for_task", return_value=[[mock_rxn]]), \
-             patch.object(engine, "_reactions_satisfy_task", return_value=True):
+        with (
+            patch.object(engine, "_gapfill_solutions_for_task", return_value=[[mock_rxn]]),
+            patch.object(engine, "_reactions_satisfy_task", return_value=True),
+        ):
             out = engine._retry_gapfill(
                 MagicMock(), MagicMock(), task, {}, required=1.0, result=result
             )
@@ -731,9 +790,7 @@ class TestGapFillEngine:
         assert out == [[mock_rxn]]
         assert "HI" not in result.infeasible_tasks
 
-    def test_retry_skips_when_no_relaxation_room(
-        self, engine: GapFillEngine
-    ) -> None:
+    def test_retry_skips_when_no_relaxation_room(self, engine: GapFillEngine) -> None:
         """When the requirement is already at the floor, no retry is attempted."""
         task = MetabolicTask(
             task_id="LO",
@@ -782,9 +839,11 @@ class TestGapFillEngine:
         model = cobra.Model("draft")
         mock_rxn = cobra.Reaction("GLNS")
 
-        with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
-             patch.object(engine, "_run_gapfill", new_callable=AsyncMock, return_value=[mock_rxn]), \
-             patch.object(engine, "_reactions_preserve_tasks", return_value=True):
+        with (
+            patch.object(engine._task_runner, "run_all", side_effect=mock_run_all),
+            patch.object(engine, "_run_gapfill", new_callable=AsyncMock, return_value=[mock_rxn]),
+            patch.object(engine, "_reactions_preserve_tasks", return_value=True),
+        ):
             result = await engine.run(
                 model,
                 MagicMock(),
@@ -811,14 +870,17 @@ class TestGapFillEngine:
         bad_rxn = cobra.Reaction("NH4t")
         safe_rxn = cobra.Reaction("SAFE")
 
-        with patch.object(
-            engine,
-            "_gapfill_solutions_for_task",
-            return_value=[[bad_rxn], [safe_rxn]],
-        ), patch.object(
-            engine,
-            "_reactions_preserve_tasks",
-            side_effect=[False, True],
+        with (
+            patch.object(
+                engine,
+                "_gapfill_solutions_for_task",
+                return_value=[[bad_rxn], [safe_rxn]],
+            ),
+            patch.object(
+                engine,
+                "_reactions_preserve_tasks",
+                side_effect=[False, True],
+            ),
         ):
             added = await engine._run_gapfill(
                 cobra.Model("draft"),
@@ -844,11 +906,14 @@ class TestGapFillEngine:
         result = GapFillResult(total_tasks=2)
         bad_rxn = cobra.Reaction("NH4t")
 
-        with patch.object(
-            engine,
-            "_gapfill_solutions_for_task",
-            return_value=[[bad_rxn]],
-        ), patch.object(engine, "_reactions_preserve_tasks", return_value=False):
+        with (
+            patch.object(
+                engine,
+                "_gapfill_solutions_for_task",
+                return_value=[[bad_rxn]],
+            ),
+            patch.object(engine, "_reactions_preserve_tasks", return_value=False),
+        ):
             added = await engine._run_gapfill(
                 cobra.Model("draft"),
                 cobra.Model("universal"),
@@ -890,9 +955,11 @@ class TestGapFillEngine:
         mock_rxn.id = "GLNS"
         gapfill_mock = AsyncMock(return_value=[mock_rxn])
 
-        with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
-             patch.object(engine, "_run_gapfill", gapfill_mock), \
-             patch.object(engine, "_apply_gapfill_results", return_value=[sample_candidates[0]]):
+        with (
+            patch.object(engine._task_runner, "run_all", side_effect=mock_run_all),
+            patch.object(engine, "_run_gapfill", gapfill_mock),
+            patch.object(engine, "_apply_gapfill_results", return_value=[sample_candidates[0]]),
+        ):
             await engine.run(
                 MagicMock(),
                 MagicMock(),
@@ -936,8 +1003,10 @@ class TestGapFillEngine:
         rxn = cobra.Reaction("GLNS")
         gapfill_mock = AsyncMock(return_value=[rxn])
 
-        with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
-             patch.object(engine, "_run_gapfill", gapfill_mock):
+        with (
+            patch.object(engine._task_runner, "run_all", side_effect=mock_run_all),
+            patch.object(engine, "_run_gapfill", gapfill_mock),
+        ):
             result = await engine.run(
                 model,
                 MagicMock(),
@@ -951,3 +1020,98 @@ class TestGapFillEngine:
         assert result.tasks_fixed == 0
         assert result.tasks_broken == 0
         assert sample_candidates[0].selected is False
+
+    @pytest.mark.asyncio
+    async def test_phase3_cancellation_rolls_back_and_resumes_from_phase2(
+        self, engine: GapFillEngine
+    ) -> None:
+        task = MetabolicTask(
+            task_id="T1",
+            task_type="Reaction",
+            target_id="TARGET",
+            expected_operator=">",
+            expected_value=0.01,
+        )
+        checkpoint = GapFillResult(
+            task_results_before=[TaskResult(task=task, passed=False, actual_value=0.0)],
+            completed_phase=2,
+        )
+        model = cobra.Model("draft")
+        universal = cobra.Model("universal")
+        metabolite = cobra.Metabolite("a_c", compartment="c")
+        reaction = cobra.Reaction("R_NEW")
+        reaction.add_metabolites({metabolite: -1.0})
+        universal.add_reactions([reaction])
+        candidate = CandidateReaction(reaction=convert_cobra_reaction(reaction))
+        cancel_event = threading.Event()
+
+        async def cancel_after_solution(*args, **kwargs):
+            cancel_event.set()
+            return [reaction]
+
+        with (
+            patch.object(engine, "_run_gapfill", side_effect=cancel_after_solution),
+            patch.object(
+                engine._task_runner,
+                "run_all",
+                return_value=[TaskResult(task=task, passed=True, actual_value=1.0)],
+            ),
+        ):
+            result = await engine.run(
+                model,
+                universal,
+                [candidate],
+                [task],
+                {},
+                cancel_event=cancel_event,
+                start_phase=3,
+                preloaded_result=checkpoint,
+            )
+
+        assert result.is_partial is True
+        assert result.completed_phase == 2
+        assert result.added_reactions == []
+        assert "R_NEW" not in model.reactions
+
+    @pytest.mark.asyncio
+    async def test_gpr_cancellation_keeps_phase3_checkpoint(self, engine: GapFillEngine) -> None:
+        task = MetabolicTask(
+            task_id="T1",
+            task_type="Reaction",
+            target_id="R_NEW",
+            expected_operator=">",
+            expected_value=0.01,
+        )
+        reaction = cobra.Reaction("R_NEW")
+        model = cobra.Model("draft")
+        model.add_reactions([reaction])
+        candidate = CandidateReaction(reaction=convert_cobra_reaction(reaction))
+        checkpoint = GapFillResult(
+            added_reactions=[candidate],
+            task_results_before=[TaskResult(task=task, passed=False, actual_value=0.0)],
+            all_candidates=[candidate],
+            completed_phase=3,
+        )
+        cancel_event = threading.Event()
+        assigner = MagicMock()
+
+        async def cancel_during_assignment(*args, **kwargs):
+            cancel_event.set()
+
+        assigner.assign_batch = AsyncMock(side_effect=cancel_during_assignment)
+        engine._gpr_assigner = assigner
+
+        result = await engine.run(
+            model,
+            cobra.Model("universal"),
+            [candidate],
+            [task],
+            {},
+            cancel_event=cancel_event,
+            start_phase=4,
+            preloaded_result=checkpoint,
+        )
+
+        assert result.is_partial is True
+        assert result.completed_phase == 3
+        assigner.assign_batch.assert_awaited_once()

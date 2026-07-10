@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -12,12 +13,17 @@ from pathlib import Path
 
 import cobra
 
-from src.core.models import ModelDiff, ModelVersion, ReactionChange
+from src.core.models import EntityChange, ModelDiff, ModelVersion, ReactionChange
 from src.utils.constants import VERSION_DIR
 
 logger = logging.getLogger("metataskgapfill.versioning.storage")
 
 _RESTORE_DESC_RE = re.compile(r"\bRestored\s+to\s+version\s+([^\s,;]+)", re.IGNORECASE)
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+class VersionHistoryError(RuntimeError):
+    """Raised when a version history index is corrupt or internally inconsistent."""
 
 
 class VersionStorage:
@@ -53,35 +59,36 @@ class VersionStorage:
         Returns:
             Path to the version directory.
         """
+        history = self.load_history(model_id)
+        if any(existing.version_id == version.version_id for existing in history):
+            raise VersionHistoryError(f"Version ID already exists: {version.version_id}")
+
         version_dir = self._version_dir(model_id, version.version_id)
         version_dir.mkdir(parents=True, exist_ok=True)
 
         # Write SBML
         sbml_path = version_dir / version.sbml_filename
-        cobra.io.write_sbml_model(cobra_model, str(sbml_path))
+        temporary_sbml = version_dir / f".{version.sbml_filename}.tmp.xml"
+        cobra.io.write_sbml_model(cobra_model, str(temporary_sbml))
+        os.replace(temporary_sbml, sbml_path)
         logger.info("Saved SBML to %s", sbml_path)
 
         # Write metadata
         meta_path = version_dir / "meta.json"
-        self._atomic_write_text(
-            meta_path, json.dumps(self._version_to_dict(version), indent=2)
-        )
+        self._atomic_write_text(meta_path, json.dumps(self._version_to_dict(version), indent=2))
 
         # Update history index
-        history = self.load_history(model_id)
-        # Replace if version_id already exists, else append
-        history = [v for v in history if v.version_id != version.version_id]
         history.append(version)
         self.save_history(model_id, history)
 
         logger.info(
-            "Saved version %s for model %s", version.version_id, model_id,
+            "Saved version %s for model %s",
+            version.version_id,
+            model_id,
         )
         return version_dir
 
-    def load_version(
-        self, model_id: str, version_id: str
-    ) -> tuple[cobra.Model, ModelVersion]:
+    def load_version(self, model_id: str, version_id: str) -> tuple[cobra.Model, ModelVersion]:
         """Load a specific version.
 
         Returns:
@@ -93,13 +100,9 @@ class VersionStorage:
         version_dir = self._version_dir(model_id, version_id)
         meta_path = version_dir / "meta.json"
         if not meta_path.exists():
-            raise FileNotFoundError(
-                f"Version metadata not found: {meta_path}"
-            )
+            raise FileNotFoundError(f"Version metadata not found: {meta_path}")
 
-        version = self._dict_to_version(
-            json.loads(meta_path.read_text(encoding="utf-8"))
-        )
+        version = self._dict_to_version(json.loads(meta_path.read_text(encoding="utf-8")))
 
         sbml_path = version_dir / version.sbml_filename
         if not sbml_path.exists():
@@ -129,18 +132,19 @@ class VersionStorage:
 
         try:
             data = json.loads(history_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.error(
-                "Version history for %s is unreadable (%s); treating as empty",
-                model_id,
-                exc,
-            )
-            return []
-        return [self._dict_to_version(d) for d in data]
+            if not isinstance(data, list):
+                raise TypeError("history root must be a list")
+            history = [self._dict_to_version(d) for d in data]
+        except (json.JSONDecodeError, OSError, KeyError, TypeError, ValueError) as exc:
+            raise VersionHistoryError(
+                f"Version history for {model_id} is unreadable: {exc}"
+            ) from exc
+        ids = [version.version_id for version in history]
+        if len(ids) != len(set(ids)):
+            raise VersionHistoryError(f"Version history for {model_id} has duplicate IDs")
+        return history
 
-    def save_history(
-        self, model_id: str, versions: list[ModelVersion]
-    ) -> None:
+    def save_history(self, model_id: str, versions: list[ModelVersion]) -> None:
         """Persist the history index."""
         model_dir = self._model_dir(model_id)
         model_dir.mkdir(parents=True, exist_ok=True)
@@ -149,9 +153,7 @@ class VersionStorage:
         data = [self._version_to_dict(v) for v in versions]
         self._atomic_write_text(history_path, json.dumps(data, indent=2))
 
-    def cleanup_old_versions(
-        self, model_id: str, max_keep: int = 20
-    ) -> int:
+    def cleanup_old_versions(self, model_id: str, max_keep: int = 20) -> int:
         """Remove oldest versions exceeding *max_keep*.
 
         Returns:
@@ -163,6 +165,15 @@ class VersionStorage:
 
         to_remove = history[: len(history) - max_keep]
         kept = history[len(history) - max_keep :]
+        removed_ids = {version.version_id for version in to_remove}
+        for version in kept:
+            if version.parent_version_id in removed_ids:
+                version.parent_version_id = None
+            if version.restore_source_version_id in removed_ids:
+                version.restore_source_version_id = None
+
+        self._save_metadata_set(model_id, kept)
+        self.save_history(model_id, kept)
 
         deleted = 0
         for version in to_remove:
@@ -176,12 +187,9 @@ class VersionStorage:
                     model_id,
                 )
 
-        self.save_history(model_id, kept)
         return deleted
 
-    def update_description(
-        self, model_id: str, version_id: str, new_description: str
-    ) -> None:
+    def update_description(self, model_id: str, version_id: str, new_description: str) -> None:
         """Update the description of an existing version."""
         history = self.load_history(model_id)
         for v in history:
@@ -197,14 +205,10 @@ class VersionStorage:
         if meta_path.exists():
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             meta["description"] = new_description
-            meta_path.write_text(
-                json.dumps(meta, indent=2), encoding="utf-8"
-            )
+            meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         logger.info("Updated description for %s: %s", version_id, new_description)
 
-    def rename_version(
-        self, model_id: str, old_id: str, new_id: str
-    ) -> None:
+    def rename_version(self, model_id: str, old_id: str, new_id: str) -> None:
         """Rename a version ID: updates history, parent references, directory, and meta."""
         history = self.load_history(model_id)
 
@@ -220,10 +224,10 @@ class VersionStorage:
             # Update parent references
             if v.parent_version_id == old_id:
                 v.parent_version_id = new_id
+            if v.restore_source_version_id == old_id:
+                v.restore_source_version_id = new_id
         if not found:
             raise ValueError(f"Version {old_id} not found")
-
-        self.save_history(model_id, history)
 
         # Rename directory
         old_dir = self._version_dir(model_id, old_id)
@@ -231,30 +235,35 @@ class VersionStorage:
         if old_dir.exists():
             old_dir.rename(new_dir)
 
-        # Update meta.json inside renamed dir
-        meta_path = new_dir / "meta.json"
-        if meta_path.exists():
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            meta["version_id"] = new_id
-            meta_path.write_text(
-                json.dumps(meta, indent=2), encoding="utf-8"
-            )
+        self._save_metadata_set(model_id, history)
+        self.save_history(model_id, history)
 
         logger.info("Renamed version %s → %s", old_id, new_id)
 
     def delete_version(self, model_id: str, version_id: str) -> None:
         """Delete a version and its files."""
         history = self.load_history(model_id)
+        deleted_version = next((v for v in history if v.version_id == version_id), None)
         new_history = [v for v in history if v.version_id != version_id]
         if len(new_history) == len(history):
             raise ValueError(f"Version {version_id} not found")
 
-        # Remove files
+        assert deleted_version is not None
+        for version in new_history:
+            if version.parent_version_id == version_id:
+                version.parent_version_id = deleted_version.parent_version_id
+            if version.restore_source_version_id == version_id:
+                version.restore_source_version_id = None
+
+        self._save_metadata_set(model_id, new_history)
+        self.save_history(model_id, new_history)
+
+        # Remove files after the index is valid; a crash can only leave an
+        # unreferenced directory, not a dangling history entry.
         version_dir = self._version_dir(model_id, version_id)
         if version_dir.exists():
             shutil.rmtree(version_dir)
 
-        self.save_history(model_id, new_history)
         logger.info("Deleted version %s for model %s", version_id, model_id)
 
     def get_next_version_id(self, model_id: str) -> str:
@@ -277,10 +286,28 @@ class VersionStorage:
     # ------------------------------------------------------------------
 
     def _model_dir(self, model_id: str) -> Path:
-        return self._base_dir / model_id
+        return self._base_dir / self._safe_component(model_id)
 
     def _version_dir(self, model_id: str, version_id: str) -> Path:
-        return self._model_dir(model_id) / version_id
+        return self._model_dir(model_id) / self._safe_component(version_id)
+
+    @staticmethod
+    def _safe_component(value: str) -> str:
+        if value and value not in {".", ".."} and _SAFE_ID_RE.fullmatch(value):
+            return value
+        if not value:
+            raise ValueError("Version-storage identifier must not be empty")
+        slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._-") or "model"
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+        return f"{slug[:48]}__{digest}"
+
+    def _save_metadata_set(self, model_id: str, versions: list[ModelVersion]) -> None:
+        for version in versions:
+            meta_path = self._version_dir(model_id, version.version_id) / "meta.json"
+            if meta_path.exists():
+                self._atomic_write_text(
+                    meta_path, json.dumps(self._version_to_dict(version), indent=2)
+                )
 
     @staticmethod
     def _version_to_dict(version: ModelVersion) -> dict:
@@ -312,13 +339,15 @@ class VersionStorage:
                 reactions_added=diff_data.get("reactions_added", []),
                 reactions_removed=diff_data.get("reactions_removed", []),
                 reactions_modified=[
-                    ReactionChange(**rc)
-                    for rc in diff_data.get("reactions_modified", [])
+                    ReactionChange(**rc) for rc in diff_data.get("reactions_modified", [])
                 ],
                 genes_added=diff_data.get("genes_added", []),
                 genes_removed=diff_data.get("genes_removed", []),
                 metabolites_added=diff_data.get("metabolites_added", []),
                 metabolites_removed=diff_data.get("metabolites_removed", []),
+                entity_changes=[
+                    EntityChange(**change) for change in diff_data.get("entity_changes", [])
+                ],
             )
 
         description = d.get("description", "")

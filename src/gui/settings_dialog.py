@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -19,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from src.core.models import EvidenceSource
 from src.evidence.evidence_types import SOURCE_REGISTRY, get_ordered_sources
-from src.utils.config import Config
+from src.utils.config import Config, ConfigError
 
 
 class SettingsDialog(QDialog):
@@ -33,7 +35,6 @@ class SettingsDialog(QDialog):
 
         # Dynamic widget storage keyed by EvidenceSource
         self._enable_checks: dict[EvidenceSource, QCheckBox] = {}
-        self._weight_spins: dict[EvidenceSource, QDoubleSpinBox] = {}
 
         self._setup_ui()
         self._load_values()
@@ -71,26 +72,6 @@ class SettingsDialog(QDialog):
                 source_form.addRow(QLabel(f"<i>{sc.description}</i>"))
 
         tabs.addTab(source_tab, "Evidence Sources")
-
-        # Scoring Weights tab
-        weight_tab = QGroupBox()
-        weight_form = QFormLayout(weight_tab)
-
-        for source, sc in get_ordered_sources():
-            spin = QDoubleSpinBox()
-            spin.setRange(0.0, 1.0)
-            spin.setSingleStep(0.05)
-            spin.setDecimals(2)
-            self._weight_spins[source] = spin
-            weight_form.addRow(f"{sc.display_name}:", spin)
-
-        weight_form.addRow(
-            QLabel(
-                "<i>Weights are normalized at scoring time. "
-                "Inactive sources redistribute weight automatically.</i>"
-            )
-        )
-        tabs.addTab(weight_tab, "Scoring Weights")
 
         # Evaluation tab
         eval_tab = QGroupBox()
@@ -147,8 +128,10 @@ class SettingsDialog(QDialog):
         carveme_form.addRow("Batch parallelism:", self._carveme_max_parallel)
         carveme_form.addRow("", self._carveme_gzip)
         carveme_form.addRow(
-            QLabel("<i>CarveMe runs as an external `carve` subprocess. Default "
-                   "solver gurobi; SCIP is the free fallback.</i>")
+            QLabel(
+                "<i>CarveMe runs as an external `carve` subprocess. Default "
+                "solver gurobi; SCIP is the free fallback.</i>"
+            )
         )
         tabs.addTab(carveme_tab, "Construction")
 
@@ -171,11 +154,6 @@ class SettingsDialog(QDialog):
             sc = SOURCE_REGISTRY[source]
             check.setChecked(getattr(self._config, sc.enable_key, False))
 
-        # Load weights
-        for source, spin in self._weight_spins.items():
-            sc = SOURCE_REGISTRY[source]
-            spin.setValue(getattr(self._config, sc.weight_key, 0.0))
-
         self._batch_size.setValue(self._config.batch_size)
         self._max_concurrent.setValue(self._config.max_concurrent)
 
@@ -194,6 +172,7 @@ class SettingsDialog(QDialog):
         self._carveme_gzip.setChecked(self._config.carveme_gzip_output)
 
     def _save_and_accept(self) -> None:
+        original = asdict(self._config)
         self._config.organism_name = self._organism_name.text()
         self._config.kegg_organism_code = self._kegg_code.text()
 
@@ -202,29 +181,27 @@ class SettingsDialog(QDialog):
             sc = SOURCE_REGISTRY[source]
             setattr(self._config, sc.enable_key, check.isChecked())
 
-        # Save weights
-        for source, spin in self._weight_spins.items():
-            sc = SOURCE_REGISTRY[source]
-            setattr(self._config, sc.weight_key, spin.value())
-
         self._config.batch_size = self._batch_size.value()
         self._config.max_concurrent = self._max_concurrent.value()
 
         # CarveMe construction settings
         self._config.carveme_executable = self._carveme_executable.text().strip() or "carve"
         self._config.carveme_env = self._carveme_env.text().strip()
-        self._config.carveme_diamond_executable = (
-            self._carveme_diamond.text().strip() or "diamond"
-        )
+        self._config.carveme_diamond_executable = self._carveme_diamond.text().strip() or "diamond"
         self._config.carveme_solver = self._carveme_solver.currentText()
         self._config.carveme_universe = self._carveme_universe.currentText()
         self._config.carveme_universe_file = self._carveme_universe_file.text().strip()
         self._config.carveme_gapfill_media = self._carveme_gapfill_media.text().strip()
         self._config.carveme_init_medium = self._carveme_init_medium.text().strip()
-        self._config.carveme_output_dir = (
-            self._carveme_output_dir.text().strip() or "built_models"
-        )
+        self._config.carveme_output_dir = self._carveme_output_dir.text().strip() or "built_models"
         self._config.carveme_timeout = self._carveme_timeout.value()
         self._config.carveme_max_parallel = self._carveme_max_parallel.value()
         self._config.carveme_gzip_output = self._carveme_gzip.isChecked()
+        try:
+            self._config.validate()
+        except ConfigError as exc:
+            for name, value in original.items():
+                setattr(self._config, name, value)
+            QMessageBox.warning(self, "Invalid Settings", str(exc))
+            return
         self.accept()

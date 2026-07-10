@@ -62,8 +62,15 @@ def run_cli_builds() -> None:
 
     print("\n=== CLI single build (eco) ===")
     _run(
-        cli + ["--build", str(DATA / "eco_protein.faa"), "--organism", "eco",
-               "--build-output", str(FIG / "eco_built.xml")],
+        cli
+        + [
+            "--build",
+            str(DATA / "eco_protein.faa"),
+            "--organism",
+            "eco",
+            "--build-output",
+            str(FIG / "eco_built.xml"),
+        ],
         FIG / "cli_single_eco.log",
     )
 
@@ -82,10 +89,21 @@ def run_cli_builds() -> None:
 
     print("\n=== CLI build + refine (eco) ===")
     _run(
-        cli + ["--build", str(DATA / "eco_protein.faa"), "--organism", "eco",
-               "--build-output", str(FIG / "eco_refine.xml"), "--refine", "--skip-evaluation",
-               "--output-model", str(FIG / "eco_refined.xml"),
-               "--output-report", str(FIG / "eco_refine_report.csv")],
+        cli
+        + [
+            "--build",
+            str(DATA / "eco_protein.faa"),
+            "--organism",
+            "eco",
+            "--build-output",
+            str(FIG / "eco_refine.xml"),
+            "--refine",
+            "--skip-evaluation",
+            "--output-model",
+            str(FIG / "eco_refined.xml"),
+            "--output-report",
+            str(FIG / "eco_refine_report.csv"),
+        ],
         FIG / "cli_refine.log",
     )
 
@@ -112,8 +130,11 @@ def gui_screenshots() -> None:
     w._construct_ctrl.open_build_panel()
     bp._fasta_edit.setText(str(DATA / "eco_protein.faa"))
     bp._kegg_edit.setText("eco")
-    for line in ("carve data/eco_protein.faa -o eco.xml --solver gurobi -v",
-                 "diamond blastp vs reference...", "MILP carving (gurobi)..."):
+    for line in (
+        "carve data/eco_protein.faa -o eco.xml --solver gurobi -v",
+        "diamond blastp vs reference...",
+        "MILP carving (gurobi)...",
+    ):
         bp.append_log(line)
     app.processEvents()
     bp.grab().save(str(FIG / "gui_02_build_panel_single.png"))
@@ -135,7 +156,9 @@ def gui_screenshots() -> None:
         md.kegg_organism_code = "eco"
         md.organism = "Escherichia coli"
         built = BuiltModel(
-            model_data=md, sbml_path=_P(built_xml), kegg_code="eco",
+            model_data=md,
+            sbml_path=_P(built_xml),
+            kegg_code="eco",
             carve_result=CarveMeResult(
                 fasta_path=DATA / "eco_protein.faa", output_path=_P(built_xml), returncode=0
             ),

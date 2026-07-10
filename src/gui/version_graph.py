@@ -83,9 +83,7 @@ class VersionGraphWidget(QWidget):
 
         self._legend = QLabel(self._build_legend_html())
         self._legend.setTextFormat(Qt.TextFormat.RichText)
-        self._legend.setStyleSheet(
-            f"color: {THEME.muted_text}; font-size: 11px; padding: 2px 4px;"
-        )
+        self._legend.setStyleSheet(f"color: {THEME.muted_text}; font-size: 11px; padding: 2px 4px;")
         self._legend.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._legend)
 
@@ -239,14 +237,16 @@ class VersionGraphWidget(QWidget):
             else:
                 border_pen = pg.mkPen(color, width=1)
 
-            spots.append({
-                "pos": (x, y),
-                "size": size,
-                "pen": border_pen,
-                "brush": pg.mkBrush(color),
-                "symbol": "o",
-                "data": v.version_id,
-            })
+            spots.append(
+                {
+                    "pos": (x, y),
+                    "size": size,
+                    "pen": border_pen,
+                    "brush": pg.mkBrush(color),
+                    "symbol": "o",
+                    "data": v.version_id,
+                }
+            )
 
         scatter = pg.ScatterPlotItem()
         scatter.addPoints(spots)
@@ -347,12 +347,8 @@ class VersionGraphWidget(QWidget):
         ]
         parts = []
         for label, color in entries:
-            parts.append(
-                f'<span style="color:{color}; font-weight:bold;">●</span> {label}'
-            )
-        parts.append(
-            f'<span style="color:{THEME.graph_edge_restore};">- - -</span> restore source'
-        )
+            parts.append(f'<span style="color:{color}; font-weight:bold;">●</span> {label}')
+        parts.append(f'<span style="color:{THEME.graph_edge_restore};">- - -</span> restore source')
         return "&nbsp;&nbsp;".join(parts)
 
     @staticmethod

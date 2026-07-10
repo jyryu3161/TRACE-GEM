@@ -35,16 +35,12 @@ class DiffDialog(QDialog):
         self._diff = diff
         self._version_a = version_a
         self._version_b = version_b
-        self.setWindowTitle(
-            f"Compare: {version_a.version_id} \u2190 {version_b.version_id}"
-        )
+        self.setWindowTitle(f"Compare: {version_a.version_id} \u2190 {version_b.version_id}")
         self.setMinimumSize(700, 500)
         self._setup_ui()
 
     @classmethod
-    def from_single_version(
-        cls, version: ModelVersion, parent=None
-    ) -> DiffDialog:
+    def from_single_version(cls, version: ModelVersion, parent=None) -> DiffDialog:
         """Show diff details for a single version's recorded changes."""
         diff = version.diff or ModelDiff()
         dialog = cls.__new__(cls)
@@ -62,9 +58,7 @@ class DiffDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # Header with version info
-        header = QLabel(
-            f"<b>{version.version_id}</b> &mdash; {version.change_type}"
-        )
+        header = QLabel(f"<b>{version.version_id}</b> &mdash; {version.change_type}")
         header.setStyleSheet(f"font-size: 14px; color: {THEME.text};")
         layout.addWidget(header)
 
@@ -102,8 +96,7 @@ class DiffDialog(QDialog):
 
         # Header
         header = QLabel(
-            f"<b>{self._version_a.version_id}</b> vs "
-            f"<b>{self._version_b.version_id}</b>"
+            f"<b>{self._version_a.version_id}</b> vs <b>{self._version_b.version_id}</b>"
         )
         header.setStyleSheet(f"font-size: 14px; color: {THEME.text};")
         layout.addWidget(header)
@@ -154,9 +147,7 @@ class DiffDialog(QDialog):
         if modified:
             table = QTableWidget()
             table.setColumnCount(4)
-            table.setHorizontalHeaderLabels(
-                ["Reaction", "Field", "Old Value", "New Value"]
-            )
+            table.setHorizontalHeaderLabels(["Reaction", "Field", "Old Value", "New Value"])
             table.horizontalHeader().setStretchLastSection(True)
             table.horizontalHeader().setSectionResizeMode(
                 0, QHeaderView.ResizeMode.ResizeToContents
@@ -175,6 +166,30 @@ class DiffDialog(QDialog):
                 table.setItem(row, 3, QTableWidgetItem(change.new_value))
 
             table.setMaximumHeight(min(200, 30 * len(modified) + 30))
+            layout.addWidget(table)
+        else:
+            layout.addWidget(QLabel("(none)"))
+
+        # Model, metabolite, and gene metadata changes
+        entity_changes = self._diff.entity_changes
+        layout.addWidget(self._section_label(f"Other Fields Modified ({len(entity_changes)})"))
+        if entity_changes:
+            table = QTableWidget()
+            table.setColumnCount(5)
+            table.setHorizontalHeaderLabels(
+                ["Entity Type", "Entity ID", "Field", "Old Value", "New Value"]
+            )
+            table.horizontalHeader().setStretchLastSection(True)
+            table.verticalHeader().setVisible(False)
+            table.setAlternatingRowColors(True)
+            table.setRowCount(len(entity_changes))
+            for row, entity_change in enumerate(entity_changes):
+                table.setItem(row, 0, QTableWidgetItem(entity_change.entity_type))
+                table.setItem(row, 1, QTableWidgetItem(entity_change.entity_id))
+                table.setItem(row, 2, QTableWidgetItem(entity_change.field))
+                table.setItem(row, 3, QTableWidgetItem(entity_change.old_value))
+                table.setItem(row, 4, QTableWidgetItem(entity_change.new_value))
+            table.setMaximumHeight(min(200, 30 * len(entity_changes) + 30))
             layout.addWidget(table)
         else:
             layout.addWidget(QLabel("(none)"))
@@ -203,9 +218,7 @@ class DiffDialog(QDialog):
     @staticmethod
     def _section_label(text: str) -> QLabel:
         label = QLabel(text)
-        label.setStyleSheet(
-            f"font-weight: bold; color: {THEME.text}; margin-top: 12px;"
-        )
+        label.setStyleSheet(f"font-weight: bold; color: {THEME.text}; margin-top: 12px;")
         return label
 
     @staticmethod

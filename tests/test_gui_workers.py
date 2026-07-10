@@ -7,6 +7,7 @@ import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from cobra import Model as CobraModel
 
 from src.core.models import (
     CandidateReaction,
@@ -54,7 +55,7 @@ class TestEvaluateReactionWorker:
         ev.status = EvaluationStatus.EVALUATED
 
         engine = MagicMock()
-        engine.evaluate_reaction = AsyncMock(return_value=ev)
+        engine.evaluate_candidate = AsyncMock(return_value=ev)
 
         rxn = Reaction(id="ENO", name="enolase", equation="a -> b")
         worker = EvaluateReactionWorker(engine, rxn)
@@ -77,7 +78,7 @@ class TestEvaluateReactionWorker:
         from src.gui.workers import EvaluateReactionWorker
 
         engine = MagicMock()
-        engine.evaluate_reaction = AsyncMock(side_effect=RuntimeError("API down"))
+        engine.evaluate_candidate = AsyncMock(side_effect=RuntimeError("API down"))
 
         rxn = Reaction(id="ENO", name="enolase", equation="a -> b")
         worker = EvaluateReactionWorker(engine, rxn)
@@ -194,7 +195,7 @@ class TestGapFillWorkflowWorker:
 
         worker = GapFillWorkflowWorker(
             config=Config(),
-            model_data=ModelData(id="m", name="m", cobra_model=object()),
+            model_data=ModelData(id="m", name="m", cobra_model=CobraModel("m")),
             universal_path="universal.json",
             task_path=None,
             evidence_engine=evidence,
@@ -208,7 +209,7 @@ class TestGapFillWorkflowWorker:
         assert evaluated_candidates == candidates
         assert sorted(captured["evidence_results"]) == ["R1", "R2"]
 
-    async def test_large_candidate_set_defers_evidence_to_added_reactions(self, monkeypatch):
+    async def test_all_candidates_are_evaluated_before_gapfill(self, monkeypatch):
         from src.gui.workers import GapFillWorkflowWorker
         from src.utils.config import Config
 
@@ -261,15 +262,18 @@ class TestGapFillWorkflowWorker:
         evidence = MagicMock()
         evidence.cache_manager = None
         evidence.mapping_data = None
-        evidence.evaluate_candidates_batch = AsyncMock(
-            return_value={"R2": ReactionEvidence(reaction_id="R2", confidence_score=1.0)}
-        )
+        evaluated = {
+            candidate.reaction.id: ReactionEvidence(
+                reaction_id=candidate.reaction.id, confidence_score=1.0
+            )
+            for candidate in candidates
+        }
+        evidence.evaluate_candidates_batch = AsyncMock(return_value=evaluated)
 
         task = MetabolicTask(task_id="T1", task_type="Metabolite", target_id="atp_c")
-        config = Config(candidate_evidence_eager_limit=1)
         worker = GapFillWorkflowWorker(
-            config=config,
-            model_data=ModelData(id="m", name="m", cobra_model=object()),
+            config=Config(),
+            model_data=ModelData(id="m", name="m", cobra_model=CobraModel("m")),
             universal_path="universal.json",
             task_path="__preloaded__",
             evidence_engine=evidence,
@@ -283,7 +287,7 @@ class TestGapFillWorkflowWorker:
 
         assert result.added_reactions == added
         assert captured["tasks"] == [task]
-        assert captured["evidence_results"] == {}
+        assert captured["evidence_results"] == evaluated
         evidence.evaluate_candidates_batch.assert_awaited_once()
         evaluated_candidates = evidence.evaluate_candidates_batch.await_args.args[0]
-        assert evaluated_candidates == added
+        assert evaluated_candidates == candidates

@@ -57,13 +57,13 @@ class VersionPanelWidget(QWidget):
     - Filter by change type
     """
 
-    restore_requested = Signal(str)       # version_id
+    restore_requested = Signal(str)  # version_id
     compare_requested = Signal(str, str)  # version_a, version_b
-    export_requested = Signal(str)        # version_id
-    detail_requested = Signal(str)        # version_id (double-click)
-    rename_requested = Signal(str, str)   # old_version_id, new_version_id
+    export_requested = Signal(str)  # version_id
+    detail_requested = Signal(str)  # version_id (double-click)
+    rename_requested = Signal(str, str)  # old_version_id, new_version_id
     description_updated = Signal(str, str)  # version_id, new_description
-    delete_requested = Signal(str)        # version_id
+    delete_requested = Signal(str)  # version_id
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -111,14 +111,19 @@ class VersionPanelWidget(QWidget):
         # Tree widget (table mode)
         self._tree = QTreeWidget()
         self._tree.setColumnCount(_NUM_COLS)
-        self._tree.setHeaderLabels([
-            "Version", "Date", "Type", "Changes", "QC", "Description",
-        ])
+        self._tree.setHeaderLabels(
+            [
+                "Version",
+                "Date",
+                "Type",
+                "Changes",
+                "QC",
+                "Description",
+            ]
+        )
         self._tree.setRootIsDecorated(False)
         self._tree.setAlternatingRowColors(True)
-        self._tree.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection
-        )
+        self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._tree.setSortingEnabled(True)
         self._tree.setMouseTracking(True)
 
@@ -239,9 +244,7 @@ class VersionPanelWidget(QWidget):
 
         # Type column
         display_type = self._display_change_type(version)
-        type_label, _type_color = _TYPE_CONFIG.get(
-            display_type, (display_type, THEME.muted_text)
-        )
+        type_label, _type_color = _TYPE_CONFIG.get(display_type, (display_type, THEME.muted_text))
 
         # Changes column
         changes_text = self._format_changes(version.diff)
@@ -254,14 +257,16 @@ class VersionPanelWidget(QWidget):
         if len(desc) > 80:
             desc = desc[:77] + "..."
 
-        item = QTreeWidgetItem([
-            version_text,
-            date_text,
-            type_label,
-            changes_text,
-            qc_text,
-            desc,
-        ])
+        item = QTreeWidgetItem(
+            [
+                version_text,
+                date_text,
+                type_label,
+                changes_text,
+                qc_text,
+                desc,
+            ]
+        )
 
         # Store version_id for retrieval
         item.setData(COL_VERSION, Qt.ItemDataRole.UserRole, version.version_id)
@@ -269,9 +274,7 @@ class VersionPanelWidget(QWidget):
         # --- Styling ---
 
         # Type badge color
-        _label, type_color = _TYPE_CONFIG.get(
-            display_type, (display_type, THEME.muted_text)
-        )
+        _label, type_color = _TYPE_CONFIG.get(display_type, (display_type, THEME.muted_text))
         item.setForeground(COL_TYPE, QBrush(QColor(type_color)))
         type_font = item.font(COL_TYPE)
         type_font.setBold(True)
@@ -326,9 +329,7 @@ class VersionPanelWidget(QWidget):
         return version.change_type
 
     @staticmethod
-    def _style_changes_cell(
-        item: QTreeWidgetItem, diff: ModelDiff | None
-    ) -> None:
+    def _style_changes_cell(item: QTreeWidgetItem, diff: ModelDiff | None) -> None:
         """Color the Changes cell based on dominant change type."""
         if diff is None or diff.is_empty:
             item.setForeground(COL_CHANGES, QBrush(QColor(THEME.muted_text)))
@@ -348,9 +349,7 @@ class VersionPanelWidget(QWidget):
         item.setForeground(COL_CHANGES, QBrush(QColor(color)))
 
     @staticmethod
-    def _style_qc_cell(
-        item: QTreeWidgetItem, task_pass_rate: str | None
-    ) -> None:
+    def _style_qc_cell(item: QTreeWidgetItem, task_pass_rate: str | None) -> None:
         """Color QC cell green/yellow/red based on pass percentage."""
         if not task_pass_rate or "/" not in task_pass_rate:
             return
@@ -405,9 +404,7 @@ class VersionPanelWidget(QWidget):
             try:
                 passed, total = version.task_pass_rate.split("/")
                 pct = int(passed) / max(int(total), 1) * 100
-                lines.append(
-                    f"<b>QC:</b> {version.task_pass_rate} tasks passed ({pct:.1f}%)"
-                )
+                lines.append(f"<b>QC:</b> {version.task_pass_rate} tasks passed ({pct:.1f}%)")
             except ValueError:
                 lines.append(f"<b>QC:</b> {version.task_pass_rate}")
 
@@ -481,18 +478,14 @@ class VersionPanelWidget(QWidget):
     def _on_compare(self) -> None:
         selected = self._get_selected_version_ids()
         if len(selected) != 2:
-            QMessageBox.information(
-                self, "Compare", "Select exactly 2 versions to compare."
-            )
+            QMessageBox.information(self, "Compare", "Select exactly 2 versions to compare.")
             return
         self.compare_requested.emit(selected[0], selected[1])
 
     def _on_restore(self) -> None:
         selected = self._get_selected_version_ids()
         if len(selected) != 1:
-            QMessageBox.information(
-                self, "Restore", "Select exactly 1 version to restore."
-            )
+            QMessageBox.information(self, "Restore", "Select exactly 1 version to restore.")
             return
         reply = QMessageBox.question(
             self,
@@ -507,9 +500,7 @@ class VersionPanelWidget(QWidget):
     def _on_export(self) -> None:
         selected = self._get_selected_version_ids()
         if len(selected) != 1:
-            QMessageBox.information(
-                self, "Export", "Select exactly 1 version to export."
-            )
+            QMessageBox.information(self, "Export", "Select exactly 1 version to export.")
             return
         self.export_requested.emit(selected[0])
 
@@ -545,7 +536,8 @@ class VersionPanelWidget(QWidget):
     def _on_rename(self, version_id: str, item: QTreeWidgetItem) -> None:
         """Prompt user for new version ID and emit rename signal."""
         new_id, ok = QInputDialog.getText(
-            self, "Rename Version ID",
+            self,
+            "Rename Version ID",
             f"New ID for version {version_id}:",
             text=version_id,
         )
@@ -557,7 +549,8 @@ class VersionPanelWidget(QWidget):
         version = next((v for v in self._versions if v.version_id == version_id), None)
         current_desc = version.description if version else item.text(COL_DESC)
         new_desc, ok = QInputDialog.getText(
-            self, "Edit Description",
+            self,
+            "Edit Description",
             f"New description for {version_id}:",
             text=current_desc,
         )
@@ -569,8 +562,7 @@ class VersionPanelWidget(QWidget):
         reply = QMessageBox.question(
             self,
             "Delete Version",
-            f"Delete version {version_id}?\n"
-            "This will permanently remove the saved SBML file.",
+            f"Delete version {version_id}?\nThis will permanently remove the saved SBML file.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:

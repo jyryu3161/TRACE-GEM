@@ -14,13 +14,13 @@ from src.utils.config import Config
 def test_apply_base_medium_merges_and_overrides() -> None:
     tasks = [
         MetabolicTask(
-            task_id="T1", task_type="Reaction", target_id="BIOMASS",
+            task_id="T1",
+            task_type="Reaction",
+            target_id="BIOMASS",
             medium={"EX_glc__D_e": -5.0},
         )
     ]
-    merged = apply_base_medium_to_tasks(
-        tasks, {"EX_o2_e": -20.0, "EX_glc__D_e": -10.0}
-    )
+    merged = apply_base_medium_to_tasks(tasks, {"EX_o2_e": -20.0, "EX_glc__D_e": -10.0})
     # base added, but task-specific value wins for glc
     assert merged[0].medium["EX_o2_e"] == -20.0
     assert merged[0].medium["EX_glc__D_e"] == -5.0
@@ -82,7 +82,8 @@ async def test_refine_model_data_orchestration(monkeypatch) -> None:
 
     logs: list[str] = []
     outcome = await refine_model_data(
-        cfg, md,
+        cfg,
+        md,
         universal_path="u.json",
         tasks_path="t.csv",
         skip_evaluation=True,

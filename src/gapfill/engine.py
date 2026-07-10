@@ -11,6 +11,7 @@ from cobra.exceptions import OptimizationError
 
 from src.cache.cache_manager import CacheManager
 from src.core.cobra_utils import convert_cobra_reaction
+from src.core.gpr_parser import extract_genes, parse_gpr
 from src.core.mapping_data import MappingData
 from src.core.models import (
     CandidateReaction,
@@ -91,7 +92,7 @@ class GapFillEngine:
         progress_callback: Callable[[str, int, int, str], None] | None = None,
         cancel_event: _CancelEvent | None = None,
         start_phase: int = 1,
-        preloaded_before: list[TaskResult] | None = None,
+        preloaded_result: GapFillResult | None = None,
     ) -> GapFillResult:
         """Execute the full gap-filling pipeline.
 
@@ -104,13 +105,16 @@ class GapFillEngine:
             progress_callback: Optional (phase, current, total, detail) callback.
             cancel_event: Optional event to signal cancellation.
             start_phase: Phase to start from (1-5), for resume support.
-            preloaded_before: Preloaded Phase 1 results for resume.
+            preloaded_result: Complete runtime checkpoint for resume.
 
         Returns:
             GapFillResult with before/after task results and added reactions.
         """
-        result = GapFillResult(total_tasks=len(tasks))
+        result = preloaded_result or GapFillResult()
+        result.total_tasks = len(tasks)
+        result.is_partial = False
         result.all_candidates = list(candidates)
+        result.evidence_results = dict(evidence_results)
 
         def _progress(phase: str, current: int, total: int, detail: str) -> None:
             if progress_callback:
@@ -133,8 +137,9 @@ class GapFillEngine:
             if _is_cancelled():
                 result.is_partial = True
                 return result
-        elif preloaded_before:
-            result.task_results_before = preloaded_before
+        elif not result.task_results_before:
+            raise ValueError("Cannot resume after Phase 1 without initial task results")
+        else:
             result.completed_phase = 1
 
         failed_tasks = [r.task for r in result.task_results_before if not r.passed]
@@ -217,6 +222,7 @@ class GapFillEngine:
 
         # Phase 3: Gap-filling
         if start_phase <= 3:
+            pre_phase3_reaction_ids = self._model_reaction_ids(user_model)
             current_results = result.task_results_before
             added_by_id: dict[str, CandidateReaction] = {}
             max_iterations = max(1, self._config.gapfill_iterations)
@@ -372,6 +378,15 @@ class GapFillEngine:
             result.completed_phase = 3
 
             if _is_cancelled():
+                phase3_added_ids = sorted(
+                    self._model_reaction_ids(user_model) - pre_phase3_reaction_ids
+                )
+                if phase3_added_ids:
+                    user_model.remove_reactions(phase3_added_ids, remove_orphans=False)
+                result.added_reactions = []
+                result.task_results_after = []
+                result.iterations = 0
+                result.completed_phase = 2
                 result.is_partial = True
                 return result
 
@@ -382,7 +397,14 @@ class GapFillEngine:
                 await self._gpr_assigner.assign_batch(
                     result.added_reactions,
                     progress_callback=lambda c, t, d: _progress("assigning_gpr", c, t, d),
+                    allowed_gene_ids=self._model_gene_ids(user_model),
+                    evidence_results=evidence_results,
                 )
+                if _is_cancelled():
+                    result.completed_phase = 3
+                    result.is_partial = True
+                    return result
+                self._apply_assigned_gprs(user_model, result.added_reactions)
                 logger.info("Phase 4 complete: GPR assignment done")
 
             result.completed_phase = 4
@@ -429,6 +451,36 @@ class GapFillEngine:
 
         return result
 
+    @staticmethod
+    def _model_gene_ids(model: cobra.Model) -> set[str]:
+        """Return genes already supported by the draft model/proteome."""
+        try:
+            return set(model.genes.list_attr("id"))
+        except Exception:
+            return set()
+
+    @staticmethod
+    def _apply_assigned_gprs(
+        model: cobra.Model,
+        candidates: list[CandidateReaction],
+    ) -> None:
+        """Persist supported GPR assignments in COBRA and domain reactions."""
+        for candidate in candidates:
+            if not candidate.assigned_gpr:
+                continue
+            try:
+                cobra_reaction = model.reactions.get_by_id(candidate.reaction.id)
+            except (AttributeError, KeyError):
+                logger.warning(
+                    "Cannot apply assigned GPR: reaction %s is not in the model",
+                    candidate.reaction.id,
+                )
+                continue
+            cobra_reaction.gene_reaction_rule = candidate.assigned_gpr
+            candidate.reaction.gene_reaction_rule = candidate.assigned_gpr
+            candidate.reaction.genes = extract_genes(candidate.assigned_gpr)
+            candidate.reaction.gpr_tree = parse_gpr(candidate.assigned_gpr)
+
     def _run_tasks(
         self,
         model: cobra.Model,
@@ -437,9 +489,7 @@ class GapFillEngine:
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> list[TaskResult]:
         """Run all metabolic tasks and tag results with phase."""
-        results = self._task_runner.run_all(
-            model, tasks, progress_callback=progress_callback
-        )
+        results = self._task_runner.run_all(model, tasks, progress_callback=progress_callback)
         for r in results:
             r.phase = phase
         return results
@@ -509,11 +559,15 @@ class GapFillEngine:
             for alt_idx, reactions in enumerate(solution_sets, start=1):
                 proposed = list(all_added.values())
                 proposed.extend(r for r in reactions if r.id not in all_added)
-                if proposed and protected_tasks and not self._reactions_preserve_tasks(
-                    model,
-                    universal,
-                    protected_tasks,
-                    proposed,
+                if (
+                    proposed
+                    and protected_tasks
+                    and not self._reactions_preserve_tasks(
+                        model,
+                        universal,
+                        protected_tasks,
+                        proposed,
+                    )
                 ):
                     logger.info(
                         "Gap-fill solution %d for task %s would regress an "
@@ -538,9 +592,7 @@ class GapFillEngine:
                     all_added[rxn.id] = rxn
 
         if progress_callback:
-            progress_callback(
-                len(failed_tasks), len(failed_tasks), "Gap-fill complete"
-            )
+            progress_callback(len(failed_tasks), len(failed_tasks), "Gap-fill complete")
 
         result.iterations += 1
         return list(all_added.values())
@@ -626,9 +678,7 @@ class GapFillEngine:
         try:
             test_model = model.copy()
             self._preseed_missing_task_target(test_model, universal, task)
-            test_model = self._task_runner.prepare_task_model(
-                test_model, task, copy_model=False
-            )
+            test_model = self._task_runner.prepare_task_model(test_model, task, copy_model=False)
             existing = set(test_model.reactions.list_attr("id"))
             to_add = [r.copy() for r in reactions if r.id not in existing]
             if to_add:
@@ -636,8 +686,7 @@ class GapFillEngine:
             solution = test_model.optimize()
             actual = (
                 solution.objective_value
-                if solution.status != "infeasible"
-                and solution.objective_value is not None
+                if solution.status != "infeasible" and solution.objective_value is not None
                 else 0.0
             )
         except Exception as e:
@@ -757,9 +806,7 @@ class GapFillEngine:
         test_model = model.copy()
         preseeded = self._preseed_missing_task_target(test_model, universal, task)
         try:
-            test_model = self._task_runner.prepare_task_model(
-                test_model, task, copy_model=False
-            )
+            test_model = self._task_runner.prepare_task_model(test_model, task, copy_model=False)
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 
@@ -810,9 +857,7 @@ class GapFillEngine:
                 task.target_id, universal_rxn_map
             )
             if not universal_rxn_id:
-                raise RuntimeError(
-                    f"Reaction '{task.target_id}' not found in model or universal"
-                )
+                raise RuntimeError(f"Reaction '{task.target_id}' not found in model or universal")
 
             rxn = universal.reactions.get_by_id(universal_rxn_id).copy()
             model.add_reactions([rxn])
@@ -828,9 +873,7 @@ class GapFillEngine:
                 task.target_id, universal_met_map
             )
             if not universal_met_id:
-                raise RuntimeError(
-                    f"Metabolite '{task.target_id}' not found in model or universal"
-                )
+                raise RuntimeError(f"Metabolite '{task.target_id}' not found in model or universal")
 
             model.add_metabolites([universal.metabolites.get_by_id(universal_met_id).copy()])
             return []
@@ -866,27 +909,42 @@ class GapFillEngine:
         if not allowed_metabolites:
             return universal
 
-        # Prune only for MILP size: keep reactions whose metabolites are already
-        # in the draft model, plus explicit task targets. KEGG evidence is NOT a
-        # filter here — it only weights candidate penalties, so the gap-filler
-        # prefers evidence-backed reactions but can still add unevidenced ones to
-        # satisfy a task.
-        keep_reaction_ids: set[str] = set()
+        # Prune only for MILP size. Directly model-compatible reactions are kept,
+        # as are directionally reachable universal paths leading to task targets.
+        # The latter is essential: requiring every reaction metabolite to exist in
+        # the draft deletes valid A -> B -> C repairs whenever B is a new
+        # intermediate. KEGG evidence is never used as a hard filter.
+        direct_compatible: set[str] = set()
+        target_reaction_ids: set[str] = set()
+        target_metabolite_ids: set[str] = set()
         universal_rxn_map, universal_met_map, _ = self._task_runner._build_id_maps(universal)
         for task in tasks:
             if task.task_type == "Reaction":
                 rxn_id = self._task_runner._resolve_reaction(task.target_id, universal_rxn_map)
                 if rxn_id:
-                    keep_reaction_ids.add(rxn_id)
+                    target_reaction_ids.add(rxn_id)
+                    target_rxn = universal.reactions.get_by_id(rxn_id)
+                    target_metabolite_ids.update(met.id for met in target_rxn.metabolites)
             elif task.task_type == "Metabolite":
                 met_id = self._task_runner._resolve_metabolite(task.target_id, universal_met_map)
                 if met_id:
-                    allowed_metabolites.add(met_id)
+                    target_metabolite_ids.add(met_id)
 
         for rxn in universal.reactions:
             metabolite_ids = {met.id for met in rxn.metabolites}
             if metabolite_ids and metabolite_ids <= allowed_metabolites:
-                keep_reaction_ids.add(rxn.id)
+                direct_compatible.add(rxn.id)
+
+        forward_reactions = self._forward_reachable_reactions(
+            universal,
+            allowed_metabolites | target_metabolite_ids,
+        )
+        backward_reactions = self._backward_relevant_reactions(
+            universal,
+            target_metabolite_ids,
+        )
+        path_reactions = forward_reactions & backward_reactions
+        keep_reaction_ids = direct_compatible | path_reactions | target_reaction_ids
 
         if not keep_reaction_ids or len(keep_reaction_ids) >= len(universal.reactions):
             return universal
@@ -903,6 +961,79 @@ class GapFillEngine:
             len(pruned.reactions),
         )
         return pruned
+
+    @staticmethod
+    def _reaction_directions(
+        reaction: cobra.Reaction,
+    ) -> list[tuple[frozenset[str], frozenset[str]]]:
+        """Return feasible (required, produced) metabolite sets for a reaction."""
+        reactants = frozenset(
+            met.id for met, coefficient in reaction.metabolites.items() if coefficient < 0
+        )
+        products = frozenset(
+            met.id for met, coefficient in reaction.metabolites.items() if coefficient > 0
+        )
+        directions: list[tuple[frozenset[str], frozenset[str]]] = []
+        if reaction.upper_bound > 0 and reactants and products:
+            directions.append((reactants, products))
+        if reaction.lower_bound < 0 and reactants and products:
+            directions.append((products, reactants))
+        return directions
+
+    def _forward_reachable_reactions(
+        self,
+        universal: cobra.Model,
+        seed_metabolites: set[str],
+    ) -> set[str]:
+        """Find reactions reachable while allowing newly produced intermediates."""
+        available = set(seed_metabolites)
+        reachable: set[str] = set()
+        directions = {
+            reaction.id: self._reaction_directions(reaction) for reaction in universal.reactions
+        }
+
+        changed = True
+        while changed:
+            changed = False
+            for reaction_id, reaction_directions in directions.items():
+                for required, produced in reaction_directions:
+                    if required <= available:
+                        if reaction_id not in reachable or not produced <= available:
+                            reachable.add(reaction_id)
+                            before = len(available)
+                            available.update(produced)
+                            changed = changed or len(available) > before
+                        break
+        return reachable
+
+    def _backward_relevant_reactions(
+        self,
+        universal: cobra.Model,
+        target_metabolites: set[str],
+    ) -> set[str]:
+        """Find reactions that can contribute precursors to task targets."""
+        if not target_metabolites:
+            return set()
+
+        required_metabolites = set(target_metabolites)
+        relevant: set[str] = set()
+        directions = {
+            reaction.id: self._reaction_directions(reaction) for reaction in universal.reactions
+        }
+
+        changed = True
+        while changed:
+            changed = False
+            for reaction_id, reaction_directions in directions.items():
+                for required, produced in reaction_directions:
+                    if produced & required_metabolites:
+                        if reaction_id not in relevant or not required <= required_metabolites:
+                            relevant.add(reaction_id)
+                            before = len(required_metabolites)
+                            required_metabolites.update(required)
+                            changed = changed or len(required_metabolites) > before
+                        break
+        return relevant
 
     def _exclude_exchange_reactions_from_universal(
         self,
@@ -956,9 +1087,7 @@ class GapFillEngine:
         3. Mark them as selected
         """
         # Build lookup for candidates
-        candidate_map: dict[str, CandidateReaction] = {
-            c.reaction.id: c for c in candidates
-        }
+        candidate_map: dict[str, CandidateReaction] = {c.reaction.id: c for c in candidates}
 
         added_candidates: list[CandidateReaction] = []
 

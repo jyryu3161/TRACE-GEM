@@ -24,9 +24,7 @@ DATA = Path("data")
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(shutil.which("carve") is None, reason="carve not installed"),
-    pytest.mark.skipif(
-        not (DATA / "eco_protein.faa").exists(), reason="test proteomes missing"
-    ),
+    pytest.mark.skipif(not (DATA / "eco_protein.faa").exists(), reason="test proteomes missing"),
 ]
 
 

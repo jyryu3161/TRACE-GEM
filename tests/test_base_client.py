@@ -232,8 +232,7 @@ class TestBaseClientRetry:
         mock_session.get = MagicMock(side_effect=make_ctx)
         client._session = mock_session
 
-        with patch("asyncio.sleep", new_callable=AsyncMock), \
-                pytest.raises(APIUnavailableError):
+        with patch("asyncio.sleep", new_callable=AsyncMock), pytest.raises(APIUnavailableError):
             await client.get("/test")
 
         # Exhausted retries surface as unavailable (unknown), not absent.

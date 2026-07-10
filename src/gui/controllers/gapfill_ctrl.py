@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
-from src.core.models import GapFillResult, WorkflowCheckpoint
+from src.core.models import GapFillResult, MetabolicTask, TaskResult, WorkflowCheckpoint
 from src.gui.progress_dialog import ProgressDialog
 from src.gui.workers import GapFillWorkflowWorker, TaskRunWorker
 
@@ -52,7 +52,9 @@ class GapFillController:
         from src.gui.workflow_wizard import WorkflowWizard
 
         wizard = WorkflowWizard(
-            self._w._config, self._w._model, self._w,
+            self._w._config,
+            self._w._model,
+            self._w,
             universal_path=self._w._loaded_universal_path,
             loaded_tasks=self._w._loaded_tasks,
         )
@@ -65,21 +67,21 @@ class GapFillController:
     def resume_workflow(self) -> None:
         """Resume a cancelled workflow from checkpoint."""
         cp = self._w._workflow_checkpoint
-        if not cp or not self._w._model:
+        model = self._w._model
+        if not cp or model is None:
             return
 
         dialog = ProgressDialog("Gap-Fill Workflow (Resume)", self._w)
 
         worker = GapFillWorkflowWorker(
             config=self._w._config,
-            model_data=self._w._model,
+            model_data=model,
             universal_path=cp.universal_path,
             task_path=cp.task_path,
             evidence_engine=self._w._engine,
             options=cp.options,
             start_phase=cp.completed_phase + 1,
-            preloaded_before=cp.result.task_results_before if cp.result else None,
-            preloaded_candidates=cp.result.all_candidates if cp.result else None,
+            preloaded_result=cp.result,
         )
         self._w._gapfill_worker = worker
         self._w._active_workers.append(worker)
@@ -95,7 +97,11 @@ class GapFillController:
         )
         worker.signals.error.connect(lambda e: self.on_gapfill_error(e, dialog))
         worker.signals.finished.connect(
-            lambda: self._w._active_workers.remove(worker) if worker in self._w._active_workers else None
+            lambda: (
+                self._w._active_workers.remove(worker)
+                if worker in self._w._active_workers
+                else None
+            )
         )
         dialog.cancelled.connect(worker.cancel)
 
@@ -132,8 +138,7 @@ class GapFillController:
             QMessageBox.information(
                 self._w,
                 "Tasks Loaded",
-                f"Loaded {len(tasks)} tasks.\n"
-                "Load an SBML model to run analysis.",
+                f"Loaded {len(tasks)} tasks.\nLoad an SBML model to run analysis.",
             )
             return
 
@@ -149,11 +154,14 @@ class GapFillController:
 
         self.run_task_analysis(tasks)
 
-    def run_task_analysis(self, tasks: list) -> None:
+    def run_task_analysis(self, tasks: list[MetabolicTask]) -> None:
         """Run metabolic task analysis in a background thread."""
         dialog = ProgressDialog("Metabolic Task Analysis", self._w)
 
-        worker = TaskRunWorker(self._w._model.cobra_model, tasks)
+        model = self._w._model
+        if model is None or model.cobra_model is None:
+            return
+        worker = TaskRunWorker(model.cobra_model, tasks)
 
         def on_progress(current: int, total: int, detail: str) -> None:
             percent = int(current / total * 100) if total > 0 else 0
@@ -162,10 +170,16 @@ class GapFillController:
             dialog._detail_label.setText(detail)
 
         def on_result(results: object) -> None:
-            self._w._task_panel.set_results(results)
+            if not isinstance(results, list) or not all(
+                isinstance(result, TaskResult) for result in results
+            ):
+                on_error("Task worker returned an invalid result")
+                return
+            typed_results: list[TaskResult] = results
+            self._w._task_panel.set_results(typed_results)
             self._w._right_tabs.setCurrentWidget(self._w._task_panel)
-            passed = sum(1 for r in results if r.passed)
-            self._w._statusbar.showMessage(f"{passed}/{len(results)} tasks passed")
+            passed = sum(1 for result in typed_results if result.passed)
+            self._w._statusbar.showMessage(f"{passed}/{len(typed_results)} tasks passed")
             dialog.set_complete()
 
         def on_error(msg: str) -> None:
@@ -193,11 +207,14 @@ class GapFillController:
 
     def start_gapfill_worker(self, selections: dict) -> None:
         """Spawn the GapFillWorkflowWorker."""
+        model = self._w._model
+        if model is None:
+            return
         dialog = ProgressDialog("Gap-Fill Workflow", self._w)
 
         worker = GapFillWorkflowWorker(
             config=self._w._config,
-            model_data=self._w._model,
+            model_data=model,
             universal_path=selections.get("universal_model_path", ""),
             task_path=selections.get("task_file_path"),
             evidence_engine=self._w._engine,
@@ -217,7 +234,11 @@ class GapFillController:
         )
         worker.signals.error.connect(lambda e: self.on_gapfill_error(e, dialog))
         worker.signals.finished.connect(
-            lambda: self._w._active_workers.remove(worker) if worker in self._w._active_workers else None
+            lambda: (
+                self._w._active_workers.remove(worker)
+                if worker in self._w._active_workers
+                else None
+            )
         )
         dialog.cancelled.connect(worker.cancel)
 
@@ -230,6 +251,14 @@ class GapFillController:
 
         if not isinstance(result, GapFillResult):
             return
+
+        if self._w._model and result.working_model is not None:
+            from src.core.cobra_utils import sync_model_data_from_cobra
+
+            sync_model_data_from_cobra(self._w._model, result.working_model)
+            self._w._reaction_table.set_model_data(self._w._model)
+            self._w._overview.set_model(self._w._model)
+            self._w._mark_dirty()
 
         if result.task_results_before:
             after = result.task_results_after if result.task_results_after else None
@@ -307,6 +336,10 @@ class GapFillController:
     def on_apply_gapfill(self) -> None:
         """Apply gap-fill results to the current model display."""
         if self._w._model:
+            from src.core.cobra_utils import sync_model_data_from_cobra
+
+            if self._w._model.cobra_model is not None:
+                sync_model_data_from_cobra(self._w._model, self._w._model.cobra_model)
             self._w._reaction_table.set_model_data(self._w._model)
             self._w._overview.set_model(self._w._model)
             self._w._mark_dirty()
@@ -364,11 +397,7 @@ class GapFillController:
                 self._w._reaction_detail.set_reaction(candidate.reaction)
 
                 # Show evaluation results if available
-                ev = (
-                    self._w._engine.get_result(reaction_id)
-                    if self._w._engine
-                    else None
-                )
+                ev = self._w._engine.get_result(reaction_id) if self._w._engine else None
                 if ev:
                     self._w._reaction_detail.update_evidence(ev)
                     self._w._evidence_panel.set_evidence(ev)

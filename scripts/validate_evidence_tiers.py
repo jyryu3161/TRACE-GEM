@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Candidate-selection precision of the KEGG-only evidence tier system.
+"""Independent benchmark and synthetic diagnostics for KEGG evidence tiers.
 
 This validates the tier's REAL job — judging universal gap-fill CANDIDATES —
 NOT model quality (which is task-based). The tier weights which universal
@@ -7,13 +7,20 @@ reactions are worth adding to a strain, so the property that matters is
 *candidate-selection precision*: meaningful candidates should score High/Moderate
 and spurious ones (decoys) must almost never score High.
 
-Design (gold standard = a curated E. coli GEM, default iML1515):
+An independent performance claim requires ``--benchmark`` with externally
+curated ``reaction_id,label,split`` rows. Without it, the script only runs
+synthetic identity-corruption diagnostics and explicitly emits
+``diagnostic_only``; universal/gold-model ID overlap is not a gold-standard
+estimate of biological precision.
+
+Synthetic diagnostic design (default iML1515):
 
   * Positive set — universal reactions (``data/bigg_universal_model_fixed.json``
     via ``UniversalLoader().load``) whose reaction id is ALSO in the gold model.
-    These are known-correct E. coli reactions. Each is evaluated through the
-    real candidate path: ``convert_cobra_reaction`` + ``CandidateReaction`` +
-    ``EvidenceEngine.evaluate_candidate``. Expect mostly High/Moderate.
+    These are database-membership controls, not independently labeled positives.
+    Each is evaluated through the real candidate path:
+    ``convert_cobra_reaction`` + ``CandidateReaction`` +
+    ``EvidenceEngine.evaluate_candidate``.
 
   * Negative controls (decoys) — built from the fully-specified positives by
     corrupting the resolved KEGG inputs:
@@ -32,15 +39,19 @@ curator-correlated, so that signal was null.
 Usage:
     python scripts/validate_evidence_tiers.py
         [--model data/iML1515.xml] [--universal data/bigg_universal_model_fixed.json]
-        [--organism eco] [--limit 200] [--seed 0] [--concurrency 8] [--json out.json]
+        [--benchmark benchmark.csv] [--organism eco] [--limit 200]
+        [--seed 0] [--concurrency 8] [--json out.json]
 
-KEGG is fetched live but cached; warm the cache once, then reruns are offline.
+KEGG is fetched live or from a TTL cache. Preserve the generated JSON and the
+application evidence snapshot for exact run provenance.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
+import csv
 import json
 import random
 import sys
@@ -60,18 +71,42 @@ from src.core.sbml_parser import SBMLParser  # noqa: E402
 from src.core.universal_loader import UniversalLoader  # noqa: E402
 from src.evidence.engine import EvidenceEngine  # noqa: E402
 from src.utils.config import Config  # noqa: E402
+from src.utils.provenance import file_record  # noqa: E402
+from src.validation.metrics import binary_metrics, exact_mcnemar  # noqa: E402
 
 
 class Inputs:
     """Resolved KEGG inputs for one candidate reaction (or a decoy of one)."""
 
-    __slots__ = ("rxn_id", "kegg_ids", "subs", "prods", "ec")
+    __slots__ = (
+        "rxn_id",
+        "kegg_ids",
+        "subs",
+        "prods",
+        "sub_stoich",
+        "prod_stoich",
+        "stoich_complete",
+        "ec",
+    )
 
-    def __init__(self, rxn_id, kegg_ids, subs, prods, ec):
+    def __init__(
+        self,
+        rxn_id,
+        kegg_ids,
+        subs,
+        prods,
+        sub_stoich,
+        prod_stoich,
+        stoich_complete,
+        ec,
+    ):
         self.rxn_id = rxn_id
         self.kegg_ids = kegg_ids
         self.subs = subs
         self.prods = prods
+        self.sub_stoich = sub_stoich
+        self.prod_stoich = prod_stoich
+        self.stoich_complete = stoich_complete
         self.ec = ec
 
 
@@ -82,12 +117,16 @@ async def resolve_inputs(engine: EvidenceEngine, reaction) -> Inputs:
     uses internally, so the inputs we manipulate to build decoys match the
     inputs the candidate was actually scored on.
     """
+    assert engine._mapper is not None
     ext = await engine._mapper.resolve(reaction, universal=True)
     return Inputs(
         reaction.id,
         list(ext.kegg_reaction_ids),
         list(ext.kegg_substrate_ids),
         list(ext.kegg_product_ids),
+        dict(ext.kegg_substrate_stoichiometry),
+        dict(ext.kegg_product_stoichiometry),
+        ext.kegg_stoichiometry_complete,
         list(ext.ec_numbers),
     )
 
@@ -105,6 +144,9 @@ async def classify(kegg, scorer, inp: Inputs):
         ec_numbers=inp.ec,
         model_substrates_kegg=inp.subs,
         model_products_kegg=inp.prods,
+        model_substrate_stoichiometry=inp.sub_stoich,
+        model_product_stoichiometry=inp.prod_stoich,
+        model_stoichiometry_complete=inp.stoich_complete,
     )
     ev = ReactionEvidence(reaction_id=inp.rxn_id)
     ev.items = items
@@ -113,6 +155,7 @@ async def classify(kegg, scorer, inp: Inputs):
     ev.kegg_anchored = bool(raw.get("kegg_anchored", False))
     ev.reconciliation_state = raw.get("reconciliation_state", "unverifiable")
     ev.ec_concordance_state = raw.get("ec_concordance_state", "unknown")
+    ev.stoichiometry_state = raw.get("stoichiometry_state", "unverifiable")
     scorer.score(ev)
     return ev.evidence_tier, ev.reconciliation_state, ev.ec_concordance_state, ev.kegg_anchored
 
@@ -147,9 +190,7 @@ def build_positive_candidates(
         if loader.is_exchange_or_utility_reaction(rxn.id):
             continue
         normalized = rxn.id.lower()
-        normalized_no_prefix = (
-            rxn.id[2:].lower() if rxn.id.startswith("R_") else rxn.id.lower()
-        )
+        normalized_no_prefix = rxn.id[2:].lower() if rxn.id.startswith("R_") else rxn.id.lower()
         if normalized in model_ids or normalized_no_prefix in model_ids:
             positives.append(
                 CandidateReaction(
@@ -173,14 +214,132 @@ def _pick_donor(pool: list[Inputs], i: Inputs, rng: random.Random) -> Inputs:
         d = pool[rng.randrange(len(pool))]
         if d.rxn_id == i.rxn_id:
             continue
-        if set(d.kegg_ids).isdisjoint(i_keggs) and (
-            set(d.subs) | set(d.prods)
-        ).isdisjoint(i_mets):
+        if set(d.kegg_ids).isdisjoint(i_keggs) and (set(d.subs) | set(d.prods)).isdisjoint(i_mets):
             return d
     d = pool[rng.randrange(len(pool))]
     while d.rxn_id == i.rxn_id and len(pool) > 1:
         d = pool[rng.randrange(len(pool))]
     return d
+
+
+def _load_benchmark(path: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    with open(path, newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(line for line in handle if not line.lstrip().startswith("#"))
+        required = {"reaction_id", "label", "split"}
+        if not reader.fieldnames or not required <= set(reader.fieldnames):
+            raise ValueError(f"benchmark requires columns: {sorted(required)}")
+        seen: set[str] = set()
+        for line_number, row in enumerate(reader, start=2):
+            reaction_id = (row.get("reaction_id") or "").strip()
+            label = (row.get("label") or "").strip().lower()
+            split = (row.get("split") or "").strip()
+            if not reaction_id or reaction_id in seen:
+                raise ValueError(f"benchmark row {line_number}: missing/duplicate reaction_id")
+            if label not in {"positive", "negative"}:
+                raise ValueError(f"benchmark row {line_number}: label must be positive/negative")
+            if not split:
+                raise ValueError(f"benchmark row {line_number}: split is required")
+            seen.add(reaction_id)
+            rows.append({"reaction_id": reaction_id, "label": label, "split": split})
+    if not rows:
+        raise ValueError("benchmark contains no labeled rows")
+    return rows
+
+
+def _tier_without(scorer, evidence: ReactionEvidence, component: str) -> EvidenceTier:
+    ablated = copy.deepcopy(evidence)
+    if component == "ec":
+        ablated.ec_concordance_state = "unknown"
+    elif component == "metabolites":
+        ablated.reconciliation_state = "unverifiable"
+        ablated.stoichiometry_state = "unverifiable"
+    else:
+        raise ValueError(component)
+    scorer.score(ablated)
+    return ablated.evidence_tier
+
+
+async def evaluate_independent_benchmark(
+    engine: EvidenceEngine, universal, rows: list[dict[str, str]], concurrency: int
+) -> dict:
+    by_id = {
+        reaction.id: CandidateReaction(
+            reaction=convert_cobra_reaction(reaction),
+            source_model=universal.id or "bigg_universal",
+        )
+        for reaction in universal.reactions
+    }
+    missing = [row["reaction_id"] for row in rows if row["reaction_id"] not in by_id]
+    if missing:
+        raise ValueError(
+            f"benchmark reactions missing from universal ({len(missing)}): "
+            + ", ".join(missing[:10])
+        )
+    evidence = await gather_limited(
+        [engine.evaluate_candidate(by_id[row["reaction_id"]]) for row in rows], concurrency
+    )
+    failures = [item.reaction_id for item in evidence if item.status.value == "error"]
+    if failures:
+        raise RuntimeError(
+            f"independent benchmark has {len(failures)} evidence API failures: "
+            + ", ".join(failures[:10])
+        )
+
+    labels = [row["label"] == "positive" for row in rows]
+    strict = [item.evidence_tier is EvidenceTier.HIGH for item in evidence]
+    permissive = [
+        item.evidence_tier in {EvidenceTier.HIGH, EvidenceTier.MODERATE} for item in evidence
+    ]
+    annotation_baseline = [bool(item.kegg_reaction_ids) for item in evidence]
+    always_positive = [True] * len(rows)
+    no_ec = [
+        _tier_without(engine._scorer, item, "ec") in {EvidenceTier.HIGH, EvidenceTier.MODERATE}
+        for item in evidence
+    ]
+    no_metabolites = [
+        _tier_without(engine._scorer, item, "metabolites")
+        in {EvidenceTier.HIGH, EvidenceTier.MODERATE}
+        for item in evidence
+    ]
+
+    return {
+        "status": "independent_benchmark",
+        "n": len(rows),
+        "labels": dict(Counter(row["label"] for row in rows)),
+        "splits": dict(Counter(row["split"] for row in rows)),
+        "strict_high": binary_metrics(labels, strict),
+        "permissive_high_or_moderate": binary_metrics(labels, permissive),
+        "baselines": {
+            "annotation_presence": binary_metrics(labels, annotation_baseline),
+            "always_positive": binary_metrics(labels, always_positive),
+        },
+        "ablations": {
+            "without_ec": binary_metrics(labels, no_ec),
+            "without_metabolite_reconciliation": binary_metrics(labels, no_metabolites),
+        },
+        "paired_comparisons": {
+            "full_vs_annotation_presence": exact_mcnemar(labels, permissive, annotation_baseline),
+            "full_vs_without_ec": exact_mcnemar(labels, permissive, no_ec),
+            "full_vs_without_metabolites": exact_mcnemar(labels, permissive, no_metabolites),
+        },
+        "tier_distribution": dict(Counter(item.evidence_tier.value for item in evidence)),
+        "records": [
+            {
+                "reaction_id": row["reaction_id"],
+                "label": row["label"],
+                "split": row["split"],
+                "tier": item.evidence_tier.value,
+                "kegg_ids": item.kegg_reaction_ids,
+                "verified_kegg_ids": item.verified_kegg_reaction_ids,
+                "reconciliation_state": item.reconciliation_state,
+                "stoichiometry_state": item.stoichiometry_state,
+                "ec_concordance_state": item.ec_concordance_state,
+                "error": item.error_message,
+            }
+            for row, item in zip(rows, evidence, strict=True)
+        ],
+    }
 
 
 async def run(args) -> dict:
@@ -205,9 +364,16 @@ async def run(args) -> dict:
 
     try:
         report: dict = {
+            "validation_status": ("independent_benchmark" if args.benchmark else "diagnostic_only"),
             "gold_model": str(args.model),
             "universal": str(args.universal),
+            "inputs": {
+                "gold_model": file_record(args.model),
+                "universal": file_record(args.universal),
+            },
             "organism": args.organism,
+            "random_seed": args.seed,
+            "sample_limit": args.limit,
             "counts": {
                 "universal_reactions": len(universal.reactions),
                 "gold_reactions": len(gold.reactions),
@@ -215,6 +381,12 @@ async def run(args) -> dict:
                 "evaluated_positives": len(positives),
             },
         }
+        if args.benchmark:
+            benchmark_rows = _load_benchmark(args.benchmark)
+            report["benchmark_file"] = file_record(args.benchmark)
+            report["independent_benchmark"] = await evaluate_independent_benchmark(
+                engine, universal, benchmark_rows, args.concurrency
+            )
         if not positives:
             report["positives"] = {"note": "no universal∩gold candidates found"}
             report["decoys"] = {"n": 0, "note": "no positives"}
@@ -231,9 +403,7 @@ async def run(args) -> dict:
             inp = await resolve_inputs(engine, c.reaction)  # offline, for decoys
             return ev, inp
 
-        pos = await gather_limited(
-            [_eval_positive(c) for c in positives], args.concurrency
-        )
+        pos = await gather_limited([_eval_positive(c) for c in positives], args.concurrency)
         pos_evidence = [ev for ev, _ in pos]
         pos_inputs = [inp for _, inp in pos]
 
@@ -287,12 +457,30 @@ async def run(args) -> dict:
             # wrong-identity: BOTH identity channels (KEGG id + EC) point to a
             # different reaction, so this reaction's metabolites must mismatch.
             decoy_inputs.append(
-                Inputs(f"{i.rxn_id}~wrongid", donor.kegg_ids, i.subs, i.prods, donor.ec)
+                Inputs(
+                    f"{i.rxn_id}~wrongid",
+                    donor.kegg_ids,
+                    i.subs,
+                    i.prods,
+                    i.sub_stoich,
+                    i.prod_stoich,
+                    i.stoich_complete,
+                    donor.ec,
+                )
             )
             kinds.append("wrong_identity")
             # metabolite-shuffle: real KEGG id + EC, another reaction's metabolites.
             decoy_inputs.append(
-                Inputs(f"{i.rxn_id}~shufmet", i.kegg_ids, donor.subs, donor.prods, i.ec)
+                Inputs(
+                    f"{i.rxn_id}~shufmet",
+                    i.kegg_ids,
+                    donor.subs,
+                    donor.prods,
+                    donor.sub_stoich,
+                    donor.prod_stoich,
+                    donor.stoich_complete,
+                    i.ec,
+                )
             )
             kinds.append("metabolite_shuffle")
 
@@ -304,13 +492,11 @@ async def run(args) -> dict:
         nd = len(decoy_res)
         d_hi = sum(1 for (t, *_r) in decoy_res if t == EvidenceTier.HIGH)
         d_mod_up = sum(
-            1
-            for (t, *_r) in decoy_res
-            if t in (EvidenceTier.HIGH, EvidenceTier.MODERATE)
+            1 for (t, *_r) in decoy_res if t in (EvidenceTier.HIGH, EvidenceTier.MODERATE)
         )
-        per_kind = Counter()
-        per_kind_hi = Counter()
-        per_kind_modup = Counter()
+        per_kind: Counter[str] = Counter()
+        per_kind_hi: Counter[str] = Counter()
+        per_kind_modup: Counter[str] = Counter()
         for kind, (t, *_r) in zip(kinds, decoy_res, strict=True):
             per_kind[kind] += 1
             if t == EvidenceTier.HIGH:
@@ -322,12 +508,8 @@ async def run(args) -> dict:
             "tier_distribution": dict(Counter(t.value for (t, *_r) in decoy_res)),
             "high_false_positive_rate": round(d_hi / nd, 4),
             "ge_moderate_rate": round(d_mod_up / nd, 4),
-            "high_fpr_by_kind": {
-                k: round(per_kind_hi[k] / per_kind[k], 4) for k in per_kind
-            },
-            "ge_moderate_by_kind": {
-                k: round(per_kind_modup[k] / per_kind[k], 4) for k in per_kind
-            },
+            "high_fpr_by_kind": {k: round(per_kind_hi[k] / per_kind[k], 4) for k in per_kind},
+            "ge_moderate_by_kind": {k: round(per_kind_modup[k] / per_kind[k], 4) for k in per_kind},
         }
         return report
     finally:
@@ -338,6 +520,7 @@ def print_report(rep: dict) -> None:
     c = rep["counts"]
     print("\n" + "=" * 72)
     print("CANDIDATE-SELECTION PRECISION — KEGG-only evidence tier")
+    print(f"  status:    {rep['validation_status']}")
     print(f"  gold:      {rep['gold_model']}")
     print(f"  universal: {rep['universal']}  (organism={rep['organism']})")
     print("=" * 72)
@@ -360,9 +543,9 @@ def print_report(rep: dict) -> None:
             v = pos["tier_distribution"].get(tier, 0)
             print(f"  {tier:16s} {v:5d}  ({_pct(v, n)})")
         anchored = pos["assessable_count"]
-        hm_count = pos["tier_distribution"].get("high", 0) + pos[
-            "tier_distribution"
-        ].get("moderate", 0)
+        hm_count = pos["tier_distribution"].get("high", 0) + pos["tier_distribution"].get(
+            "moderate", 0
+        )
         print(f"  {'-' * 34}")
         print(f"  High+Moderate rate (all):       {_pct(hm_count, n)}")
         print(f"  KEGG-anchored (assessable):     {_pct(anchored, n)}")
@@ -388,11 +571,29 @@ def print_report(rep: dict) -> None:
     # should skew High/Moderate; decoys must almost never score High.
     if pos.get("tier_distribution") and d.get("n"):
         hm = pos.get("high_or_moderate_rate_assessable") or 0.0
-        sep_ok = hm >= 0.6 and d["high_false_positive_rate"] <= 0.02
         print(
-            "\nSEPARATION:", "PASS" if sep_ok else "REVIEW",
+            "\nSYNTHETIC DIAGNOSTIC (not an independent performance verdict):",
             f"(positives H+M|anchored={hm:.2f}, "
             f"decoy High-FPR={d['high_false_positive_rate']:.3f})",
+        )
+    independent = rep.get("independent_benchmark")
+    if independent:
+        strict = independent["strict_high"]
+        permissive = independent["permissive_high_or_moderate"]
+        print("\nINDEPENDENT BENCHMARK:")
+        print(
+            f"  n={independent['n']} labels={independent['labels']} splits={independent['splits']}"
+        )
+        print(
+            "  High: sensitivity="
+            f"{strict['sensitivity']} specificity={strict['specificity']} "
+            f"precision={strict['precision']} MCC={strict['matthews_correlation_coefficient']}"
+        )
+        print(
+            "  High+Moderate: sensitivity="
+            f"{permissive['sensitivity']} specificity={permissive['specificity']} "
+            f"precision={permissive['precision']} "
+            f"MCC={permissive['matthews_correlation_coefficient']}"
         )
     print("=" * 72)
 
@@ -407,12 +608,22 @@ async def main() -> None:
     )
     ap.add_argument("--organism", default="eco")
     ap.add_argument(
-        "--limit", type=int, default=200, help="Sample size of positives (0 = all)"
+        "--benchmark",
+        default="",
+        help="Independent curated CSV (reaction_id,label,split)",
     )
+    ap.add_argument(
+        "--require-independent",
+        action="store_true",
+        help="exit with an error unless --benchmark is provided",
+    )
+    ap.add_argument("--limit", type=int, default=200, help="Sample size of positives (0 = all)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--json", default="")
     args = ap.parse_args()
+    if args.require_independent and not args.benchmark:
+        ap.error("--require-independent requires --benchmark")
 
     report = await run(args)
     print_report(report)

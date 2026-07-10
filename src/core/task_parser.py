@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import csv
+import io
 import logging
+import math
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -26,16 +28,65 @@ class TaskParser:
         """
         filepath = Path(filepath)
         tasks: list[MetabolicTask] = []
+        raw_lines = filepath.read_text(encoding="utf-8-sig").splitlines()
+        background_medium: dict[str, float] = {}
+        csv_lines: list[str] = []
+        for line in raw_lines:
+            if line.startswith("# Background medium:"):
+                if background_medium:
+                    raise ValueError("Task CSV defines more than one background medium")
+                background_medium = self._parse_medium(line.split(":", 1)[1].strip())
+                continue
+            if line.startswith("#") or not line.strip():
+                continue
+            csv_lines.append(line)
+        if not csv_lines:
+            raise ValueError(f"Task CSV contains no header or tasks: {filepath}")
 
-        with filepath.open(newline="", encoding="utf-8") as fh:
+        required_columns = {
+            "Task ID",
+            "Type",
+            "ID",
+            "Medium",
+            "Constraints",
+            "Expected value",
+            "Description",
+            "Category",
+        }
+        seen_task_ids: set[str] = set()
+
+        with io.StringIO("\n".join(csv_lines), newline="") as fh:
             reader = csv.DictReader(fh)
-            for row in reader:
+            missing_columns = required_columns - set(reader.fieldnames or [])
+            if missing_columns:
+                raise ValueError(
+                    "Task CSV is missing required column(s): " + ", ".join(sorted(missing_columns))
+                )
+
+            for line_number, row in enumerate(reader, start=2):
+                task_id = row["Task ID"].strip()
+                task_type = row["Type"].strip()
+                target_id = row["ID"].strip()
+                if not task_id:
+                    raise ValueError(f"Line {line_number}: Task ID must not be empty")
+                if task_id in seen_task_ids:
+                    raise ValueError(f"Line {line_number}: duplicate Task ID '{task_id}'")
+                if task_type not in {"Metabolite", "Reaction"}:
+                    raise ValueError(
+                        f"Line {line_number}: Type must be Metabolite or Reaction, "
+                        f"got '{task_type}'"
+                    )
+                if not target_id:
+                    raise ValueError(f"Line {line_number}: ID must not be empty")
+
                 operator, value = self._parse_expected(row["Expected value"].strip())
+                task_medium = dict(background_medium)
+                task_medium.update(self._parse_medium(row["Medium"].strip()))
                 task = MetabolicTask(
-                    task_id=row["Task ID"].strip(),
-                    task_type=row["Type"].strip(),
-                    target_id=row["ID"].strip(),
-                    medium=self._parse_medium(row["Medium"].strip()),
+                    task_id=task_id,
+                    task_type=task_type,
+                    target_id=target_id,
+                    medium=task_medium,
                     constraints=self._parse_constraints(row["Constraints"].strip()),
                     expected_operator=operator,
                     expected_value=value,
@@ -43,6 +94,7 @@ class TaskParser:
                     category=row["Category"].strip(),
                 )
                 tasks.append(task)
+                seen_task_ids.add(task_id)
 
         logger.info("Parsed %d metabolic tasks from %s", len(tasks), filepath)
         return tasks
@@ -61,18 +113,18 @@ class TaskParser:
             entry = entry.strip()
             if not entry:
                 continue
-            match = re.match(r"^(.+?)\(([^)]+)\)$", entry)
-            if match:
-                met_id = match.group(1)
-                bound = float(match.group(2))
-                medium[f"EX_{met_id}"] = bound
-            else:
-                logger.warning("Could not parse medium entry: %s", entry)
+            match = re.fullmatch(r"(.+?)\(([^)]+)\)", entry)
+            if not match:
+                raise ValueError(f"Invalid medium entry: {entry}")
+            met_id = match.group(1).strip()
+            bound = float(match.group(2))
+            if not met_id or not math.isfinite(bound):
+                raise ValueError(f"Invalid medium entry: {entry}")
+            reaction_id = met_id if met_id.startswith("EX_") else f"EX_{met_id}"
+            medium[reaction_id] = bound
         return medium
 
-    def _parse_constraints(
-        self, constraint_str: str
-    ) -> dict[str, tuple[float, float]]:
+    def _parse_constraints(self, constraint_str: str) -> dict[str, tuple[float, float]]:
         """Parse constraint string into reaction bound tuples.
 
         Input:  "EX_o2_e(-1000.0#1000.0)"
@@ -86,14 +138,15 @@ class TaskParser:
             entry = entry.strip()
             if not entry:
                 continue
-            match = re.match(r"^(.+?)\(([^#]+)#([^)]+)\)$", entry)
-            if match:
-                rxn_id = match.group(1)
-                lower = float(match.group(2))
-                upper = float(match.group(3))
-                constraints[rxn_id] = (lower, upper)
-            else:
-                logger.warning("Could not parse constraint entry: %s", entry)
+            match = re.fullmatch(r"(.+?)\(([^#]+)#([^)]+)\)", entry)
+            if not match:
+                raise ValueError(f"Invalid constraint entry: {entry}")
+            rxn_id = match.group(1).strip()
+            lower = float(match.group(2))
+            upper = float(match.group(3))
+            if not rxn_id or not math.isfinite(lower) or not math.isfinite(upper) or lower > upper:
+                raise ValueError(f"Invalid constraint entry: {entry}")
+            constraints[rxn_id] = (lower, upper)
         return constraints
 
     def _parse_expected(self, expected_str: str) -> tuple[str, float]:
@@ -107,6 +160,8 @@ class TaskParser:
             raise ValueError(f"Invalid expected value format: {expected_str}")
         operator = match.group(1)
         value = float(match.group(2))
+        if not math.isfinite(value):
+            raise ValueError(f"Expected value must be finite: {expected_str}")
         return operator, value
 
 
@@ -120,7 +175,7 @@ class TaskRunner:
     # and must remain freely exchangeable for FBA feasibility.
     _FREE_EXCHANGE = frozenset({"EX_h2o_e", "EX_h_e"})
 
-    # Balanced turnover reactions for cycling cofactors.
+    # Validated balanced turnover reactions for nucleotide triphosphates.
     #
     # A simple demand reaction ("met -> nothing") breaks the cofactor
     # recycling loop: e.g. DM_atp_c removes ATP but does not return
@@ -131,52 +186,11 @@ class TaskRunner:
     # maintained.  Stoichiometries follow BiGG conventions.
     _COFACTOR_TURNOVER: dict[str, dict[str, float]] = {
         # NTP hydrolysis: ntp + h2o -> ndp + pi + h
-        "atp_c":  {"atp_c": -1, "h2o_c": -1, "adp_c": 1, "pi_c": 1, "h_c": 1},
-        "gtp_c":  {"gtp_c": -1, "h2o_c": -1, "gdp_c": 1, "pi_c": 1, "h_c": 1},
-        "ctp_c":  {"ctp_c": -1, "h2o_c": -1, "cdp_c": 1, "pi_c": 1, "h_c": 1},
-        "utp_c":  {"utp_c": -1, "h2o_c": -1, "udp_c": 1, "pi_c": 1, "h_c": 1},
-        # Redox cofactor oxidation/reduction
-        "nadh_c":  {"nadh_c": -1, "nad_c": 1, "h_c": 1},
-        "nadph_c": {"nadph_c": -1, "nadp_c": 1, "h_c": 1},
-        "fadh2_c": {"fadh2_c": -1, "fad_c": 1, "h_c": 2.0},
-        # CoA-thioester hydrolysis: acyl-CoA + h2o -> acid + CoA
-        "accoa_c":  {"accoa_c": -1, "h2o_c": -1, "ac_c": 1, "coa_c": 1},
-        "succoa_c": {"succoa_c": -1, "h2o_c": -1, "succ_c": 1, "coa_c": 1},
-        "malcoa_c": {"malcoa_c": -1, "h2o_c": -1, "mal__L_c": 1, "coa_c": 1},
-        # SAM cycle: SAM -> SAH + methyl group
-        "amet_c": {"amet_c": -1, "ahcys_c": 1},
+        "atp_c": {"atp_c": -1, "h2o_c": -1, "adp_c": 1, "pi_c": 1, "h_c": 1},
+        "gtp_c": {"gtp_c": -1, "h2o_c": -1, "gdp_c": 1, "pi_c": 1, "h_c": 1},
+        "ctp_c": {"ctp_c": -1, "h2o_c": -1, "cdp_c": 1, "pi_c": 1, "h_c": 1},
+        "utp_c": {"utp_c": -1, "h2o_c": -1, "udp_c": 1, "pi_c": 1, "h_c": 1},
     }
-
-    # Background medium: nutrients restored to model-default bounds after
-    # the blanket exchange closure.  Includes both true trace minerals and
-    # major inorganic nutrients (Pi, NH4, SO4, Fe) required by FBA's
-    # steady-state constraint for de-novo cofactor synthesis.
-    #
-    # Negative-constraint tasks that test dependency on a specific nutrient
-    # (e.g. "no glutamate without NH4") must explicitly close that nutrient
-    # in their medium specification (e.g. nh4_e(0.0)) to override the
-    # default provided here.
-    _TRACE_ELEMENTS = frozenset({
-        # Major inorganic nutrients (needed for cofactor / nucleotide pools)
-        "EX_pi_e",       # Phosphate
-        "EX_nh4_e",      # Ammonium
-        "EX_so4_e",      # Sulfate
-        "EX_fe2_e",      # Ferrous iron
-        "EX_fe3_e",      # Ferric iron
-        # Trace minerals
-        "EX_ca2_e",      # Calcium
-        "EX_cl_e",       # Chloride
-        "EX_co2_e",      # CO2 (freely diffusible)
-        "EX_cobalt2_e",  # Cobalt
-        "EX_cu2_e",      # Copper
-        "EX_k_e",        # Potassium
-        "EX_mg2_e",      # Magnesium
-        "EX_mn2_e",      # Manganese
-        "EX_mobd_e",     # Molybdate
-        "EX_ni2_e",      # Nickel
-        "EX_zn2_e",      # Zinc
-        "EX_cbl1_e",     # Vitamin B12 (cobalamin)
-    })
 
     @staticmethod
     def _normalize_id(raw_id: str) -> str:
@@ -224,7 +238,11 @@ class TaskRunner:
             if norm == rxn.id:
                 continue
             existing = rxn_map.get(norm)
-            if existing is None or existing.endswith("_boundary") and not rxn.id.endswith("_boundary"):
+            if (
+                existing is None
+                or existing.endswith("_boundary")
+                and not rxn.id.endswith("_boundary")
+            ):
                 rxn_map[norm] = rxn.id
 
             # Collect all actual IDs that normalise to the same exchange ID
@@ -234,7 +252,7 @@ class TaskRunner:
         # Pair _LPAREN_ and _boundary exchanges that share a boundary metabolite
         # but normalised to different keys.
         boundary_met_to_rxn: dict[str, str] = {}  # boundary_met_id → boundary EX_ rxn id
-        lparen_met_to_key: dict[str, str] = {}    # boundary_met_id → normalised key of _LPAREN_ rxn
+        lparen_met_to_key: dict[str, str] = {}  # boundary_met_id → normalised key of _LPAREN_ rxn
 
         for rxn in model.reactions:
             if not rxn.id.startswith("EX_"):
@@ -272,7 +290,11 @@ class TaskRunner:
             if norm == met.id:
                 continue
             existing = met_map.get(norm)
-            if existing is None or existing.endswith("_boundary") and not met.id.endswith("_boundary"):
+            if (
+                existing is None
+                or existing.endswith("_boundary")
+                and not met.id.endswith("_boundary")
+            ):
                 met_map[norm] = met.id
 
         return rxn_map, met_map, exchange_groups
@@ -333,14 +355,26 @@ class TaskRunner:
                 solution.objective_value if solution.objective_value is not None else 0.0,
             )
 
-            if solution.status == "infeasible":
-                actual = 0.0
-            else:
-                actual = solution.objective_value if solution.objective_value is not None else 0.0
+            if solution.status != "optimal" or solution.objective_value is None:
+                status = solution.status or "unknown"
+                return TaskResult(
+                    task=task,
+                    passed=False,
+                    actual_value=0.0,
+                    error_message=f"Optimization did not produce a valid optimum ({status})",
+                    solver_status=status,
+                )
+
+            actual = solution.objective_value
 
             passed = self._check_expected(actual, task.expected_operator, task.expected_value)
 
-            return TaskResult(task=task, passed=passed, actual_value=actual)
+            return TaskResult(
+                task=task,
+                passed=passed,
+                actual_value=actual,
+                solver_status=solution.status,
+            )
 
         except Exception as exc:
             logger.error("Error running task %s: %s", task.task_id, exc)
@@ -349,6 +383,7 @@ class TaskRunner:
                 passed=False,
                 actual_value=0.0,
                 error_message=str(exc),
+                solver_status="error",
             )
 
     def prepare_task_model(
@@ -383,8 +418,6 @@ class TaskRunner:
         keep_open: set[str] = set()
         for free_id in self._FREE_EXCHANGE:
             keep_open.update(self._resolve_exchange_group(free_id, exchange_groups))
-        for trace_id in self._TRACE_ELEMENTS:
-            keep_open.update(self._resolve_exchange_group(trace_id, exchange_groups))
 
         default_lb: dict[str, float] = {
             rxn.id: rxn.lower_bound for rxn in model.reactions if rxn.id in keep_open
@@ -404,8 +437,9 @@ class TaskRunner:
             model.reactions.get_by_id(rxn_id).lower_bound = lb
 
         logger.debug(
-            "Closed %d exchanges, restored %d (free+trace)",
-            closed_count, len(default_lb),
+            "Closed %d exchanges, restored %d free exchange(s)",
+            closed_count,
+            len(default_lb),
         )
 
         self._apply_medium(model, task.medium, rxn_map, exchange_groups)
@@ -425,7 +459,10 @@ class TaskRunner:
                 raise ValueError(f"Metabolite '{task.target_id}' not found in model")
 
             obj_rxn = self._make_demand_reaction(
-                model, task.target_id, actual_met_id, met_map,
+                model,
+                task.target_id,
+                actual_met_id,
+                met_map,
             )
             model.add_reactions([obj_rxn])
             model.objective = obj_rxn.id
@@ -533,7 +570,8 @@ class TaskRunner:
                 rxn.upper_bound = 1000.0
                 logger.debug(
                     "Using balanced turnover for %s: %s",
-                    target_id, rxn.reaction if hasattr(rxn, 'reaction') else stoich,
+                    target_id,
+                    rxn.reaction if hasattr(rxn, "reaction") else stoich,
                 )
                 return rxn
 
@@ -544,9 +582,7 @@ class TaskRunner:
 
         # Fallback: simple demand reaction
         met = model.metabolites.get_by_id(actual_met_id)
-        rxn = cobra.Reaction(
-            self._unique_objective_reaction_id(model, f"DM_{actual_met_id}")
-        )
+        rxn = cobra.Reaction(self._unique_objective_reaction_id(model, f"DM_{actual_met_id}"))
         rxn.add_metabolites({met: -1.0})
         rxn.lower_bound = 0.0
         rxn.upper_bound = 1000.0
@@ -566,7 +602,10 @@ class TaskRunner:
         """
         applied = 0
         for rxn_id, lower_bound in medium.items():
-            group = self._resolve_exchange_group(rxn_id, exchange_groups)
+            group = exchange_groups.get(rxn_id, [])
+            if not group:
+                actual_id = self._resolve_reaction(rxn_id, rxn_map)
+                group = [actual_id] if actual_id else []
             for actual_id in group:
                 try:
                     rxn = model.reactions.get_by_id(actual_id)
@@ -575,19 +614,11 @@ class TaskRunner:
                 except KeyError:
                     logger.warning(
                         "Exchange reaction '%s' (group member '%s') not found",
-                        rxn_id, actual_id,
+                        rxn_id,
+                        actual_id,
                     )
             if not group:
-                # Fallback to single-ID resolution
-                actual_id = self._resolve_reaction(rxn_id, rxn_map)
-                if actual_id:
-                    try:
-                        model.reactions.get_by_id(actual_id).lower_bound = lower_bound
-                        applied += 1
-                    except KeyError:
-                        pass
-                else:
-                    logger.warning("Exchange '%s' could not be resolved", rxn_id)
+                logger.warning("Exchange '%s' could not be resolved", rxn_id)
         logger.debug("Applied medium: %d reactions set", applied)
 
     def _apply_constraints(
@@ -603,7 +634,10 @@ class TaskRunner:
         """
         for rxn_id, (lower, upper) in constraints.items():
             if rxn_id.startswith("EX_"):
-                group = self._resolve_exchange_group(rxn_id, exchange_groups)
+                group = exchange_groups.get(rxn_id, [])
+                if not group:
+                    actual_id = self._resolve_reaction(rxn_id, rxn_map)
+                    group = [actual_id] if actual_id else []
                 for actual_id in group:
                     try:
                         rxn = model.reactions.get_by_id(actual_id)
@@ -612,8 +646,11 @@ class TaskRunner:
                     except KeyError:
                         logger.warning(
                             "Reaction '%s' (group member '%s') not found for constraint",
-                            rxn_id, actual_id,
+                            rxn_id,
+                            actual_id,
                         )
+                if not group:
+                    logger.warning("Reaction '%s' could not be resolved for constraint", rxn_id)
             else:
                 actual_id = self._resolve_reaction(rxn_id, rxn_map)
                 if actual_id:
@@ -626,9 +663,7 @@ class TaskRunner:
                 else:
                     logger.warning("Reaction '%s' could not be resolved", rxn_id)
 
-    def _check_expected(
-        self, actual: float, operator: str, expected: float
-    ) -> bool:
+    def _check_expected(self, actual: float, operator: str, expected: float) -> bool:
         """Check whether actual value satisfies the expected condition.
 
         Operators: >, <, =, >=, <=

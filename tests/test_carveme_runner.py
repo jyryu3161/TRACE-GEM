@@ -139,7 +139,9 @@ def test_build_single_success(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(CarveMeRunner, "_run_streaming", fake_stream)
     runner = CarveMeRunner(executable="carve")
     lines: list[str] = []
-    result = runner.build_single(fasta, out, CarveMeOptions(), on_line=lines.append, kegg_code="eco")
+    result = runner.build_single(
+        fasta, out, CarveMeOptions(), on_line=lines.append, kegg_code="eco"
+    )
     assert result.succeeded
     assert result.kegg_code == "eco"
     assert lines == ["building..."]
@@ -149,9 +151,7 @@ def test_build_single_cancelled_raises(tmp_path: Path, monkeypatch) -> None:
     fasta = tmp_path / "g.faa"
     fasta.write_text(">a\nMKV\n")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/carve")
-    monkeypatch.setattr(
-        CarveMeRunner, "_run_streaming", lambda *a, **k: (-1, "partial", True)
-    )
+    monkeypatch.setattr(CarveMeRunner, "_run_streaming", lambda *a, **k: (-1, "partial", True))
     runner = CarveMeRunner(executable="carve")
     with pytest.raises(CarveMeRunError, match="cancel"):
         runner.build_single(fasta, tmp_path / "o.xml", CarveMeOptions())
@@ -196,15 +196,27 @@ def test_build_batch_continues_on_failure(tmp_path: Path, monkeypatch) -> None:
     bad.write_text(">a\nMKV\n")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/carve")
 
-    def fake_single(self, fasta_path, output_path, options=None, on_line=None,
-                    cancel_token=None, kegg_code=None, label=""):
+    def fake_single(
+        self,
+        fasta_path,
+        output_path,
+        options=None,
+        on_line=None,
+        cancel_token=None,
+        kegg_code=None,
+        label="",
+    ):
         from src.build.carveme_runner import CarveMeResult
+
         if Path(fasta_path).name == "bad.faa":
             raise CarveMeRunError("carve failed for bad.faa (exit 1)")
         Path(output_path).write_text("<sbml/>")
         return CarveMeResult(
-            fasta_path=Path(fasta_path), output_path=Path(output_path),
-            returncode=0, kegg_code=kegg_code, label=label,
+            fasta_path=Path(fasta_path),
+            output_path=Path(output_path),
+            returncode=0,
+            kegg_code=kegg_code,
+            label=label,
         )
 
     monkeypatch.setattr(CarveMeRunner, "build_single", fake_single)
@@ -229,14 +241,25 @@ def test_build_batch_continues_on_non_carveme_error(tmp_path: Path, monkeypatch)
     bad.write_text(">a\nMKV\n")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/carve")
 
-    def fake_single(self, fasta_path, output_path, options=None, on_line=None,
-                    cancel_token=None, kegg_code=None, label=""):
+    def fake_single(
+        self,
+        fasta_path,
+        output_path,
+        options=None,
+        on_line=None,
+        cancel_token=None,
+        kegg_code=None,
+        label="",
+    ):
         if Path(fasta_path).name == "bad.faa":
             raise CarveMeNotInstalledError("carve not installed")  # sibling of CarveMeRunError
         Path(output_path).write_text("<sbml/>")
         return CarveMeResult(
-            fasta_path=Path(fasta_path), output_path=Path(output_path),
-            returncode=0, kegg_code=kegg_code, label=label,
+            fasta_path=Path(fasta_path),
+            output_path=Path(output_path),
+            returncode=0,
+            kegg_code=kegg_code,
+            label=label,
         )
 
     monkeypatch.setattr(CarveMeRunner, "build_single", fake_single)

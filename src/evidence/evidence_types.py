@@ -43,7 +43,6 @@ class SourceConfig:
     requires_api_key: bool
     config_key: str  # Attribute name on Config for API key (empty if none)
     enable_key: str  # Attribute name on Config for enable flag
-    weight_key: str  # Attribute name on Config for weight
     description: str
     order: int  # Display order
 
@@ -57,7 +56,6 @@ SOURCE_REGISTRY: dict[EvidenceSource, SourceConfig] = {
         requires_api_key=False,
         config_key="",
         enable_key="",
-        weight_key="weight_kegg",
         description="KEGG pathway database verification",
         order=0,
     ),

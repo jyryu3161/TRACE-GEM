@@ -6,7 +6,6 @@ import logging
 
 from src.core.models import CandidateReaction, EvidenceTier, ReactionEvidence
 from src.utils.config import Config
-from src.utils.constants import GAPFILL_MAX_PENALTY
 
 logger = logging.getLogger("metataskgapfill.gapfill.penalty")
 
@@ -20,19 +19,17 @@ class PenaltyCalculator:
     probabilities.
     """
 
-    _TIER_BASE_PENALTY = {
-        EvidenceTier.HIGH: 1.0,
-        EvidenceTier.MODERATE: 5.0,
-        EvidenceTier.LOW: 25.0,
-        # "Not assessable" (no KEGG anchor) is as costly as LOW; the no-KEGG
-        # multiplier below then further penalizes the genuinely anchorless.
-        EvidenceTier.NOT_ASSESSABLE: 25.0,
-    }
-
     def __init__(self, config: Config) -> None:
-        self._org_mult = config.gapfill_organism_penalty_multiplier  # 10.0
-        self._no_kegg_mult = config.gapfill_no_kegg_penalty_multiplier  # 2.0
-        self._max_penalty = GAPFILL_MAX_PENALTY  # 1000.0
+        self._tier_base_penalty = {
+            EvidenceTier.HIGH: config.gapfill_penalty_high,
+            EvidenceTier.MODERATE: config.gapfill_penalty_moderate,
+            EvidenceTier.LOW: config.gapfill_penalty_low,
+            EvidenceTier.NOT_ASSESSABLE: config.gapfill_penalty_not_assessable,
+        }
+        self._org_mult = config.gapfill_organism_penalty_multiplier
+        self._org_unknown_mult = config.gapfill_organism_unknown_multiplier
+        self._no_kegg_mult = config.gapfill_no_kegg_penalty_multiplier
+        self._max_penalty = config.gapfill_max_penalty
 
     def calculate(
         self,
@@ -44,17 +41,17 @@ class PenaltyCalculator:
         Formula:
             base = categorical tier penalty
             if organism_exists is False: base *= org_mult
-            elif organism_exists is None: base *= 3.0
+            elif organism_exists is None: base *= configured unknown multiplier
             if no kegg_reaction_ids: base *= no_kegg_mult
             return min(base, max_penalty)
         """
         tier = evidence.evidence_tier if evidence else EvidenceTier.NOT_ASSESSABLE
-        base = self._TIER_BASE_PENALTY.get(tier, self._TIER_BASE_PENALTY[EvidenceTier.LOW])
+        base = self._tier_base_penalty.get(tier, self._tier_base_penalty[EvidenceTier.LOW])
 
         if candidate.organism_exists is False:
             base *= self._org_mult
         elif candidate.organism_exists is None:
-            base *= 3.0
+            base *= self._org_unknown_mult
 
         # Penalize as no-KEGG unless a KEGG reaction was actually verified
         # (retrieved and non-contradictory). A rejected/annotated-only KEGG ID
@@ -63,6 +60,18 @@ class PenaltyCalculator:
             base *= self._no_kegg_mult
 
         return min(base, self._max_penalty)
+
+    def parameters(self) -> dict[str, object]:
+        """Return the exact optimization-cost policy for provenance exports."""
+        return {
+            "tier_base_penalty": {
+                tier.value: value for tier, value in self._tier_base_penalty.items()
+            },
+            "organism_absent_multiplier": self._org_mult,
+            "organism_unknown_multiplier": self._org_unknown_mult,
+            "missing_verified_kegg_multiplier": self._no_kegg_mult,
+            "maximum_penalty": self._max_penalty,
+        }
 
     def calculate_batch(
         self,

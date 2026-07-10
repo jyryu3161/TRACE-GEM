@@ -98,9 +98,7 @@ class GapFillPanelWidget(QWidget):
         self._result = result
         # Summary
         added = len(result.added_reactions)
-        broken_note = (
-            f", {result.tasks_broken} regressed" if result.tasks_broken else ""
-        )
+        broken_note = f", {result.tasks_broken} regressed" if result.tasks_broken else ""
         self._summary_label.setText(
             f"Gap-filling complete: {added} reactions added, "
             f"{result.tasks_fixed}/{result.total_tasks} tasks fixed{broken_note}, "
@@ -116,9 +114,7 @@ class GapFillPanelWidget(QWidget):
             self._reaction_table.setItem(row, 0, QTableWidgetItem(rxn.id))
             self._reaction_table.setItem(row, 1, QTableWidgetItem(rxn.name))
 
-            tier_label = (
-                candidate.evidence_tier.label if candidate.evidence_tier else "—"
-            )
+            tier_label = candidate.evidence_tier.label if candidate.evidence_tier else "—"
             self._reaction_table.setItem(row, 2, QTableWidgetItem(tier_label))
 
             score_item = QTableWidgetItem()
@@ -140,8 +136,7 @@ class GapFillPanelWidget(QWidget):
         if result.infeasible_tasks:
             lines = [f"- {t}" for t in result.infeasible_tasks]
             self._infeasible_browser.setPlainText(
-                f"{len(result.infeasible_tasks)} task(s) could not be fixed:\n"
-                + "\n".join(lines)
+                f"{len(result.infeasible_tasks)} task(s) could not be fixed:\n" + "\n".join(lines)
             )
         else:
             self._infeasible_browser.setPlainText("None - all tasks resolved")
@@ -159,8 +154,7 @@ class GapFillPanelWidget(QWidget):
         added = len(result.added_reactions)
 
         self._summary_label.setText(
-            f"Partial result (Phase {phase}/5): {added} reactions added \u2014 "
-            f"Resume available"
+            f"Partial result (Phase {phase}/5): {added} reactions added \u2014 Resume available"
         )
         self._summary_label.setStyleSheet("color: #f0ad4e; font-weight: bold;")
 
@@ -172,9 +166,7 @@ class GapFillPanelWidget(QWidget):
                 self._reaction_table.setItem(row, 0, QTableWidgetItem(rxn.id))
                 self._reaction_table.setItem(row, 1, QTableWidgetItem(rxn.name))
 
-                tier_label = (
-                    candidate.evidence_tier.label if candidate.evidence_tier else "—"
-                )
+                tier_label = candidate.evidence_tier.label if candidate.evidence_tier else "—"
                 self._reaction_table.setItem(row, 2, QTableWidgetItem(tier_label))
 
                 score_item = QTableWidgetItem()

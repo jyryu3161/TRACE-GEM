@@ -28,24 +28,24 @@ class EvaluationController:
 
     def run_candidate_evaluation(self, candidates: list) -> None:
         """Evaluate universal candidate reactions with the evidence engine."""
+        engine = self._w._engine
+        if engine is None:
+            QMessageBox.warning(self._w, "Evidence Engine", "Evidence engine is not initialized.")
+            return
         dialog = ProgressDialog("Evaluating Universal Candidates", self._w)
 
-        worker = EvaluateCandidatesWorker(self._w._engine, candidates)
+        worker = EvaluateCandidatesWorker(engine, candidates)
         self._w._batch_worker = worker
 
         worker.signals.progress.connect(dialog.update_progress)
-        worker.signals.result.connect(
-            lambda r: self.on_candidate_batch_complete(r, dialog)
-        )
+        worker.signals.result.connect(lambda r: self.on_candidate_batch_complete(r, dialog))
         worker.signals.error.connect(lambda e: self.on_batch_error(e, dialog))
         dialog.cancelled.connect(worker.cancel)
 
         self._w._thread_pool.start(worker)
         dialog.exec()
 
-    def on_candidate_batch_complete(
-        self, results: object, dialog: ProgressDialog
-    ) -> None:
+    def on_candidate_batch_complete(self, results: object, dialog: ProgressDialog) -> None:
         dialog.set_complete()
         if isinstance(results, dict):
             # Update universal candidate table

@@ -55,6 +55,9 @@ class TestIdentifierMapper:
         assert len(ext.kegg_substrate_ids) >= 0  # depends on mock matching
         # Products: pep_c, h2o_c
         assert len(ext.kegg_product_ids) >= 0
+        assert ext.kegg_stoichiometry_complete is True
+        assert ext.kegg_substrate_stoichiometry == {"C00631": 1.0}
+        assert ext.kegg_product_stoichiometry == {"C00074": 1.0, "C00001": 1.0}
 
     @pytest.mark.asyncio
     async def test_resolve_with_prefix(self, mapper):

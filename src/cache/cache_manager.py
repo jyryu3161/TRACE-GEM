@@ -39,7 +39,13 @@ class CacheManager:
         current_loop = asyncio.get_running_loop()
         if self._bound_loop is not current_loop:
             logger.info("Event loop changed, reconnecting cache DB")
-            # Old connection is unusable on this loop; don't await close
+            old_connection = self._db
+            self._db = None
+            if old_connection is not None:
+                try:
+                    await old_connection.close()
+                except RuntimeError:
+                    logger.warning("Could not close cache connection from previous event loop")
             self._db = await aiosqlite.connect(str(self._db_path))
             self._bound_loop = current_loop
 

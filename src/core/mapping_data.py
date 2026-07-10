@@ -11,10 +11,12 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from src.utils.constants import DATA_DIR
+
 logger = logging.getLogger("metataskgapfill.mapping_data")
 
 # Default data directory relative to project root
-_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+_DATA_DIR = DATA_DIR
 
 
 @dataclass

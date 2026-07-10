@@ -47,9 +47,7 @@ class VersionController:
             QMessageBox.warning(self._w, "No Model", "Load an SBML model first.")
             return
         if not self._w._version_manager:
-            QMessageBox.warning(
-                self._w, "Versioning Disabled", "Version control is not active."
-            )
+            QMessageBox.warning(self._w, "Versioning Disabled", "Version control is not active.")
             return
 
         current = self._w._version_manager.current_version
@@ -184,9 +182,7 @@ class VersionController:
             meta_b = next((v for v in history if v.version_id == version_b), None)
 
             if not meta_a or not meta_b:
-                QMessageBox.warning(
-                    self._w, "Compare Error", "Could not find version metadata."
-                )
+                QMessageBox.warning(self._w, "Compare Error", "Could not find version metadata.")
                 return
 
             dialog = DiffDialog(diff, meta_a, meta_b, self._w)
@@ -207,9 +203,7 @@ class VersionController:
                 if self._w._version_manager.current_version
                 else None,
             )
-            self._w._statusbar.showMessage(
-                f"Renamed version {version_id} → {new_id}"
-            )
+            self._w._statusbar.showMessage(f"Renamed version {version_id} → {new_id}")
         except Exception as e:
             QMessageBox.critical(self._w, "Rename Error", str(e))
 
@@ -225,9 +219,7 @@ class VersionController:
                 if self._w._version_manager.current_version
                 else None,
             )
-            self._w._statusbar.showMessage(
-                f"Updated description for {version_id}"
-            )
+            self._w._statusbar.showMessage(f"Updated description for {version_id}")
         except Exception as e:
             QMessageBox.critical(self._w, "Description Error", str(e))
 
@@ -243,9 +235,7 @@ class VersionController:
                 if self._w._version_manager.current_version
                 else None,
             )
-            self._w._statusbar.showMessage(
-                f"Deleted version {version_id}"
-            )
+            self._w._statusbar.showMessage(f"Deleted version {version_id}")
         except Exception as e:
             QMessageBox.critical(self._w, "Delete Error", str(e))
 

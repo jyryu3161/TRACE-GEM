@@ -17,10 +17,10 @@ from src.core.models import TaskResult
 from src.gui.theme import THEME
 
 # Color coding for task status transitions
-_COLOR_PASS_PASS = "#27ae60"   # green: passed both before and after
-_COLOR_FAIL_PASS = "#3498db"   # blue: fixed (fail -> pass)
-_COLOR_FAIL_FAIL = "#e74c3c"   # red: still failing
-_COLOR_PASS_FAIL = "#e67e22"   # orange: regressed (pass -> fail)
+_COLOR_PASS_PASS = "#27ae60"  # green: passed both before and after
+_COLOR_FAIL_PASS = "#3498db"  # blue: fixed (fail -> pass)
+_COLOR_FAIL_FAIL = "#e74c3c"  # red: still failing
+_COLOR_PASS_FAIL = "#e67e22"  # orange: regressed (pass -> fail)
 
 # Detail table column indices
 _COL_TASK_ID = 0
@@ -73,9 +73,7 @@ class TaskPanelWidget(QWidget):
             ["Category", "Before (pass/total)", "After (pass/total)", "Fixed"]
         )
         self._category_table.horizontalHeader().setStretchLastSection(True)
-        self._category_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
-        )
+        self._category_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._category_table.verticalHeader().setVisible(False)
         self._category_table.setAlternatingRowColors(True)
         self._category_table.setMaximumHeight(200)
@@ -118,9 +116,7 @@ class TaskPanelWidget(QWidget):
     ) -> None:
         """Populate the panel with task results."""
         self._before_map = {r.task.task_id: r for r in before}
-        self._after_map = (
-            {r.task.task_id: r for r in after} if after else {}
-        )
+        self._after_map = {r.task.task_id: r for r in after} if after else {}
 
         # Compute summary
         total = len(before)
@@ -185,12 +181,14 @@ class TaskPanelWidget(QWidget):
         for row, (cat, data) in enumerate(sorted(categories.items())):
             self._category_table.setItem(row, 0, QTableWidgetItem(cat))
             self._category_table.setItem(
-                row, 1,
+                row,
+                1,
                 QTableWidgetItem(f"{data['before_pass']}/{data['before_total']}"),
             )
             if after:
                 self._category_table.setItem(
-                    row, 2,
+                    row,
+                    2,
                     QTableWidgetItem(f"{data['after_pass']}/{data['after_total']}"),
                 )
                 fixed_item = QTableWidgetItem(str(data["fixed"]))

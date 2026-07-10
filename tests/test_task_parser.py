@@ -72,6 +72,38 @@ class TestTaskParserParseCSV:
         u041 = next(t for t in tasks if t.task_id == "U041")
         assert u041.expected_operator == "="
         assert u041.expected_value == 0.0
+        assert u041.medium["EX_co2_e"] == 0.0
+        assert u041.constraints["ATPM"] == (0.0, 1000.0)
+
+    def test_background_medium_is_explicit_and_task_values_override_it(self, tmp_path):
+        task_file = tmp_path / "tasks.csv"
+        task_file.write_text(
+            "# Background medium: nh4_e(-1000);co2_e(-1000)\n"
+            "Task ID,Type,ID,Medium,Constraints,Expected value,Description,Category\n"
+            "T1,Metabolite,x_c,co2_e(0),,=0,No carbon,test\n"
+        )
+
+        [task] = TaskParser().parse(task_file)
+
+        assert task.medium == {"EX_nh4_e": -1000.0, "EX_co2_e": 0.0}
+
+    @pytest.mark.parametrize(
+        "row",
+        [
+            "T1,Unknown,x_c,,,,bad,test",
+            "T1,Metabolite,x_c,bad-medium,,>0,bad,test",
+            "T1,Metabolite,x_c,,R1(2#1),>0,bad,test",
+            "T1,Metabolite,x_c,,,>nan,bad,test",
+        ],
+    )
+    def test_invalid_task_rows_fail_fast(self, tmp_path, row):
+        task_file = tmp_path / "tasks.csv"
+        task_file.write_text(
+            "Task ID,Type,ID,Medium,Constraints,Expected value,Description,Category\n" + row + "\n"
+        )
+
+        with pytest.raises(ValueError):
+            TaskParser().parse(task_file)
 
 
 class TestParseMedium:
@@ -160,9 +192,13 @@ class TestParseExpected:
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_model(reactions: dict[str, MagicMock], metabolites: dict[str, MagicMock] | None = None):
+def _make_mock_model(
+    reactions: dict[str, MagicMock], metabolites: dict[str, MagicMock] | None = None
+):
     """Create a mock cobra.Model with specified reactions and metabolites."""
-    model = MagicMock(spec=["copy", "reactions", "metabolites", "optimize", "objective", "add_reactions"])
+    model = MagicMock(
+        spec=["copy", "reactions", "metabolites", "optimize", "objective", "add_reactions"]
+    )
 
     # Reactions container — must be iterable for _build_id_maps
     rxn_container = MagicMock()
@@ -182,10 +218,12 @@ def _make_mock_model(reactions: dict[str, MagicMock], metabolites: dict[str, Mag
     met_list = list((metabolites or {}).values())
     met_container.__iter__ = lambda self: iter(met_list)
     if metabolites:
+
         def get_met_by_id(met_id):
             if met_id in metabolites:
                 return metabolites[met_id]
             raise KeyError(met_id)
+
         met_container.get_by_id = get_met_by_id
     else:
         met_container.get_by_id = MagicMock(side_effect=KeyError)
@@ -291,10 +329,7 @@ class TestObjectiveReactionCollision:
         assert unique != "DM_atp_c"
         assert unique not in model.reactions
         # A free ID is returned unchanged.
-        assert (
-            TaskRunner._unique_objective_reaction_id(model, "TURNOVER_atp_c")
-            == "TURNOVER_atp_c"
-        )
+        assert TaskRunner._unique_objective_reaction_id(model, "TURNOVER_atp_c") == "TURNOVER_atp_c"
 
     def test_metabolite_task_ignores_blocked_preexisting_demand(self):
         """With a blocked pre-existing DM_atp_c, the task must still use a fresh
@@ -466,9 +501,49 @@ class TestRunTaskInfeasible:
         runner = TaskRunner()
         result = runner.run_task(model, task)
 
-        # >0.0 with tolerance means actual > -1e-6, so 0.0 passes
-        # But the intent of infeasible is that it truly produces nothing
+        assert result.passed is False
         assert result.actual_value == 0.0
+        assert result.solver_status == "infeasible"
+        assert "valid optimum" in result.error_message
+
+    def test_infeasible_negative_task_does_not_pass(self):
+        model = _make_mock_model(
+            reactions={"EX_glc__D_e": _make_mock_reaction("EX_glc__D_e", True)},
+            metabolites={"atp_c": MagicMock(id="atp_c")},
+        )
+        solution = MagicMock(status="infeasible", objective_value=None)
+        model.optimize.return_value = solution
+        task = MetabolicTask(
+            task_id="NEG",
+            task_type="Metabolite",
+            target_id="atp_c",
+            expected_operator="=",
+            expected_value=0.0,
+        )
+
+        result = TaskRunner().run_task(model, task)
+
+        assert result.passed is False
+        assert result.solver_status == "infeasible"
+
+
+class TestValidatedTurnover:
+    def test_all_configured_turnovers_are_mass_and_charge_balanced(self):
+        import cobra
+
+        model = cobra.io.read_sbml_model(str(DATA_DIR / "iML1515.xml"))
+        tasks = TaskParser().parse(TASK_CSV)
+        runner = TaskRunner()
+
+        for task in tasks:
+            prepared = runner.prepare_task_model(model, task)
+            objectives = [
+                reaction for reaction in prepared.reactions if reaction.objective_coefficient
+            ]
+            assert len(objectives) == 1
+            objective = objectives[0]
+            if objective.id.startswith("TURNOVER_"):
+                assert objective.check_mass_balance() == {}, task.task_id
 
 
 class TestCheckExpected:
@@ -544,6 +619,7 @@ class TestRunAll:
         ]
 
         progress_calls = []
+
         def on_progress(current, total, msg):
             progress_calls.append((current, total, msg))
 

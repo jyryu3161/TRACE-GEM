@@ -28,7 +28,8 @@ def test_load_build_pipeline(tmp_path: Path) -> None:
     universal = _write(tmp_path, "u.json", "{}")
     tasks = _write(tmp_path, "t.csv", "x")
     cfg = _write(
-        tmp_path, "p.yaml",
+        tmp_path,
+        "p.yaml",
         f"carveme: {{solver: scip, universe: gramneg}}\n"
         f"build:\n  mode: single\n  jobs:\n    - {{fasta: {fa}, kegg_code: eco}}\n"
         f"refine:\n  enabled: true\n  universal: {universal}\n  tasks: {tasks}\n",
@@ -43,9 +44,9 @@ def test_load_build_pipeline(tmp_path: Path) -> None:
 def test_load_models_pipeline(tmp_path: Path) -> None:
     m = _write(tmp_path, "iML.xml", "<x/>")
     cfg = _write(
-        tmp_path, "p.yaml",
-        f"models:\n  - {{path: {m}, kegg_code: eco, label: ecoli}}\n"
-        f"refine:\n  enabled: false\n",
+        tmp_path,
+        "p.yaml",
+        f"models:\n  - {{path: {m}, kegg_code: eco, label: ecoli}}\nrefine:\n  enabled: false\n",
     )
     spec = load_pipeline(cfg)
     assert spec.build is None
@@ -62,7 +63,8 @@ def test_validate_single_requires_one_job(tmp_path: Path) -> None:
     a = _write(tmp_path, "a.faa", ">a\nM\n")
     b = _write(tmp_path, "b.faa", ">a\nM\n")
     cfg = _write(
-        tmp_path, "p.yaml",
+        tmp_path,
+        "p.yaml",
         f"build:\n  mode: single\n  jobs:\n"
         f"    - {{fasta: {a}, kegg_code: eco}}\n    - {{fasta: {b}, kegg_code: cgb}}\n",
     )
@@ -72,7 +74,8 @@ def test_validate_single_requires_one_job(tmp_path: Path) -> None:
 
 def test_validate_missing_kegg_and_fasta(tmp_path: Path) -> None:
     cfg = _write(
-        tmp_path, "p.yaml",
+        tmp_path,
+        "p.yaml",
         "build:\n  mode: batch\n  jobs:\n"
         "    - {fasta: nope.faa, kegg_code: eco}\n"
         "    - {fasta: , kegg_code: }\n",
@@ -87,7 +90,8 @@ def test_validate_missing_kegg_and_fasta(tmp_path: Path) -> None:
 def test_validate_refine_inputs(tmp_path: Path) -> None:
     fa = _write(tmp_path, "eco.faa", ">a\nM\n")
     cfg = _write(
-        tmp_path, "p.yaml",
+        tmp_path,
+        "p.yaml",
         f"build:\n  mode: single\n  jobs:\n    - {{fasta: {fa}, kegg_code: eco}}\n"
         f"refine:\n  enabled: true\n  universal: missing_u.json\n  tasks: missing_t.csv\n",
     )
@@ -100,7 +104,8 @@ def test_validate_refine_inputs(tmp_path: Path) -> None:
 def test_validate_bad_solver(tmp_path: Path) -> None:
     m = _write(tmp_path, "m.xml", "<x/>")
     cfg = _write(
-        tmp_path, "p.yaml",
+        tmp_path,
+        "p.yaml",
         f"carveme: {{solver: glpk}}\nmodels:\n  - {{path: {m}, kegg_code: eco}}\n",
     )
     with pytest.raises(PipelineError, match="carveme.solver must be one of"):
@@ -110,7 +115,8 @@ def test_validate_bad_solver(tmp_path: Path) -> None:
 def test_validate_non_dict_section(tmp_path: Path) -> None:
     m = _write(tmp_path, "m.xml", "<x/>")
     cfg = _write(
-        tmp_path, "p.yaml",
+        tmp_path,
+        "p.yaml",
         f"models:\n  - {{path: {m}, kegg_code: eco}}\nrefine: enabled\n",
     )
     with pytest.raises(PipelineError, match="'refine' must be a mapping"):
@@ -120,7 +126,8 @@ def test_validate_non_dict_section(tmp_path: Path) -> None:
 def test_validate_bad_timeout_type(tmp_path: Path) -> None:
     m = _write(tmp_path, "m.xml", "<x/>")
     cfg = _write(
-        tmp_path, "p.yaml",
+        tmp_path,
+        "p.yaml",
         f"carveme: {{timeout: soon}}\nmodels:\n  - {{path: {m}, kegg_code: eco}}\n",
     )
     with pytest.raises(PipelineError, match="carveme.timeout must be an integer"):
@@ -137,9 +144,11 @@ def test_output_collision_detected(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         "src.core.sbml_parser.SBMLParser.load_model",
         lambda self, p: ModelData(
-            id=Path(p).stem, name="m",
+            id=Path(p).stem,
+            name="m",
             reactions=[Reaction(id="R1", name="r", equation="a -> b")],
-            metabolites=[], genes=[],
+            metabolites=[],
+            genes=[],
         ),
     )
     m1 = _write(tmp_path, "m1.xml", "<x/>")
@@ -147,7 +156,8 @@ def test_output_collision_detected(tmp_path: Path, monkeypatch) -> None:
     universal = _write(tmp_path, "u.json", "{}")
     tasks = _write(tmp_path, "t.csv", "x")
     cfg = _write(
-        tmp_path, "p.yaml",
+        tmp_path,
+        "p.yaml",
         f"models:\n  - {{path: {m1}, kegg_code: eco, label: same}}\n"
         f"  - {{path: {m2}, kegg_code: cgb, label: same}}\n"
         f"refine:\n  enabled: true\n  universal: {universal}\n  tasks: {tasks}\n"
@@ -195,9 +205,11 @@ async def test_run_pipeline_models_refine(tmp_path: Path, monkeypatch) -> None:
 
     def fake_load(self, path):
         md = ModelData(
-            id=Path(path).stem, name="m",
+            id=Path(path).stem,
+            name="m",
             reactions=[Reaction(id="R1", name="r1", equation="a -> b")],
-            metabolites=[], genes=[],
+            metabolites=[],
+            genes=[],
         )
         md.cobra_model = object()
         return md
@@ -215,7 +227,8 @@ async def test_run_pipeline_models_refine(tmp_path: Path, monkeypatch) -> None:
     universal = _write(tmp_path, "u.json", "{}")
     tasks = _write(tmp_path, "t.csv", "x")
     cfg_yaml = _write(
-        tmp_path, "p.yaml",
+        tmp_path,
+        "p.yaml",
         f"models:\n  - {{path: {m}, kegg_code: eco, label: ecoli}}\n"
         f"refine:\n  enabled: true\n  universal: {universal}\n  tasks: {tasks}\n"
         f"  output_model: {tmp_path}/out/{{label}}_refined.xml\n",

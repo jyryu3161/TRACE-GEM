@@ -41,6 +41,7 @@ def _detect_delimiter(path: Path, suffix: str) -> str:
         return "\t"
     return ","
 
+
 _GRAM_TO_UNIVERSE = {
     "+": "grampos",
     "pos": "grampos",
@@ -68,10 +69,10 @@ class BuildJob:
 
     fasta_path: Path
     kegg_code: str
-    universe: str = ""        # explicit carve universe template (overrides gram)
-    universe_file: str = ""   # custom carve --universe-file (overrides universe)
-    gram: str = ""            # convenience alias -> grampos/gramneg
-    medium: str = ""          # carve --init medium for this genome
+    universe: str = ""  # explicit carve universe template (overrides gram)
+    universe_file: str = ""  # custom carve --universe-file (overrides universe)
+    gram: str = ""  # convenience alias -> grampos/gramneg
+    medium: str = ""  # carve --init medium for this genome
     label: str = ""
 
     def __post_init__(self) -> None:
@@ -187,7 +188,5 @@ def parse_manifest(path: str | Path) -> list[BuildJob]:
     if not jobs and not errors:
         raise ManifestError(f"Manifest {path} contains no data rows")
     if errors:
-        raise ManifestError(
-            "Manifest validation failed:\n  " + "\n  ".join(errors)
-        )
+        raise ManifestError("Manifest validation failed:\n  " + "\n  ".join(errors))
     return jobs

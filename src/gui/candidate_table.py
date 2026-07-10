@@ -187,7 +187,9 @@ class CandidateTableModel(QAbstractTableModel):
         if column == self.COL_SCORE:
             self._candidates.sort(
                 key=lambda c: (
-                    self._evidence.get(c.reaction.id, ReactionEvidence(c.reaction.id)).evidence_tier.rank
+                    self._evidence.get(
+                        c.reaction.id, ReactionEvidence(c.reaction.id)
+                    ).evidence_tier.rank
                 ),
                 reverse=reverse,
             )
@@ -198,9 +200,7 @@ class CandidateTableModel(QAbstractTableModel):
         elif column == self.COL_NAME:
             self._candidates.sort(key=lambda c: c.reaction.name, reverse=reverse)
         elif column == self.COL_SUBSYSTEM:
-            self._candidates.sort(
-                key=lambda c: c.reaction.subsystem or "", reverse=reverse
-            )
+            self._candidates.sort(key=lambda c: c.reaction.subsystem or "", reverse=reverse)
         elif column == self.COL_ORGANISM:
             self._candidates.sort(
                 key=lambda c: (
@@ -409,16 +409,12 @@ class CandidateTableWidget(QWidget):
         # Populate subsystem filter
         self._subsystem_combo.clear()
         self._subsystem_combo.addItem("All Subsystems", "")
-        subsystems = sorted(
-            {c.reaction.subsystem for c in candidates if c.reaction.subsystem}
-        )
+        subsystems = sorted({c.reaction.subsystem for c in candidates if c.reaction.subsystem})
         for sub in subsystems:
             self._subsystem_combo.addItem(sub, sub)
 
         # Default sort by evidence tier descending
-        self._table.sortByColumn(
-            CandidateTableModel.COL_SCORE, Qt.SortOrder.DescendingOrder
-        )
+        self._table.sortByColumn(CandidateTableModel.COL_SCORE, Qt.SortOrder.DescendingOrder)
 
     def update_evidence(self, evidence: dict[str, ReactionEvidence]) -> None:
         self._model.set_evidence(evidence)

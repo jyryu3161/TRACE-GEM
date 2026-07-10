@@ -10,6 +10,7 @@ from src.api.kegg_client import (
     compute_informative_match,
     compute_match_ratio,
     parse_kegg_reaction,
+    reconciliation_state,
 )
 from src.core.models import EvidenceSource, EvidenceStrength
 
@@ -48,6 +49,19 @@ class TestParseKeggReaction:
         assert "4.2.1.11" in data.enzyme
         assert "rn00010" in data.pathway_ids
         assert "rn00680" in data.pathway_ids
+        assert data.substrate_stoichiometry == {"C00631": 1.0}
+        assert data.product_stoichiometry == {"C00074": 1.0, "C00001": 1.0}
+        assert data.stoichiometry_complete is True
+
+    def test_parse_numeric_stoichiometry(self):
+        data = parse_kegg_reaction(
+            "ENTRY       R12345 Reaction\nEQUATION    2 C12345 + C23456 => 3 C34567\n///\n"
+        )
+
+        assert data is not None
+        assert data.substrate_stoichiometry == {"C12345": 2.0, "C23456": 1.0}
+        assert data.product_stoichiometry == {"C34567": 3.0}
+        assert data.stoichiometry_complete is True
 
     def test_parse_irreversible(self):
         data = parse_kegg_reaction(IRREVERSIBLE_KEGG_REACTION)
@@ -120,6 +134,57 @@ class TestComputeMatchRatio:
         assert model_ids == ["C00001"]
         assert kegg_ids == ["C00001"]
         assert filtered is False
+
+
+class TestStoichiometricReconciliation:
+    def test_scaled_stoichiometry_is_concordant(self):
+        state, detail = reconciliation_state(
+            ["C12345"],
+            ["C23456"],
+            ["C12345"],
+            ["C23456"],
+            model_substrate_stoichiometry={"C12345": 2.0},
+            model_product_stoichiometry={"C23456": 4.0},
+            kegg_substrate_stoichiometry={"C12345": 1.0},
+            kegg_product_stoichiometry={"C23456": 2.0},
+            model_stoichiometry_complete=True,
+            kegg_stoichiometry_complete=True,
+        )
+
+        assert state == "full"
+        assert detail["stoichiometry_state"] == "concordant"
+
+    def test_coefficient_mismatch_is_contradictory(self):
+        state, detail = reconciliation_state(
+            ["C12345"],
+            ["C23456"],
+            ["C12345"],
+            ["C23456"],
+            model_substrate_stoichiometry={"C12345": 1.0},
+            model_product_stoichiometry={"C23456": 2.0},
+            kegg_substrate_stoichiometry={"C12345": 1.0},
+            kegg_product_stoichiometry={"C23456": 1.0},
+            model_stoichiometry_complete=True,
+            kegg_stoichiometry_complete=True,
+        )
+
+        assert state == "none_contradictory"
+        assert detail["stoichiometry_state"] == "discordant"
+
+    def test_unresolved_coefficients_downgrade_full_set_match(self):
+        state, detail = reconciliation_state(
+            ["C12345"],
+            ["C23456"],
+            ["C12345"],
+            ["C23456"],
+            model_substrate_stoichiometry={},
+            model_product_stoichiometry={},
+            model_stoichiometry_complete=False,
+            kegg_stoichiometry_complete=True,
+        )
+
+        assert state == "partial"
+        assert detail["stoichiometry_state"] == "unverifiable"
 
 
 class TestKEGGClient:

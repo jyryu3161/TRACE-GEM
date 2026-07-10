@@ -68,8 +68,7 @@ class TaskDetailDialog(QDialog):
         obj_layout = QVBoxLayout(obj_group)
         if self._task.task_type == "Metabolite":
             obj_text = (
-                f"Maximize DM_{self._task.target_id}  "
-                f"(demand reaction for {self._task.target_id})"
+                f"Maximize DM_{self._task.target_id}  (demand reaction for {self._task.target_id})"
             )
         else:
             obj_text = f"Maximize {self._task.target_id} flux"
@@ -86,9 +85,7 @@ class TaskDetailDialog(QDialog):
             med_table.setColumnCount(2)
             med_table.setHorizontalHeaderLabels(["Exchange Reaction", "Lower Bound"])
             med_table.horizontalHeader().setStretchLastSection(True)
-            med_table.horizontalHeader().setSectionResizeMode(
-                0, QHeaderView.ResizeMode.Stretch
-            )
+            med_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
             med_table.verticalHeader().setVisible(False)
             med_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
@@ -97,7 +94,9 @@ class TaskDetailDialog(QDialog):
             for row, (rxn_id, bound) in enumerate(sorted_medium):
                 med_table.setItem(row, 0, QTableWidgetItem(rxn_id))
                 bound_item = QTableWidgetItem(f"{bound:g}")
-                bound_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                bound_item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                )
                 med_table.setItem(row, 1, bound_item)
 
             med_table.setMaximumHeight(30 + 24 * min(len(sorted_medium), 8))
@@ -112,13 +111,9 @@ class TaskDetailDialog(QDialog):
         if self._task.constraints:
             con_table = QTableWidget()
             con_table.setColumnCount(3)
-            con_table.setHorizontalHeaderLabels(
-                ["Reaction", "Lower Bound", "Upper Bound"]
-            )
+            con_table.setHorizontalHeaderLabels(["Reaction", "Lower Bound", "Upper Bound"])
             con_table.horizontalHeader().setStretchLastSection(True)
-            con_table.horizontalHeader().setSectionResizeMode(
-                0, QHeaderView.ResizeMode.Stretch
-            )
+            con_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
             con_table.verticalHeader().setVisible(False)
             con_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
@@ -127,10 +122,14 @@ class TaskDetailDialog(QDialog):
             for row, (rxn_id, (lower, upper)) in enumerate(sorted_constraints):
                 con_table.setItem(row, 0, QTableWidgetItem(rxn_id))
                 lower_item = QTableWidgetItem(f"{lower:g}")
-                lower_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                lower_item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                )
                 con_table.setItem(row, 1, lower_item)
                 upper_item = QTableWidgetItem(f"{upper:g}")
-                upper_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                upper_item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                )
                 con_table.setItem(row, 2, upper_item)
 
             con_table.setMaximumHeight(30 + 24 * min(len(sorted_constraints), 6))

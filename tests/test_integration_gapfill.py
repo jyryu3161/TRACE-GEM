@@ -35,7 +35,6 @@ def config() -> Config:
         kegg_organism_code="eco",
         organism_name="Escherichia coli",
         gapfill_lower_bound=0.05,
-        gapfill_penalty_epsilon=0.01,
         gapfill_organism_penalty_multiplier=10.0,
         gapfill_no_kegg_penalty_multiplier=2.0,
     )
@@ -110,17 +109,25 @@ class TestCLIGapFillMode:
     def test_gap_fill_all_args(self) -> None:
         """All gap-fill arguments are parsed correctly."""
         parser = _build_parser()
-        args = parser.parse_args([
-            "model.xml",
-            "--gap-fill",
-            "--organism", "eco",
-            "--universal", "/path/to/universal.json",
-            "--tasks", "/path/to/tasks.csv",
-            "--medium", "/path/to/medium.json",
-            "--output-model", "/path/to/improved.xml",
-            "--output-report", "/path/to/report.csv",
-            "--skip-evaluation",
-        ])
+        args = parser.parse_args(
+            [
+                "model.xml",
+                "--gap-fill",
+                "--organism",
+                "eco",
+                "--universal",
+                "/path/to/universal.json",
+                "--tasks",
+                "/path/to/tasks.csv",
+                "--medium",
+                "/path/to/medium.json",
+                "--output-model",
+                "/path/to/improved.xml",
+                "--output-report",
+                "/path/to/report.csv",
+                "--skip-evaluation",
+            ]
+        )
         assert args.gap_fill is True
         assert args.organism == "eco"
         assert args.universal == "/path/to/universal.json"
@@ -256,15 +263,16 @@ class TestE2EWithMiniModel:
         mock_rxn = MagicMock()
         mock_rxn.id = "GLNS"
 
-        with patch.object(engine._task_runner, "run_all", side_effect=mock_run_all), \
-             patch.object(
-                 engine, "_gapfill_solutions_for_task", return_value=[[mock_rxn]]
-             ), \
-             patch.object(
-                 engine, "_apply_gapfill_results",
-                 return_value=[sample_candidates[0]],
-             ), \
-             patch.object(engine, "_reactions_preserve_tasks", return_value=True):
+        with (
+            patch.object(engine._task_runner, "run_all", side_effect=mock_run_all),
+            patch.object(engine, "_gapfill_solutions_for_task", return_value=[[mock_rxn]]),
+            patch.object(
+                engine,
+                "_apply_gapfill_results",
+                return_value=[sample_candidates[0]],
+            ),
+            patch.object(engine, "_reactions_preserve_tasks", return_value=True),
+        ):
             result = await engine.run(
                 user_model=sample_model_data.cobra_model,
                 universal_model=MagicMock(),
@@ -299,8 +307,8 @@ class TestTaskBeforeAfterComparison:
         before = [
             TaskResult(task=tasks[0], passed=False, actual_value=0.0),  # -> PASS (fixed)
             TaskResult(task=tasks[1], passed=False, actual_value=0.0),  # -> FAIL (still failing)
-            TaskResult(task=tasks[2], passed=True, actual_value=1.0),   # -> PASS (ok)
-            TaskResult(task=tasks[3], passed=True, actual_value=1.0),   # -> FAIL (regression)
+            TaskResult(task=tasks[2], passed=True, actual_value=1.0),  # -> PASS (ok)
+            TaskResult(task=tasks[3], passed=True, actual_value=1.0),  # -> FAIL (regression)
         ]
         after = [
             TaskResult(task=tasks[0], passed=True, actual_value=0.5),
@@ -369,6 +377,7 @@ class TestTaskBeforeAfterComparison:
         _save_gapfill_report(report_path, result, tasks)
 
         import csv
+
         with open(report_path) as f:
             reader = csv.reader(f)
             rows = list(reader)
@@ -382,27 +391,28 @@ class TestTaskBeforeAfterComparison:
         added_header_idx = next(i for i, r in enumerate(rows) if r == ["Added Reactions"])
         header = rows[added_header_idx + 1]
         assert header[0] == "Reaction ID"
-        assert header[5] == "Evidence Tier"
-        assert header[6] == "Weight (penalty)"
+        assert "Evidence Tier" in header
+        assert "Penalty" in header
         tier_col = header.index("Evidence Tier")
-        weight_col = header.index("Weight (penalty)")
+        penalty_col = header.index("Penalty")
 
-        added_rows = {r[0]: r for r in rows[added_header_idx + 2:] if r and r[0]}
+        added_rows = {r[0]: r for r in rows[added_header_idx + 2 :] if r and r[0]}
         # Evidence-backed reaction carries its tier label + penalty weight.
         assert added_rows["GLNS"][tier_col] == "High"
-        assert added_rows["GLNS"][weight_col] == "1.50"
-        # Unevidenced reaction is present with the "—" tier placeholder.
-        assert added_rows["PRPPS"][tier_col] == "—"
-        assert added_rows["PRPPS"][weight_col] == "25.00"
+        assert added_rows["GLNS"][penalty_col] == "1.5000"
+        # Unevidenced reaction is present with an empty tier.
+        assert added_rows["PRPPS"][tier_col] == ""
+        assert added_rows["PRPPS"][penalty_col] == "25.0000"
 
         # Check task results section
         task_header_idx = next(i for i, r in enumerate(rows) if r == ["Task Results"])
         assert rows[task_header_idx + 1][0] == "Task ID"
         task_row = rows[task_header_idx + 2]
         assert task_row[0] == "T001"
-        assert task_row[5] == "False"  # Before Pass
-        assert task_row[7] == "True"   # After Pass
-        assert task_row[9] == "FIXED"  # Status
+        task_header = rows[task_header_idx + 1]
+        assert task_row[task_header.index("Before Pass")] == "False"
+        assert task_row[task_header.index("After Pass")] == "True"
+        assert task_row[task_header.index("Status")] == "FIXED"
 
     def test_infeasible_tasks_in_result(self) -> None:
         """Infeasible tasks are tracked separately from failing tasks."""

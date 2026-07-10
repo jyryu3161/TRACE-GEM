@@ -28,9 +28,7 @@ class TestGPRAssigner:
         assert gpr == "b2388 or b1101"
         assert set(genes) == {"b2388", "b1101"}
 
-    async def test_assign_gpr_single_ko_single_gene(
-        self, assigner: GPRAssigner
-    ) -> None:
+    async def test_assign_gpr_single_ko_single_gene(self, assigner: GPRAssigner) -> None:
         """Single KO with one gene -> 'gene1' (no 'or')."""
         ko_response = "rn:R00001\tko:K00844\n"
         gene_response = "ko:K00844\teco:b2388\n"
@@ -43,7 +41,7 @@ class TestGPRAssigner:
         assert genes == ["b2388"]
 
     async def test_assign_gpr_multiple_kos(self, assigner: GPRAssigner) -> None:
-        """Multiple KOs -> '(ko1_genes) and (ko2_genes)' (subunit complex)."""
+        """Multiple KO links do not imply a subunit complex."""
         ko_response = "rn:R00002\tko:K00134\nrn:R00002\tko:K00150\n"
         gene_response_1 = "ko:K00134\teco:b1779\n"
         gene_response_2 = "ko:K00150\teco:b1780\n"
@@ -52,13 +50,11 @@ class TestGPRAssigner:
             mock_get.side_effect = [ko_response, gene_response_1, gene_response_2]
             gpr, genes = await assigner.assign_gpr("R00002")
 
-        assert gpr == "b1779 and b1780"
+        assert gpr == ""
         assert set(genes) == {"b1779", "b1780"}
 
-    async def test_assign_gpr_multiple_kos_multiple_genes(
-        self, assigner: GPRAssigner
-    ) -> None:
-        """Multiple KOs each with multiple genes -> complex GPR."""
+    async def test_assign_gpr_multiple_kos_multiple_genes(self, assigner: GPRAssigner) -> None:
+        """Ambiguous multiple KO groups retain genes but not an invented GPR."""
         ko_response = "rn:R00003\tko:K00001\nrn:R00003\tko:K00002\n"
         gene_response_1 = "ko:K00001\teco:b0001\nko:K00001\teco:b0002\n"
         gene_response_2 = "ko:K00002\teco:b0003\n"
@@ -67,7 +63,7 @@ class TestGPRAssigner:
             mock_get.side_effect = [ko_response, gene_response_1, gene_response_2]
             gpr, genes = await assigner.assign_gpr("R00003")
 
-        assert gpr == "( b0001 or b0002 ) and b0003"
+        assert gpr == ""
         assert set(genes) == {"b0001", "b0002", "b0003"}
 
     async def test_assign_gpr_no_ko_found(self, assigner: GPRAssigner) -> None:
@@ -131,17 +127,13 @@ class TestGPRAssigner:
         assert progress_calls[0] == (1, 2, "RXN_A")
         assert progress_calls[1] == (2, 2, "RXN_B")
 
-    async def test_assign_batch_normalizes_kegg_reaction_uri(
-        self, assigner: GPRAssigner
-    ) -> None:
+    async def test_assign_batch_normalizes_kegg_reaction_uri(self, assigner: GPRAssigner) -> None:
         """identifiers.org KEGG reaction annotations are normalized."""
         rxn = Reaction(
             id="RXN_URI",
             name="URI",
             equation="A -> B",
-            annotation={
-                "kegg.reaction": ["http://identifiers.org/kegg.reaction/R01324"]
-            },
+            annotation={"kegg.reaction": ["http://identifiers.org/kegg.reaction/R01324"]},
         )
         candidate = CandidateReaction(reaction=rxn)
 
@@ -149,8 +141,23 @@ class TestGPRAssigner:
             mock_assign.return_value = ("b0118", ["b0118"])
             await assigner.assign_batch([candidate])
 
-        mock_assign.assert_awaited_once_with("R01324")
+        mock_assign.assert_awaited_once_with("R01324", allowed_gene_ids=None)
         assert candidate.assigned_gpr == "b0118"
+
+    async def test_assign_gpr_filters_to_genes_present_in_model(
+        self, assigner: GPRAssigner
+    ) -> None:
+        ko_response = "rn:R00001\tko:K00844\n"
+        gene_response = "ko:K00844\teco:b2388\nko:K00844\teco:foreign\n"
+        with patch.object(assigner, "_kegg_get", new_callable=AsyncMock) as mock_get:
+            mock_get.side_effect = [ko_response, gene_response]
+            gpr, genes = await assigner.assign_gpr(
+                "R00001",
+                allowed_gene_ids={"b2388"},
+            )
+
+        assert gpr == "b2388"
+        assert genes == ["b2388"]
 
     async def test_close(self, assigner: GPRAssigner) -> None:
         """close() handles None session gracefully."""

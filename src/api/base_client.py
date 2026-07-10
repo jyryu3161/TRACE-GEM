@@ -57,10 +57,7 @@ class BaseAPIClient(ABC):
         if (
             self._session is None
             or self._session.closed
-            or (
-                self._session_loop is not None
-                and self._session_loop is not current_loop
-            )
+            or (self._session_loop is not None and self._session_loop is not current_loop)
         ):
             if self._session and not self._session.closed:
                 with suppress(Exception):
@@ -88,9 +85,7 @@ class BaseAPIClient(ABC):
         if self._circuit_open:
             if time.monotonic() < self._circuit_open_until:
                 logger.warning("[%s] Circuit open, skipping request", self.name)
-                raise APIUnavailableError(
-                    f"{self.name} circuit breaker is open; request skipped"
-                )
+                raise APIUnavailableError(f"{self.name} circuit breaker is open; request skipped")
             self._circuit_open = False
             self._failure_count = 0
 

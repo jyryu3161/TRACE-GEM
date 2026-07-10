@@ -1,3 +1,5 @@
+# Background medium: pi_e(-1000.0);nh4_e(-1000.0);so4_e(-1000.0);fe2_e(-1000.0);fe3_e(-1000.0);ca2_e(-1000.0);cl_e(-1000.0);co2_e(-1000.0);cobalt2_e(-1000.0);cu2_e(-1000.0);k_e(-1000.0);mg2_e(-1000.0);mn2_e(-1000.0);mobd_e(-1000.0);ni2_e(-1000.0);zn2_e(-1000.0)
+# Organism scope: Escherichia coli regression tasks; not a universal model-quality benchmark.
 Task ID,Type,ID,Medium,Constraints,Expected value,Description,Category
 U001,Metabolite,atp_c,glc__D_e(-10.0);o2_e(-1000.0);pi_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,ATP production from glucose (energy metabolism),Energy
 U002,Metabolite,nadh_c,glc__D_e(-10.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,NADH production (electron carrier),Energy
@@ -39,7 +41,7 @@ U037,Metabolite,atp_c,glc__D_e(-1.0);o2_e(-1000.0);pi_e(-1000.0),EX_o2_e(-1000.0
 U038,Metabolite,gtp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,GTP production (protein synthesis),Energy
 U039,Metabolite,ctp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,CTP production (lipid biosynthesis),Energy
 U040,Metabolite,utp_c,glc__D_e(-10.0);nh4_e(-1000.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),>0.0,UTP production (polysaccharide biosynthesis),Energy
-U041,Metabolite,atp_c,o2_e(-1000.0);nh4_e(-1000.0);pi_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No ATP production without carbon source (glucose required),Negative Constraint
+U041,Metabolite,atp_c,o2_e(-1000.0);nh4_e(-1000.0);pi_e(-1000.0);co2_e(0.0),EX_o2_e(-1000.0#1000.0);ATPM(0.0#1000.0),=0.0,No ATP production without carbon source (glucose required),Negative Constraint
 U042,Metabolite,glu__L_c,glc__D_e(-10.0);nh4_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No glutamate synthesis without nitrogen source (NH4 required),Negative Constraint
 U043,Metabolite,ala__L_c,glc__D_e(-10.0);nh4_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No alanine synthesis without nitrogen source,Negative Constraint
 U044,Metabolite,cys__L_c,glc__D_e(-10.0);nh4_e(-1000.0);so4_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No cysteine synthesis without sulfur source (SO4 required),Negative Constraint
@@ -48,6 +50,6 @@ U046,Metabolite,pheme_c,glc__D_e(-10.0);nh4_e(-1000.0);fe2_e(0.0);fe3_e(0.0);o2_
 U047,Metabolite,amp_c,glc__D_e(-10.0);nh4_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No nucleotide synthesis without nitrogen (purine ring requires N),Negative Constraint
 U048,Metabolite,datp_c,glc__D_e(-10.0);nh4_e(0.0);o2_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No DNA precursors without nitrogen source,Negative Constraint
 U049,Reaction,CYTBO3_4pp,glc__D_e(-10.0);o2_e(0.0),EX_o2_e(0.0#0.0),=0.0,No cytochrome oxidase without oxygen (aerobic respiration),Negative Constraint
-U050,Metabolite,glyc3p_c,o2_e(-1000.0);nh4_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No glycerol-3P without carbon source (lipid backbone requires glucose),Negative Constraint
-U051,Metabolite,r5p_c,o2_e(-1000.0);nh4_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No ribose-5P without carbon source (PPP requires glucose),Negative Constraint
-U052,Metabolite,prpp_c,o2_e(-1000.0);nh4_e(-1000.0),EX_o2_e(-1000.0#1000.0),=0.0,No PRPP without carbon source (nucleotide precursor requires glucose),Negative Constraint
+U050,Metabolite,glyc3p_c,o2_e(-1000.0);nh4_e(-1000.0);co2_e(0.0),EX_o2_e(-1000.0#1000.0);ATPM(0.0#1000.0),=0.0,No glycerol-3P without carbon source (lipid backbone requires glucose),Negative Constraint
+U051,Metabolite,r5p_c,o2_e(-1000.0);nh4_e(-1000.0);co2_e(0.0),EX_o2_e(-1000.0#1000.0);ATPM(0.0#1000.0),=0.0,No ribose-5P without carbon source (PPP requires glucose),Negative Constraint
+U052,Metabolite,prpp_c,o2_e(-1000.0);nh4_e(-1000.0);co2_e(0.0),EX_o2_e(-1000.0#1000.0);ATPM(0.0#1000.0),=0.0,No PRPP without carbon source (nucleotide precursor requires glucose),Negative Constraint

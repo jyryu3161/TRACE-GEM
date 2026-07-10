@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import cobra
 
 
 class EvidenceStrength(Enum):
@@ -173,7 +177,7 @@ class ModelData:
     genes: list[Gene] = field(default_factory=list)
     organism: str | None = None
     kegg_organism_code: str | None = None
-    cobra_model: object | None = field(default=None, repr=False)
+    cobra_model: cobra.Model | None = field(default=None, repr=False)
     _reaction_index: dict[str, Reaction] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
@@ -218,9 +222,7 @@ class ModelData:
                 for r in self.reactions:
                     remaining_met_ids.update(r.reactants.keys())
                     remaining_met_ids.update(r.products.keys())
-                self.metabolites = [
-                    m for m in self.metabolites if m.id in remaining_met_ids
-                ]
+                self.metabolites = [m for m in self.metabolites if m.id in remaining_met_ids]
                 # Clean up orphaned genes
                 remaining_gene_ids: set[str] = set()
                 for r in self.reactions:
@@ -289,6 +291,7 @@ class ReactionEvidence:
     kegg_anchored: bool = False
     reconciliation_state: str = "unverifiable"  # full|partial|none_contradictory|unverifiable
     ec_concordance_state: str = "unknown"  # concordant|discordant|unknown
+    stoichiometry_state: str = "unverifiable"  # concordant|discordant|unverifiable
     # 1 = legacy blended-score scheme; 2 = rule-based KEGG-only scheme.
     tier_schema_version: int = 2
 
@@ -312,6 +315,7 @@ class ReactionEvidence:
             "kegg_anchored": self.kegg_anchored,
             "reconciliation_state": self.reconciliation_state,
             "ec_concordance_state": self.ec_concordance_state,
+            "stoichiometry_state": self.stoichiometry_state,
             "tier_schema_version": self.tier_schema_version,
             "substrate_match_ratio": self.substrate_match_ratio,
             "product_match_ratio": self.product_match_ratio,
@@ -347,6 +351,7 @@ class ReactionEvidence:
             kegg_anchored=data.get("kegg_anchored", False),
             reconciliation_state=data.get("reconciliation_state", "unverifiable"),
             ec_concordance_state=data.get("ec_concordance_state", "unknown"),
+            stoichiometry_state=data.get("stoichiometry_state", "unverifiable"),
             # Absent key ⇒ a pre-redesign snapshot scored under the legacy scheme.
             tier_schema_version=data.get("tier_schema_version", 1),
             substrate_match_ratio=data.get("substrate_match_ratio", 0.0),
@@ -365,6 +370,9 @@ class ExternalIDs:
     kegg_reaction_ids: list[str] = field(default_factory=list)
     kegg_substrate_ids: list[str] = field(default_factory=list)
     kegg_product_ids: list[str] = field(default_factory=list)
+    kegg_substrate_stoichiometry: dict[str, float] = field(default_factory=dict)
+    kegg_product_stoichiometry: dict[str, float] = field(default_factory=dict)
+    kegg_stoichiometry_complete: bool = False
     mnxr_ids: list[str] = field(default_factory=list)
 
 
@@ -469,6 +477,7 @@ class TaskResult:
     actual_value: float
     error_message: str | None = None
     phase: str = "before"  # "before" or "after"
+    solver_status: str = "unknown"
 
     def to_dict(self) -> dict:
         return {
@@ -477,6 +486,7 @@ class TaskResult:
             "actual_value": self.actual_value,
             "error_message": self.error_message,
             "phase": self.phase,
+            "solver_status": self.solver_status,
         }
 
     @classmethod
@@ -487,6 +497,7 @@ class TaskResult:
             actual_value=data["actual_value"],
             error_message=data.get("error_message"),
             phase=data.get("phase", "before"),
+            solver_status=data.get("solver_status", "unknown"),
         )
 
 
@@ -507,6 +518,11 @@ class GapFillResult:
     completed_phase: int = 0  # 0~5, completed phase number
     all_candidates: list[CandidateReaction] = field(default_factory=list)
     is_partial: bool = False  # True if result is from a cancelled workflow
+    # Runtime-only checkpoint state. Evidence and the isolated working model
+    # are retained across GUI cancellation/resume; projects export evidence
+    # separately and never serialize the COBRA object into JSON.
+    evidence_results: dict[str, ReactionEvidence] = field(default_factory=dict, repr=False)
+    working_model: object | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -535,6 +551,17 @@ class ReactionChange:
 
 
 @dataclass
+class EntityChange:
+    """A changed field on a model, metabolite, or gene."""
+
+    entity_type: str
+    entity_id: str
+    field: str
+    old_value: str
+    new_value: str
+
+
+@dataclass
 class ModelDiff:
     """Diff between two model versions."""
 
@@ -545,14 +572,22 @@ class ModelDiff:
     genes_removed: list[str] = field(default_factory=list)
     metabolites_added: list[str] = field(default_factory=list)
     metabolites_removed: list[str] = field(default_factory=list)
+    entity_changes: list[EntityChange] = field(default_factory=list)
 
     @property
     def is_empty(self) -> bool:
-        return not any([
-            self.reactions_added, self.reactions_removed, self.reactions_modified,
-            self.genes_added, self.genes_removed,
-            self.metabolites_added, self.metabolites_removed,
-        ])
+        return not any(
+            [
+                self.reactions_added,
+                self.reactions_removed,
+                self.reactions_modified,
+                self.genes_added,
+                self.genes_removed,
+                self.metabolites_added,
+                self.metabolites_removed,
+                self.entity_changes,
+            ]
+        )
 
     @property
     def summary_counts(self) -> str:
@@ -567,6 +602,8 @@ class ModelDiff:
             parts.append(f"+{len(self.genes_added)} genes")
         if self.genes_removed:
             parts.append(f"-{len(self.genes_removed)} genes")
+        if self.entity_changes:
+            parts.append(f"~{len(self.entity_changes)} metadata")
         return ", ".join(parts) if parts else "No changes"
 
     @property
@@ -587,6 +624,8 @@ class ModelDiff:
             parts.append(f"+{len(self.metabolites_added)} met")
         if self.metabolites_removed:
             parts.append(f"-{len(self.metabolites_removed)} met")
+        if self.entity_changes:
+            parts.append(f"~{len(self.entity_changes)} meta")
         return ", ".join(parts) if parts else "\u2014"
 
 

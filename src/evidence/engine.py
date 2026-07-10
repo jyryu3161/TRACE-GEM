@@ -24,8 +24,12 @@ from src.utils.constants import BATCH_SIZE
 logger = logging.getLogger("metataskgapfill.evidence")
 
 
+class EvidenceBatchError(RuntimeError):
+    """Raised when a candidate evidence batch is too incomplete to use safely."""
+
+
 class EvidenceEngine:
-    """Orchestrates KEGG/BiGG evidence collection with offline ID mapping."""
+    """Orchestrates KEGG evidence collection with offline ID mapping."""
 
     def __init__(self, config: Config) -> None:
         self._config = config
@@ -34,7 +38,7 @@ class EvidenceEngine:
         self._bigg: Any = None
         self._mapper: IdentifierMapper | None = None
         self._mapping_data: MappingData | None = None
-        self._scorer = ConfidenceScorer(config.weights)
+        self._scorer = ConfidenceScorer()
         self._results: dict[str, ReactionEvidence] = {}
         self._closed = False
 
@@ -129,18 +133,35 @@ class EvidenceEngine:
         cancel_event: asyncio.Event | Any | None = None,
     ) -> dict[str, ReactionEvidence]:
         """Evaluate a batch of candidate reactions with progress reporting."""
+        requested_ids = {candidate.reaction.id for candidate in candidates}
+        for reaction_id in requested_ids:
+            self._results.pop(reaction_id, None)
 
         async def _evaluate_item(candidate: CandidateReaction) -> str:
             await self.evaluate_candidate(candidate)
             return candidate.reaction.id
 
-        return await self._run_batch(
+        results = await self._run_batch(
             items=candidates,
             evaluate_fn=_evaluate_item,
             progress_callback=progress_callback,
             cancel_event=cancel_event,
             label="candidates",
         )
+        errors = [
+            evidence for evidence in results.values() if evidence.status is EvaluationStatus.ERROR
+        ]
+        error_fraction = len(errors) / len(results) if results else 0.0
+        allowed = min(1.0, max(0.0, self._config.candidate_evidence_max_error_fraction))
+        cancelled = bool(cancel_event and cancel_event.is_set())
+        if not cancelled and error_fraction > allowed:
+            examples = ", ".join(evidence.reaction_id for evidence in errors[:5])
+            raise EvidenceBatchError(
+                f"Candidate evidence failed for {len(errors)}/{len(results)} reactions "
+                f"({error_fraction:.1%}; allowed {allowed:.1%}). "
+                f"Examples: {examples}"
+            )
+        return results
 
     # ── Shared pipeline helpers ──────────────────────────────────────
 
@@ -157,6 +178,9 @@ class EvidenceEngine:
             kegg_reaction_ids=ext_ids.kegg_reaction_ids,
             model_substrates_kegg=ext_ids.kegg_substrate_ids,
             model_products_kegg=ext_ids.kegg_product_ids,
+            model_substrate_stoichiometry=ext_ids.kegg_substrate_stoichiometry,
+            model_product_stoichiometry=ext_ids.kegg_product_stoichiometry,
+            model_stoichiometry_complete=ext_ids.kegg_stoichiometry_complete,
             ec_numbers=ext_ids.ec_numbers,
         )
         evidence.items.extend(kegg_items)
@@ -168,6 +192,7 @@ class EvidenceEngine:
         evidence.kegg_anchored = bool(raw.get("kegg_anchored", False))
         evidence.reconciliation_state = raw.get("reconciliation_state", "unverifiable")
         evidence.ec_concordance_state = raw.get("ec_concordance_state", "unknown")
+        evidence.stoichiometry_state = raw.get("stoichiometry_state", "unverifiable")
 
         sub_match = raw.get("substrate_match")
         prod_match = raw.get("product_match")
@@ -197,6 +222,7 @@ class EvidenceEngine:
         batch_size = max(1, self._config.batch_size or BATCH_SIZE)
         max_concurrent = max(1, self._config.max_concurrent)
         completed = 0
+        completed_ids: set[str] = set()
 
         for i in range(0, total, batch_size):
             if cancel_event and cancel_event.is_set():
@@ -214,6 +240,7 @@ class EvidenceEngine:
                     if cancel_event and cancel_event.is_set():
                         return
                     item_id = await evaluate_fn(item)
+                completed_ids.add(item_id)
                 completed += 1
                 if progress_callback:
                     progress_callback(completed, total, item_id)
@@ -226,7 +253,11 @@ class EvidenceEngine:
 
             logger.info("Evaluated %d/%d %s", completed, total, label)
 
-        return dict(self._results)
+        return {
+            reaction_id: self._results[reaction_id]
+            for reaction_id in completed_ids
+            if reaction_id in self._results
+        }
 
     def get_result(self, reaction_id: str) -> ReactionEvidence | None:
         """Get cached evaluation result for a reaction."""

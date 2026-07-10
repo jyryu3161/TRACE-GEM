@@ -8,22 +8,17 @@ from src.core.models import (
     EvidenceTier,
     ReactionEvidence,
 )
-from src.utils.constants import SOURCE_WEIGHTS
 
 
 class ConfidenceScorer:
     """Calculate evidence confidence and categorical tiers.
 
-    Supports KEGG and BiGG sources with configurable weights. Enabled sources
-    keep their configured weights even when a source is absent, so a strong
-    BiGG match cannot become 1.0 if KEGG verification failed or found no match.
+    KEGG is the sole evidence source. Classification uses explicit categorical
+    rules rather than configurable numeric weights.
 
     The numeric ``confidence_score`` is retained as a legacy ordering/export
     field. User-facing decisions should use ``evidence_tier``.
     """
-
-    def __init__(self, weights: dict[str, float] | None = None) -> None:
-        self._weights = weights or dict(SOURCE_WEIGHTS)
 
     # Tier → legacy numeric confidence_score (ordering/export only; the tier is
     # the authoritative categorical decision).
@@ -110,9 +105,7 @@ class ConfidenceScorer:
             if recon == "none_contradictory":
                 rationale = "KEGG entry found but its metabolites contradict the model reaction."
             else:
-                rationale = (
-                    f"KEGG-anchored but unsupported (metabolites: {recon_txt}, EC: {ec})."
-                )
+                rationale = f"KEGG-anchored but unsupported (metabolites: {recon_txt}, EC: {ec})."
         return (tier, rationale)
 
     def score_breakdown(self, evidence: ReactionEvidence) -> dict[str, dict]:
@@ -122,7 +115,7 @@ class ConfidenceScorer:
         breakdown = {}
         for source in EvidenceSource:
             score = source_scores.get(source, 0.0)
-            weight = self._weights.get(source.value, 0.0)
+            weight = 1.0 if source is EvidenceSource.KEGG else 0.0
             weighted = weight * score
             breakdown[source.value] = {
                 "raw_score": score,

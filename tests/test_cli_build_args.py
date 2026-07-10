@@ -10,6 +10,16 @@ from src import cli
 from src.utils.config import Config
 
 
+def test_default_tasks_are_restricted_to_ecoli() -> None:
+    assert cli._resolve_tasks_path(Config(), None).endswith("universal_essential_tasks.csv")
+    with pytest.raises(ValueError, match="E. coli-oriented"):
+        cli._resolve_tasks_path(Config(kegg_organism_code="cgb"), None)
+    assert (
+        cli._resolve_tasks_path(Config(kegg_organism_code="cgb"), "cgb_tasks.csv")
+        == "cgb_tasks.csv"
+    )
+
+
 def _parse(args: list[str]) -> argparse.Namespace:
     return cli._build_parser().parse_args(args)
 
@@ -21,17 +31,25 @@ def test_positional_model_optional() -> None:
 
 
 def test_build_flags_parse() -> None:
-    ns = _parse([
-        "--build", "g.faa",
-        "--carveme-solver", "scip",
-        "--carveme-universe", "grampos",
-        "--carveme-gapfill-media", "M9,LB",
-        "--carveme-init-medium", "M9",
-        "--gzip-model",
-        "--build-dna",
-        "--refine",
-        "--build-output", "out.xml",
-    ])
+    ns = _parse(
+        [
+            "--build",
+            "g.faa",
+            "--carveme-solver",
+            "scip",
+            "--carveme-universe",
+            "grampos",
+            "--carveme-gapfill-media",
+            "M9,LB",
+            "--carveme-init-medium",
+            "M9",
+            "--gzip-model",
+            "--build-dna",
+            "--refine",
+            "--build-output",
+            "out.xml",
+        ]
+    )
     assert ns.carveme_solver == "scip"
     assert ns.carveme_universe == "grampos"
     assert ns.carveme_gapfill_media == "M9,LB"
@@ -58,14 +76,21 @@ def test_carveme_universe_file_flag() -> None:
 
 def test_apply_carveme_overrides() -> None:
     cfg = Config()
-    ns = _parse([
-        "--build", "g.faa",
-        "--carveme-solver", "cplex",
-        "--carveme-universe", "archaea",
-        "--carveme-env", "carveme",
-        "--carveme-timeout", "600",
-        "--gzip-model",
-    ])
+    ns = _parse(
+        [
+            "--build",
+            "g.faa",
+            "--carveme-solver",
+            "cplex",
+            "--carveme-universe",
+            "archaea",
+            "--carveme-env",
+            "carveme",
+            "--carveme-timeout",
+            "600",
+            "--gzip-model",
+        ]
+    )
     cli._apply_carveme_overrides(cfg, ns)
     assert cfg.carveme_solver == "cplex"
     assert cfg.carveme_universe == "archaea"

@@ -20,31 +20,55 @@ class _FakeRunner:
         self.fail = fail or set()
         self.calls: list[str] = []
 
-    def build_single(self, fasta_path, output_path, options=None, on_line=None,
-                     cancel_token=None, kegg_code=None, label=""):
+    def build_single(
+        self,
+        fasta_path,
+        output_path,
+        options=None,
+        on_line=None,
+        cancel_token=None,
+        kegg_code=None,
+        label="",
+    ):
         self.calls.append(Path(fasta_path).name)
         if on_line:
             on_line(f"building {Path(fasta_path).name}")
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         Path(output_path).write_text("<sbml/>")
         return CarveMeResult(
-            fasta_path=Path(fasta_path), output_path=Path(output_path),
-            returncode=0, kegg_code=kegg_code, label=label or Path(fasta_path).stem,
+            fasta_path=Path(fasta_path),
+            output_path=Path(output_path),
+            returncode=0,
+            kegg_code=kegg_code,
+            label=label or Path(fasta_path).stem,
         )
 
-    def build_batch(self, specs, on_line=None, on_item_start=None,
-                    on_item_done=None, cancel_token=None, max_parallel=1):
+    def build_batch(
+        self,
+        specs,
+        on_line=None,
+        on_item_start=None,
+        on_item_done=None,
+        cancel_token=None,
+        max_parallel=1,
+    ):
         results = []
         for index, spec in enumerate(specs):
             if Path(spec.fasta_path).name in self.fail:
                 res = CarveMeResult(
-                    fasta_path=spec.fasta_path, output_path=spec.output_path,
-                    error="boom", kegg_code=spec.kegg_code, label=spec.label,
+                    fasta_path=spec.fasta_path,
+                    output_path=spec.output_path,
+                    error="boom",
+                    kegg_code=spec.kegg_code,
+                    label=spec.label,
                 )
             else:
                 res = self.build_single(
-                    spec.fasta_path, spec.output_path, spec.options,
-                    kegg_code=spec.kegg_code, label=spec.label,
+                    spec.fasta_path,
+                    spec.output_path,
+                    spec.options,
+                    kegg_code=spec.kegg_code,
+                    label=spec.label,
                 )
             results.append(res)
             if on_item_done:
@@ -60,6 +84,7 @@ def _fake_model(model_id: str = "eco_built") -> ModelData:
 def patched_loader(monkeypatch):
     def fake_load_model(self, path):
         return _fake_model(Path(path).stem)
+
     monkeypatch.setattr("src.core.sbml_parser.SBMLParser.load_model", fake_load_model)
 
 
@@ -158,9 +183,7 @@ def test_spec_for_job_per_job_universe_overrides_global_universe_file() -> None:
 def test_build_one_attaches_organism(tmp_path: Path, patched_loader) -> None:
     cfg = Config()
     engine = BuildEngine(cfg, runner=_FakeRunner())
-    built = engine.build_one(
-        tmp_path / "eco.faa", "eco", output_path=tmp_path / "eco.xml"
-    )
+    built = engine.build_one(tmp_path / "eco.faa", "eco", output_path=tmp_path / "eco.xml")
     assert built.model_data.kegg_organism_code == "eco"
     assert built.model_data.organism == "Escherichia coli"
     assert built.sbml_path == tmp_path / "eco.xml"
@@ -218,6 +241,7 @@ async def test_refine_delegates_to_core(tmp_path: Path, monkeypatch) -> None:
         captured["model"] = model_data
         captured["kwargs"] = kwargs
         from src.gapfill.refine import RefineOutcome
+
         return RefineOutcome(gf_result=GapFillResult(total_tasks=3, tasks_fixed=1))
 
     monkeypatch.setattr(be_mod, "refine_model_data", fake_refine)
@@ -230,7 +254,9 @@ async def test_refine_delegates_to_core(tmp_path: Path, monkeypatch) -> None:
     from src.build.build_engine import BuiltModel
 
     built = BuiltModel(
-        model_data=md, sbml_path=tmp_path / "cgb.xml", kegg_code="cgb",
+        model_data=md,
+        sbml_path=tmp_path / "cgb.xml",
+        kegg_code="cgb",
         carve_result=CarveMeResult(fasta_path=tmp_path / "c.faa", output_path=tmp_path / "cgb.xml"),
     )
     outcome = await engine.refine(built, universal_path="u.json", tasks_path="t.csv")

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "metatask-gapfill"
 version = "0.2.0"
-description = "Metabolic-task-aware gap-filling with KEGG and BiGG evidence"
+description = "Metabolic-task-aware gap-filling with KEGG reaction evidence"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -46,6 +46,17 @@ metatask-gapfill-cli = "src.cli:main"
 [tool.setuptools.packages.find]
 include = ["src*"]
 
+[tool.setuptools.data-files]
+"share/metatask-gapfill/data" = [
+    "data/bigg_universal_model_fixed.json",
+    "data/universal_essential_tasks.csv",
+    "data/iML1515.xml",
+    "data/e_coli_core.xml",
+    "data/eco_protein.faa",
+    "data/cgb_protein.faa",
+    "data/evidence_benchmark_template.csv",
+]
+
 [tool.ruff]
 target-version = "py310"
 line-length = 100
@@ -63,7 +74,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-qt_api = "pyside6"
 markers = [
     "integration: tests that invoke real external binaries (carve/diamond/solver); deselect with -m 'not integration'",
 ]

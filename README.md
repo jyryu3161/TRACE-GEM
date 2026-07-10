@@ -39,7 +39,7 @@ quality judged by metabolic tasks:
 | Stage | What it does | Engine |
 |-------|--------------|--------|
 | **Build** | Reconstruct a draft model from a protein FASTA (single or batch) | CarveMe (`carve`) |
-| **Gap-fill** | Task-aware gap-filling: add the minimal reaction set that lets failing metabolic tasks pass, without breaking passing ones. Candidate reactions from the universal model are weighted by **KEGG evidence** so the gap-filler prefers well-identified reactions (High/Moderate/Low/Not-assessable). | COBRApy MILP + KEGG evidence |
+| **Gap-fill** | Find an evidence-weighted feasible reaction set that repairs failing metabolic tasks without breaking passing ones. The iterative per-task union is not a proof of a globally cardinality-minimal set. | COBRApy MILP + KEGG evidence |
 | **Validate** | Model quality is judged by metabolic-task pass/fail — not by per-reaction scores. | TaskRunner |
 
 > Evidence is **KEGG-only** and applies **only to gap-fill candidates** (to weight
@@ -282,7 +282,7 @@ The GUI runs headless for automated rendering with `QT_QPA_PLATFORM=offscreen`.
 | `data/eco_protein.faa`, `data/cgb_protein.faa` | Example proteomes (E. coli, C. glutamicum) |
 | `data/iML1515.xml`, `data/e_coli_core.xml` | Reference E. coli models |
 | `data/bigg_universal_model_fixed.json` | BiGG universal reaction database (gap-fill source) |
-| `data/universal_essential_tasks.csv` | 52 metabolic tasks (production, constraints, negatives) |
+| `data/universal_essential_tasks.csv` | 52 E. coli-oriented regression tasks |
 
 Optional local mapping files (`reac_xref.tsv`, `bigg_models_reactions.txt`, …),
 when present, improve evidence resolution and organism filtering.
@@ -291,9 +291,10 @@ when present, improve evidence resolution and organism filtering.
 
 ## Metabolic tasks and media
 
-Each metabolic task in the task CSV is **self-contained**: its `Medium` column
-declares the complete medium it needs, and the task runner additionally keeps
-water, protons, and trace elements exchangeable. Tasks come in three kinds:
+The bundled task CSV declares an explicit shared background medium in its first
+comment line; each task's `Medium` entries override it. The task runner opens
+only water and protons implicitly. No trace nutrient is hidden. Tasks come in
+three kinds:
 
 - **Production tasks** (`>` operator) — a metabolite/reaction must carry flux;
   these are *gap-fillable* (reactions can be added to enable them).
@@ -302,11 +303,11 @@ water, protons, and trace elements exchangeable. Tasks come in three kinds:
   these are **not** gap-fillable and are protected, not modified.
 - **Upper-bound tasks** (`<`) — also not gap-fillable.
 
-A complete model passes **all 52 tasks** with task-only media (verified:
-iML1515 = 52/52; CarveMe-built *E. coli* = 52/52; *C. glutamicum* = 51/52, the one
-difference being a genuine organism-specific negative constraint). Core/partial
-models fail production tasks they lack pathways for — that is precisely what
-refinement repairs.
+The bundled regression is verified against iML1515 (52/52, all solver statuses
+optimal). It is not a cross-species quality benchmark. For any non-E. coli model,
+the CLI and GUI require an explicitly selected organism-specific task file.
+Core/partial models may fail production tasks whose pathways they lack; refinement
+attempts to repair only gap-fillable lower-bound production failures.
 
 > **Why the model's default medium is *not* merged.** When `--medium` is omitted,
 > MetaTaskGapFill uses each task's own medium and does **not** merge the draft
@@ -325,9 +326,9 @@ Persistent settings live in `~/.metataskgapfill/config.json` (edit via the GUI
 | Key | Default | Description |
 |-----|---------|-------------|
 | `kegg_organism_code` | `eco` | KEGG organism code |
-| `candidate_evidence_eager_limit` | `0` | Defer candidate KEGG evidence above this universal size (`0` = always evaluate) |
+| `candidate_evidence_max_error_fraction` | `0.0` | Maximum tolerated API-error fraction in evidence-weighted runs |
 | `default_universal_model` | `data/bigg_universal_model_fixed.json` | Gap-fill universal |
-| `default_task_file` | `data/universal_essential_tasks.csv` | Default task set |
+| `default_task_file` | `data/universal_essential_tasks.csv` | E. coli-only default task set |
 | `gapfill_iterations` / `gapfill_alternatives` | `5` / `5` | Gap-fill convergence / per-task alternatives |
 | `carveme_solver` | `gurobi` | MILP solver for CarveMe (`gurobi`/`cplex`/`scip`) |
 | `carveme_universe` | `""` | CarveMe universe template |
@@ -354,8 +355,8 @@ single invocation.
   with LP/MPS keywords (e.g. `St`); these are automatically renamed on load
   (`St → St_rxn`) to keep solver model-copy/snapshot operations safe.
 - **Negative-constraint tasks are organism-specific.** The bundled task set is
-  E. coli-centric; one or two constraints may legitimately differ for other
-  organisms.
+  E. coli-oriented and must not be reused as a quality benchmark for another
+  organism. Supply a curated organism-specific file with `--tasks`.
 - **Performance.** Building a ~4,600-protein proteome takes a few minutes with
   Gurobi (much longer with SCIP). Large universal models are pruned for tractable
   MILP solving.
@@ -371,12 +372,44 @@ pytest -m "not integration"          # fast unit suite (mocked external tools)
 pytest -m integration                # real carve builds on the bundled proteomes
 pytest --cov=src --cov-report=term-missing
 
-ruff check src tests                 # lint
-mypy src --ignore-missing-imports    # type check
+ruff check src tests scripts                         # lint
+ruff format --check src tests scripts                # formatting
+mypy src scripts/validate_evidence_tiers.py --ignore-missing-imports
 ```
 
 Integration tests are skipped automatically if `carve` is not installed. GUI tests
 run under `QT_QPA_PLATFORM=offscreen`.
+
+---
+
+## Reproducibility and validation
+
+Gap-fill runs that write a model or report also write:
+
+- `*.manifest.json` with input/output SHA-256 hashes, package and solver versions,
+  git state, complete scientific configuration, mapping-file hashes, task summary,
+  and the exact penalty policy.
+- `*.evidence.json.gz` with every candidate evidence record actually used by the
+  optimizer, including KEGG reconciliation and stoichiometry provenance.
+
+Successful CarveMe builds write `*.build.manifest.json` with FASTA/universe/output
+hashes, the exact subprocess argv, options, duration, and probed CarveMe, DIAMOND,
+and solver versions. `uv.lock` pins the application/development environment.
+
+GUI project format 2.0 embeds the current modified SBML snapshot as gzip+base64
+with SHA-256 validation; loading no longer depends on the original SBML path.
+
+Synthetic evidence decoys are diagnostics only. Publication claims require an
+independently curated benchmark:
+
+```bash
+python scripts/validate_evidence_tiers.py \
+  --benchmark independent_labels.csv --require-independent --json validation.json
+```
+
+See [`docs/validation-protocol.md`](docs/validation-protocol.md) for label
+independence, baseline/ablation, uncertainty, gap-fill holdout, MEMOTE, phenotype,
+and gene-essentiality requirements.
 
 ---
 
@@ -412,7 +445,8 @@ underlying tools:
   communities."
 - **COBRApy** — Ebrahim et al., *BMC Systems Biology* (2013).
 - **DIAMOND** — Buchfink et al., *Nature Methods* (2015, 2021).
-- Reaction evidence: **KEGG** (Kanehisa et al.) and **BiGG Models** (King et al.).
+- Reaction evidence: **KEGG** (Kanehisa et al.). **BiGG Models** supplies the
+  universal pool and identifier mappings, not an evidence score.
 
 ## License
 

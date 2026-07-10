@@ -65,8 +65,7 @@ class TestTemplateSummary:
     def test_manual_edit_many_modifications(self, summarizer: ChangeSummarizer) -> None:
         diff = ModelDiff(
             reactions_modified=[
-                ReactionChange(f"RXN{i}", "lower_bound", "0", "1")
-                for i in range(8)
+                ReactionChange(f"RXN{i}", "lower_bound", "0", "1") for i in range(8)
             ]
         )
         result = summarizer._template_summary(diff, "manual_edit")

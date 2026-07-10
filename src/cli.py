@@ -18,7 +18,7 @@ from src.core.models import (
     ReactionEvidence,
 )
 from src.gapfill.refine import apply_base_medium_to_tasks
-from src.utils.config import Config
+from src.utils.config import Config, ConfigError
 from src.utils.constants import KEGG_CODE_TO_NAME
 
 
@@ -33,6 +33,18 @@ def _format_time(seconds: float) -> str:
     if m > 0:
         return f"{m}m {s:02d}s"
     return f"{s}s"
+
+
+def _resolve_tasks_path(config: Config, explicit_path: str | None) -> str:
+    """Resolve tasks without silently applying the E. coli suite to other taxa."""
+    if explicit_path:
+        return explicit_path
+    if config.kegg_organism_code != "eco":
+        raise ValueError(
+            "The bundled default task set is E. coli-oriented; provide an "
+            "organism-specific task file with --tasks"
+        )
+    return config.default_task_file
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -82,7 +94,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--tasks",
         metavar="PATH",
         default=None,
-        help="Path to metabolic tasks CSV file. Default: universal essential tasks",
+        help=(
+            "Path to an organism-specific metabolic task CSV. The bundled "
+            "E. coli task set is used only for organism code 'eco'; required otherwise"
+        ),
     )
     gf_group.add_argument(
         "--medium",
@@ -91,7 +106,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Explicit base medium merged into every metabolic task. Accepts JSON, "
             "CSV, or inline spec like 'glc__D_e(-10);o2_e(-1000)'. If omitted, each "
-            "task uses its own self-contained medium and NO base medium is merged "
+            "task uses the task file's explicit background/task medium and NO "
+            "additional base medium is merged "
             "(the model's default medium is NOT applied; merging it would break "
             "negative-constraint tasks)."
         ),
@@ -109,10 +125,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to save gap-filling report CSV",
     )
     gf_group.add_argument(
+        "--output-manifest",
+        metavar="PATH",
+        default=None,
+        help="Path for reproducibility manifest JSON (auto-derived from another output if omitted)",
+    )
+    gf_group.add_argument(
         "--skip-evaluation",
         action="store_true",
-        help="Skip KEGG evidence evaluation of gap-fill candidates "
-        "(use default penalties)",
+        help="Skip KEGG evidence evaluation of gap-fill candidates (use default penalties)",
     )
     gf_group.add_argument(
         "--include-exchange-gapfill",
@@ -163,8 +184,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--carveme-universe-file",
         metavar="PATH",
         default=None,
-        help="Custom CarveMe reaction universe model (SBML); overrides "
-        "--carveme-universe",
+        help="Custom CarveMe reaction universe model (SBML); overrides --carveme-universe",
     )
     build_group.add_argument(
         "--carveme-gapfill-media",
@@ -215,8 +235,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build_group.add_argument(
         "--refine",
         action="store_true",
-        help="After building, run task-aware gap-fill on the built model "
-        "(single model at a time)",
+        help="After building, run task-aware gap-fill on the built model (single model at a time)",
     )
     build_group.add_argument(
         "--check-carveme",
@@ -382,11 +401,7 @@ def load_medium_argument(value: str | None, cobra_model: Any | None) -> dict[str
         exchanges = list(cobra_model.exchanges)
     except Exception:
         exchanges = []
-    return {
-        rxn.id: rxn.lower_bound
-        for rxn in exchanges
-        if getattr(rxn, "lower_bound", 0.0) < 0
-    }
+    return {rxn.id: rxn.lower_bound for rxn in exchanges if getattr(rxn, "lower_bound", 0.0) < 0}
 
 
 async def async_gapfill_main(
@@ -399,6 +414,8 @@ async def async_gapfill_main(
     output_report: str | None,
     skip_evaluation: bool,
     include_exchange_gapfill: bool = False,
+    output_manifest: str | None = None,
+    model_input_path: str | None = None,
 ) -> None:
     """Run the async gap-filling pipeline."""
     from src.core.task_parser import TaskParser
@@ -435,8 +452,8 @@ async def async_gapfill_main(
     _eprint(f"Loading metabolic tasks from {Path(tasks_path).name}...")
     task_parser = TaskParser()
     tasks = task_parser.parse(tasks_path)
-    # Tasks are self-contained (each declares its full medium). Only merge an
-    # EXPLICIT --medium; auto-merging the model's default medium would add
+    # The task file declares background/task media. Only merge an EXPLICIT
+    # --medium; auto-merging the model's default medium would add
     # nutrients (e.g. glucose) back into negative-constraint tasks that omit them
     # on purpose ("no X without carbon source"), breaking those tests and making
     # CLI disagree with the GUI.
@@ -460,36 +477,24 @@ async def async_gapfill_main(
         if skip_evaluation:
             _eprint("Skipping candidate evidence evaluation (--skip-evaluation)")
         else:
-            # Honor candidate_evidence_eager_limit so the CLI matches the GUI:
-            # defer candidate evidence for large universals, leaving default
-            # penalties for those candidates.
-            eager_limit = max(0, config.candidate_evidence_eager_limit)
-            if eager_limit and len(candidates) > eager_limit:
-                _eprint(
-                    f"Deferring candidate evidence: {len(candidates)} candidates "
-                    f"exceeds eager limit ({eager_limit}); using default penalties"
-                )
-            else:
-                _eprint(f"Evaluating {len(candidates)} candidate reactions...")
-                cand_start = time.monotonic()
+            _eprint(f"Evaluating {len(candidates)} candidate reactions...")
+            cand_start = time.monotonic()
 
-                def cand_progress(completed: int, total: int, reaction_id: str) -> None:
-                    pct = completed / total * 100 if total else 0
-                    filled = int(pct / 5)
-                    bar = "=" * filled + ">" + " " * (20 - filled - 1)
-                    elapsed = time.monotonic() - cand_start
-                    _eprint(
-                        f"\r  Candidate eval: [{bar}] {completed}/{total} ({pct:.1f}%) "
-                        f"-- {reaction_id} [{_format_time(elapsed)}]",
-                        end="",
-                    )
-
-                evidence_results = await evidence_engine.evaluate_candidates_batch(
-                    candidates, progress_callback=cand_progress
-                )
+            def cand_progress(completed: int, total: int, reaction_id: str) -> None:
+                pct = completed / total * 100 if total else 0
+                filled = int(pct / 5)
+                bar = "=" * filled + ">" + " " * (20 - filled - 1)
+                elapsed = time.monotonic() - cand_start
                 _eprint(
-                    f"\n  Candidate evaluation complete: {len(evidence_results)} reactions scored"
+                    f"\r  Candidate eval: [{bar}] {completed}/{total} ({pct:.1f}%) "
+                    f"-- {reaction_id} [{_format_time(elapsed)}]",
+                    end="",
                 )
+
+            evidence_results = await evidence_engine.evaluate_candidates_batch(
+                candidates, progress_callback=cand_progress
+            )
+            _eprint(f"\n  Candidate evaluation complete: {len(evidence_results)} reactions scored")
 
         # Step 5: Run gap-fill pipeline
         _eprint("Starting gap-fill pipeline...")
@@ -580,6 +585,50 @@ async def async_gapfill_main(
         _save_gapfill_report(output_report, gf_result, tasks)
         _eprint(f"Gap-fill report saved to {output_report}")
 
+    manifest_path = output_manifest
+    if not manifest_path and output_report:
+        manifest_path = str(Path(output_report).with_suffix(".manifest.json"))
+    if not manifest_path and output_model:
+        manifest_path = str(Path(output_model).with_suffix(".manifest.json"))
+    if manifest_path:
+        from src.utils.provenance import (
+            build_gapfill_manifest,
+            write_evidence_snapshot,
+            write_manifest,
+        )
+
+        medium_path = medium_arg if medium_arg and Path(medium_arg).is_file() else None
+        manifest_output = Path(manifest_path)
+        if manifest_output.name.endswith(".manifest.json"):
+            evidence_name = manifest_output.name[: -len(".manifest.json")] + ".evidence.json.gz"
+            evidence_path = manifest_output.with_name(evidence_name)
+        else:
+            evidence_path = manifest_output.with_suffix(".evidence.json.gz")
+        write_evidence_snapshot(evidence_path, gf_result)
+        manifest = build_gapfill_manifest(
+            config=config,
+            result=gf_result,
+            model=model_data.cobra_model,
+            inputs={
+                "draft_model": model_input_path,
+                "universal_model": universal_path,
+                "task_file": tasks_path,
+                "medium_file": medium_path,
+            },
+            outputs={
+                "model": output_model,
+                "report": output_report,
+                "evidence_snapshot": evidence_path,
+            },
+            extra={
+                "medium_inline": medium_arg if medium_arg and medium_path is None else None,
+                "skip_evaluation": skip_evaluation,
+                "include_exchange_gapfill": include_exchange_gapfill,
+            },
+        )
+        write_manifest(manifest_path, manifest)
+        _eprint(f"Reproducibility manifest saved to {manifest_path}")
+
 
 def _save_gapfill_report(
     filepath: str,
@@ -605,32 +654,72 @@ def _save_gapfill_report(
 
         # Section 2: Added reactions (with KEGG evidence provenance)
         writer.writerow(["Added Reactions"])
-        writer.writerow([
-            "Reaction ID", "Name", "Subsystem", "Penalty", "GPR",
-            "Evidence Tier", "Weight (penalty)",
-        ])
+        writer.writerow(
+            [
+                "Reaction ID",
+                "Name",
+                "Equation",
+                "Subsystem",
+                "Penalty",
+                "Evidence Tier",
+                "Evidence Rationale",
+                "KEGG IDs",
+                "Verified KEGG IDs",
+                "Metabolite Reconciliation",
+                "Stoichiometry",
+                "EC Concordance",
+                "EC Numbers",
+                "Organism Presence",
+                "Organism Genes",
+                "Assigned GPR",
+            ]
+        )
         for candidate in result.added_reactions:
             rxn = candidate.reaction
-            tier_label = (
-                candidate.evidence_tier.label if candidate.evidence_tier else "—"
+            evidence = result.evidence_results.get(rxn.id)
+            tier_label = candidate.evidence_tier.label if candidate.evidence_tier else ""
+            writer.writerow(
+                [
+                    rxn.id,
+                    rxn.name,
+                    rxn.equation,
+                    rxn.subsystem or "",
+                    f"{candidate.penalty:.4f}",
+                    tier_label,
+                    evidence.evidence_rationale if evidence else "",
+                    ";".join(evidence.kegg_reaction_ids) if evidence else "",
+                    ";".join(evidence.verified_kegg_reaction_ids) if evidence else "",
+                    evidence.reconciliation_state if evidence else "not_evaluated",
+                    evidence.stoichiometry_state if evidence else "not_evaluated",
+                    evidence.ec_concordance_state if evidence else "not_evaluated",
+                    ";".join(evidence.ec_numbers) if evidence else "",
+                    candidate.organism_exists,
+                    ";".join(candidate.kegg_organism_genes),
+                    candidate.assigned_gpr,
+                ]
             )
-            writer.writerow([
-                rxn.id,
-                rxn.name,
-                rxn.subsystem or "",
-                f"{candidate.penalty:.4f}",
-                candidate.assigned_gpr,
-                tier_label,
-                f"{candidate.penalty:.2f}",
-            ])
         writer.writerow([])
 
         # Section 3: Task results
         writer.writerow(["Task Results"])
-        writer.writerow([
-            "Task ID", "Type", "Target", "Category", "Description",
-            "Before Pass", "Before Value", "After Pass", "After Value", "Status",
-        ])
+        writer.writerow(
+            [
+                "Task ID",
+                "Type",
+                "Target",
+                "Category",
+                "Description",
+                "Before Pass",
+                "Before Value",
+                "Before Solver Status",
+                "Before Error",
+                "After Pass",
+                "After Value",
+                "After Solver Status",
+                "After Error",
+                "Status",
+            ]
+        )
         for task in tasks:
             before = before_map.get(task.task_id)
             after = after_map.get(task.task_id)
@@ -648,18 +737,24 @@ def _save_gapfill_report(
             else:
                 status = "OK"
 
-            writer.writerow([
-                task.task_id,
-                task.task_type,
-                task.target_id,
-                task.category,
-                task.description,
-                str(b_pass),
-                f"{b_val:.6f}",
-                str(a_pass),
-                f"{a_val:.6f}",
-                status,
-            ])
+            writer.writerow(
+                [
+                    task.task_id,
+                    task.task_type,
+                    task.target_id,
+                    task.category,
+                    task.description,
+                    str(b_pass),
+                    f"{b_val:.6f}",
+                    before.solver_status if before else "missing",
+                    before.error_message if before and before.error_message else "",
+                    str(a_pass),
+                    f"{a_val:.6f}",
+                    after.solver_status if after else "missing",
+                    after.error_message if after and after.error_message else "",
+                    status,
+                ]
+            )
 
 
 def _apply_carveme_overrides(config: Config, args: argparse.Namespace) -> set[str]:
@@ -815,22 +910,29 @@ def _run_build(args: argparse.Namespace, config: Config) -> None:
 
     # --- Optional refinement (reuses the full gap-fill CLI path) ---
     if args.refine:
-        from src.utils.constants import DEFAULT_TASK_FILE, DEFAULT_UNIVERSAL_MODEL
+        from src.utils.constants import DEFAULT_UNIVERSAL_MODEL
 
-        universal_path = (
-            args.universal or config.default_universal_model or DEFAULT_UNIVERSAL_MODEL
-        )
-        tasks_path = args.tasks or config.default_task_file or DEFAULT_TASK_FILE
+        if kegg:
+            config.kegg_organism_code = kegg
+            config.organism_name = KEGG_CODE_TO_NAME.get(kegg, kegg)
+        elif not args.tasks:
+            _eprint(
+                "Error: --build --refine without --organism requires an explicit "
+                "organism-specific --tasks file"
+            )
+            sys.exit(1)
+        universal_path = args.universal or config.default_universal_model or DEFAULT_UNIVERSAL_MODEL
+        try:
+            tasks_path = _resolve_tasks_path(config, args.tasks)
+        except ValueError as exc:
+            _eprint(f"Error: {exc}")
+            sys.exit(1)
         if not Path(universal_path).exists():
             _eprint(f"Error: Universal model not found: {universal_path}")
             sys.exit(1)
         if not Path(tasks_path).exists():
             _eprint(f"Error: Task file not found: {tasks_path}")
             sys.exit(1)
-
-        if kegg:
-            config.kegg_organism_code = kegg
-            config.organism_name = KEGG_CODE_TO_NAME.get(kegg, kegg)
 
         _eprint(f"\nRefining built model with tasks ({Path(tasks_path).name})...")
         asyncio.run(
@@ -844,6 +946,8 @@ def _run_build(args: argparse.Namespace, config: Config) -> None:
                 output_report=args.output_report,
                 skip_evaluation=args.skip_evaluation,
                 include_exchange_gapfill=args.include_exchange_gapfill,
+                output_manifest=args.output_manifest,
+                model_input_path=str(built.sbml_path),
             )
         )
 
@@ -861,10 +965,8 @@ def _run_pipeline_config(
         if args.config_validate:
             _eprint(f"Config OK: {args.config}")
             return
-        result = asyncio.run(
-            run_pipeline(spec, config, log=_eprint, cli_overridden=cli_overrides)
-        )
-    except PipelineError as exc:
+        result = asyncio.run(run_pipeline(spec, config, log=_eprint, cli_overridden=cli_overrides))
+    except (PipelineError, ConfigError) as exc:
         _eprint(f"Error: {exc}")
         sys.exit(1)
 
@@ -885,8 +987,12 @@ def main(argv: list[str] | None = None) -> None:
     from src.utils.logging_config import setup_logging
 
     setup_logging()
-    config = Config.load()
-    cli_overrides = _apply_carveme_overrides(config, args)
+    try:
+        config = Config.load()
+        cli_overrides = _apply_carveme_overrides(config, args)
+        config.validate()
+    except ConfigError as exc:
+        parser.error(str(exc))
 
     # YAML pipeline mode takes a config file instead of a model / FASTA.
     if args.config_validate and not args.config:
@@ -926,6 +1032,10 @@ def main(argv: list[str] | None = None) -> None:
         config.batch_size = args.batch_size
     if args.max_concurrent is not None:
         config.max_concurrent = args.max_concurrent
+    try:
+        config.validate()
+    except ConfigError as exc:
+        parser.error(str(exc))
 
     # Load model
     from src.core.sbml_parser import SBMLParser
@@ -954,10 +1064,18 @@ def main(argv: list[str] | None = None) -> None:
 
     # Gap-fill mode
     if args.gap_fill:
-        from src.utils.constants import DEFAULT_TASK_FILE, DEFAULT_UNIVERSAL_MODEL
+        from src.utils.constants import DEFAULT_UNIVERSAL_MODEL
 
+        if not args.tasks and not args.organism and not model_data.kegg_organism_code:
+            parser.error(
+                "model organism is unknown; provide --organism and an "
+                "organism-specific --tasks file"
+            )
         universal_path = args.universal or config.default_universal_model or DEFAULT_UNIVERSAL_MODEL
-        tasks_path = args.tasks or config.default_task_file or DEFAULT_TASK_FILE
+        try:
+            tasks_path = _resolve_tasks_path(config, args.tasks)
+        except ValueError as exc:
+            parser.error(str(exc))
 
         # Validate paths
         if not Path(universal_path).exists():
@@ -981,6 +1099,8 @@ def main(argv: list[str] | None = None) -> None:
                 output_report=args.output_report,
                 skip_evaluation=args.skip_evaluation,
                 include_exchange_gapfill=args.include_exchange_gapfill,
+                output_manifest=args.output_manifest,
+                model_input_path=str(model_path),
             )
         )
         return

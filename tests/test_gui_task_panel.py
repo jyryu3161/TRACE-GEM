@@ -29,10 +29,34 @@ if GUI_AVAILABLE:
 @pytest.fixture
 def sample_tasks() -> list[MetabolicTask]:
     return [
-        MetabolicTask(task_id="U001", task_type="Metabolite", target_id="atp_c", description="ATP production", category="Energy"),
-        MetabolicTask(task_id="U002", task_type="Metabolite", target_id="nadh_c", description="NADH production", category="Energy"),
-        MetabolicTask(task_id="U013", task_type="Metabolite", target_id="glu__L_c", description="Glutamate biosynthesis", category="Amino Acid"),
-        MetabolicTask(task_id="U020", task_type="Metabolite", target_id="amp_c", description="AMP biosynthesis", category="Nucleotide"),
+        MetabolicTask(
+            task_id="U001",
+            task_type="Metabolite",
+            target_id="atp_c",
+            description="ATP production",
+            category="Energy",
+        ),
+        MetabolicTask(
+            task_id="U002",
+            task_type="Metabolite",
+            target_id="nadh_c",
+            description="NADH production",
+            category="Energy",
+        ),
+        MetabolicTask(
+            task_id="U013",
+            task_type="Metabolite",
+            target_id="glu__L_c",
+            description="Glutamate biosynthesis",
+            category="Amino Acid",
+        ),
+        MetabolicTask(
+            task_id="U020",
+            task_type="Metabolite",
+            target_id="amp_c",
+            description="AMP biosynthesis",
+            category="Nucleotide",
+        ),
     ]
 
 

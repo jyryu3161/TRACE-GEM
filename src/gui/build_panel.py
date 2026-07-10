@@ -225,7 +225,9 @@ class BuildPanelWidget(QWidget):
 
         uni_row = QHBoxLayout()
         self._universe_file_edit = QLineEdit()
-        self._universe_file_edit.setPlaceholderText("(optional) custom universe SBML — overrides Universe")
+        self._universe_file_edit.setPlaceholderText(
+            "(optional) custom universe SBML — overrides Universe"
+        )
         uni_browse = QPushButton("Browse...")
         uni_browse.clicked.connect(self._browse_universe_file)
         uni_row.addWidget(self._universe_file_edit)
@@ -295,7 +297,9 @@ class BuildPanelWidget(QWidget):
 
     def _browse_universe_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select custom universe (SBML)", "",
+            self,
+            "Select custom universe (SBML)",
+            "",
             "SBML (*.xml *.xml.gz);;All Files (*)",
         )
         if path:
@@ -347,7 +351,7 @@ class BuildPanelWidget(QWidget):
         self._batch_table.insertRow(r)
         for c in range(len(_BATCH_COLUMNS)):
             self._batch_table.setItem(r, c, QTableWidgetItem(""))
-        return r
+        return int(r)
 
     def _remove_batch_row(self) -> None:
         row = self._batch_table.currentRow()
@@ -382,6 +386,7 @@ class BuildPanelWidget(QWidget):
     def get_batch_jobs(self) -> list[dict]:
         jobs: list[dict] = []
         for r in range(self._batch_table.rowCount()):
+
             def cell(c: int, r: int = r) -> str:
                 item = self._batch_table.item(r, c)
                 return item.text().strip() if item else ""
@@ -402,7 +407,7 @@ class BuildPanelWidget(QWidget):
         return jobs
 
     def get_batch_output_dir(self) -> str:
-        return self._batch_out_edit.text().strip()
+        return str(self._batch_out_edit.text()).strip()
 
     def set_busy(self, busy: bool) -> None:
         self._build_btn.setEnabled(not busy)

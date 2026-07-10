@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QRadioButton,
     QVBoxLayout,
@@ -82,11 +83,30 @@ class WorkflowWizard(QDialog):
 
         # Buttons
         buttons = QDialogButtonBox()
-        self._start_btn = buttons.addButton("Start Gap-Filling", QDialogButtonBox.ButtonRole.AcceptRole)
+        self._start_btn = buttons.addButton(
+            "Start Gap-Filling", QDialogButtonBox.ButtonRole.AcceptRole
+        )
         buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _validate_and_accept(self) -> None:
+        organism_code = self._organism_code.text().strip().lower()
+        uses_bundled_default = (
+            not self._task_skip.isChecked()
+            and not (self._task_preloaded.isChecked() and self._preloaded_tasks)
+            and not (self._task_custom.isChecked() and self._task_path.text().strip())
+        )
+        if organism_code != "eco" and uses_bundled_default:
+            QMessageBox.warning(
+                self,
+                "Organism-Specific Tasks Required",
+                "The bundled task set is E. coli-oriented. Select a custom "
+                "task file curated for this organism.",
+            )
+            return
+        self.accept()
 
     def _build_step1(self) -> QGroupBox:
         """Step 1: Model & Organism info (read-only)."""

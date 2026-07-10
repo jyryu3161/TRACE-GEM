@@ -57,6 +57,8 @@ class OrganismFilter:
         self._kegg_client = _KEGGLinkClient(cache_manager=cache_manager)
         self._organism_reactions: set[str] | None = None
         self._reaction_genes: dict[str, list[str]] = {}
+        self._lookup_failed = False
+        self._organism_data_complete = False
 
         if mapping_data:
             self._id_mapper = IdentifierMapper(mapping_data)
@@ -69,10 +71,12 @@ class OrganismFilter:
         reaction links.
         """
         self._organism_reactions = await self._load_organism_reactions()
+        self._organism_data_complete = bool(self._organism_reactions) and not self._lookup_failed
         logger.info(
-            "Loaded %d KEGG reactions for organism '%s'",
+            "Loaded %d KEGG reactions for organism '%s' (complete=%s)",
             len(self._organism_reactions),
             self._organism,
+            self._organism_data_complete,
         )
 
     async def filter_candidates(
@@ -102,7 +106,7 @@ class OrganismFilter:
                         genes = await self._get_organism_genes_for_reaction(kid)
                         candidate.kegg_organism_genes.extend(genes)
                         break
-                candidate.organism_exists = found
+                candidate.organism_exists = found if found or self._organism_data_complete else None
 
             if progress_callback:
                 progress_callback(i + 1, len(candidates), candidate.reaction.id)
@@ -167,9 +171,7 @@ class OrganismFilter:
 
         return kegg_ids
 
-    async def _get_organism_genes_for_reaction(
-        self, kegg_reaction_id: str
-    ) -> list[str]:
+    async def _get_organism_genes_for_reaction(self, kegg_reaction_id: str) -> list[str]:
         """Get organism-specific genes for a reaction.
 
         Genes are populated while loading the organism reaction set. KEGG's
@@ -223,10 +225,9 @@ class OrganismFilter:
         from the evidence path, where a KEGG outage is surfaced as an error.
         """
         try:
-            return await self._kegg_client.get(
-                path, cache_key=cache_key, cache_ttl=cache_ttl
-            )
+            return await self._kegg_client.get(path, cache_key=cache_key, cache_ttl=cache_ttl)
         except APIUnavailableError as exc:
+            self._lookup_failed = True
             logger.warning("[organism_filter] KEGG unavailable for %s: %s", path, exc)
             return None
 
@@ -257,15 +258,11 @@ class OrganismFilter:
                 reaction_ids.add(reaction_id)
 
         self._reaction_genes = {
-            reaction_id: sorted(genes)
-            for reaction_id, genes in reaction_genes.items()
-            if genes
+            reaction_id: sorted(genes) for reaction_id, genes in reaction_genes.items() if genes
         }
 
         if not reaction_ids:
-            logger.warning(
-                "No KEGG reaction data for organism '%s'", self._organism
-            )
+            logger.warning("No KEGG reaction data for organism '%s'", self._organism)
 
         return reaction_ids
 

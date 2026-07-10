@@ -15,21 +15,23 @@ logger = logging.getLogger("metataskgapfill.cobra_utils")
 # whose ID lowercases to one of these (e.g. CarveMe's ``St``) optimizes fine
 # in memory but corrupts any LP-text round-trip the solver performs
 # (model.copy()/clone, snapshots), so they must be renamed or removed.
-SOLVER_RESERVED_REACTION_IDS = frozenset({
-    "bounds",
-    "binaries",
-    "binary",
-    "end",
-    "generals",
-    "general",
-    "maximize",
-    "maximise",
-    "minimize",
-    "minimise",
-    "st",
-    "subject",
-    "subjectto",
-})
+SOLVER_RESERVED_REACTION_IDS = frozenset(
+    {
+        "bounds",
+        "binaries",
+        "binary",
+        "end",
+        "generals",
+        "general",
+        "maximize",
+        "maximise",
+        "minimize",
+        "minimise",
+        "st",
+        "subject",
+        "subjectto",
+    }
+)
 
 
 def is_solver_reserved_id(rxn_id: str) -> bool:

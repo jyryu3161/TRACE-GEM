@@ -68,9 +68,7 @@ class UniversalLoader:
             return self.load_json(filepath)
         if suffix in (".xml", ".sbml"):
             return self.load_sbml(filepath)
-        raise ValueError(
-            f"Unsupported file format '{suffix}'. Expected .json, .xml, or .sbml."
-        )
+        raise ValueError(f"Unsupported file format '{suffix}'. Expected .json, .xml, or .sbml.")
 
     def load_json(self, filepath: str | Path) -> cobra.Model:
         """Load a universal model from BiGG JSON format."""
@@ -128,9 +126,7 @@ class UniversalLoader:
                 continue
 
             normalized = rxn.id.lower()
-            normalized_no_prefix = (
-                rxn.id[2:].lower() if rxn.id.startswith("R_") else rxn.id.lower()
-            )
+            normalized_no_prefix = rxn.id[2:].lower() if rxn.id.startswith("R_") else rxn.id.lower()
 
             if normalized in model_ids or normalized_no_prefix in model_ids:
                 continue
@@ -201,7 +197,8 @@ class UniversalLoader:
     def _remove_solver_reserved_reactions(self, model: cobra.Model) -> None:
         """Remove reactions whose IDs collide with LP/MPS solver keywords."""
         to_remove = [
-            rxn for rxn in model.reactions
+            rxn
+            for rxn in model.reactions
             if rxn.id.replace(" ", "").lower() in _SOLVER_RESERVED_REACTION_IDS
         ]
         if not to_remove:

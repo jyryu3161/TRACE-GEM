@@ -156,9 +156,7 @@ class ReactionFilterProxy(QSortFilterProxyModel):
                 return False
 
         # Subsystem filter
-        return not (
-            self._subsystem_filter and (rxn.subsystem or "") != self._subsystem_filter
-        )
+        return not (self._subsystem_filter and (rxn.subsystem or "") != self._subsystem_filter)
 
 
 class ReactionTableWidget(QWidget):

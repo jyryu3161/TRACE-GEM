@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,18 +46,30 @@ class VersionManager:
         otherwise orphan its prior edit history and split the graph into
         disconnected roots.
         """
-        self._model_id = model_id
-
         existing = self._storage.load_history(model_id)
         if existing:
-            self._current_version = existing[-1]
+            latest_model, _ = self._storage.load_version(model_id, existing[-1].version_id)
+            if self._fingerprint(latest_model) == self._fingerprint(cobra_model):
+                self._model_id = model_id
+                self._current_version = existing[-1]
+                self._previous_model = cobra_model.copy()
+                logger.info(
+                    "Resumed existing history for %s at %s (%d version(s))",
+                    model_id,
+                    existing[-1].version_id,
+                    len(existing),
+                )
+                return
+            model_id = f"{model_id}__{self._fingerprint(cobra_model)[:12]}"
+
+        self._model_id = model_id
+        namespaced = self._storage.load_history(model_id)
+        if namespaced:
+            latest_model, _ = self._storage.load_version(model_id, namespaced[-1].version_id)
+            if self._fingerprint(latest_model) != self._fingerprint(cobra_model):
+                raise RuntimeError(f"Model fingerprint collision for version history {model_id}")
+            self._current_version = namespaced[-1]
             self._previous_model = cobra_model.copy()
-            logger.info(
-                "Resumed existing history for %s at %s (%d version(s))",
-                model_id,
-                existing[-1].version_id,
-                len(existing),
-            )
             return
 
         # Build a diff that captures the full model as "added"
@@ -100,9 +114,7 @@ class VersionManager:
             The newly created ModelVersion.
         """
         if self._previous_model is None:
-            raise RuntimeError(
-                "No base model set. Call set_base_model() first."
-            )
+            raise RuntimeError("No base model set. Call set_base_model() first.")
 
         diff = self._diff_engine.compute_diff(self._previous_model, cobra_model)
 
@@ -187,9 +199,7 @@ class VersionManager:
         """Return the full version history for the current model."""
         return self._storage.load_history(self._model_id)
 
-    def compare_versions(
-        self, version_a: str, version_b: str
-    ) -> ModelDiff:
+    def compare_versions(self, version_a: str, version_b: str) -> ModelDiff:
         """Compare two versions by loading and diffing their models."""
         model_a, _ = self._storage.load_version(self._model_id, version_a)
         model_b, _ = self._storage.load_version(self._model_id, version_b)
@@ -202,15 +212,27 @@ class VersionManager:
     def rename_version(self, version_id: str, new_id: str) -> None:
         """Rename a version ID."""
         self._storage.rename_version(self._model_id, version_id, new_id)
-        # Update current version reference if renamed
-        if self._current_version and self._current_version.version_id == version_id:
-            self._current_version.version_id = new_id
+        current_id = (
+            new_id
+            if (self._current_version and self._current_version.version_id == version_id)
+            else (self._current_version.version_id if self._current_version else None)
+        )
+        self._current_version = next(
+            (version for version in self.get_history() if version.version_id == current_id),
+            None,
+        )
 
     def delete_version(self, version_id: str) -> None:
         """Delete a version. Cannot delete the current version."""
         if self._current_version and self._current_version.version_id == version_id:
             raise ValueError("Cannot delete the current version")
         self._storage.delete_version(self._model_id, version_id)
+        if self._current_version:
+            current_id = self._current_version.version_id
+            self._current_version = next(
+                (version for version in self.get_history() if version.version_id == current_id),
+                self._current_version,
+            )
 
     @property
     def current_version(self) -> ModelVersion | None:
@@ -224,3 +246,41 @@ class VersionManager:
     @staticmethod
     def _now() -> str:
         return datetime.now(tz=timezone.utc).isoformat()
+
+    @staticmethod
+    def _fingerprint(model: cobra.Model) -> str:
+        payload = {
+            "reactions": [
+                {
+                    "id": reaction.id,
+                    "bounds": [reaction.lower_bound, reaction.upper_bound],
+                    "gpr": reaction.gene_reaction_rule,
+                    "name": reaction.name,
+                    "subsystem": reaction.subsystem,
+                    "annotation": reaction.annotation,
+                    "objective_coefficient": reaction.objective_coefficient,
+                    "metabolites": sorted(
+                        (metabolite.id, coefficient)
+                        for metabolite, coefficient in reaction.metabolites.items()
+                    ),
+                }
+                for reaction in sorted(model.reactions, key=lambda item: item.id)
+            ],
+            "metabolites": [
+                {
+                    "id": metabolite.id,
+                    "name": metabolite.name,
+                    "formula": metabolite.formula,
+                    # SBML round-trips an unspecified charge as zero; normalize
+                    # those equivalent states so reopening the same snapshot
+                    # resumes its history instead of creating a false collision.
+                    "charge": metabolite.charge or 0,
+                    "compartment": metabolite.compartment,
+                    "annotation": metabolite.annotation,
+                }
+                for metabolite in sorted(model.metabolites, key=lambda item: item.id)
+            ],
+            "objective_direction": model.objective.direction,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(encoded).hexdigest()

@@ -65,6 +65,8 @@ class TaskSimulationWorker(QRunnable):
         try:
             from src.core.task_parser import TaskRunner
 
+            if self._cobra_model is None:
+                raise RuntimeError("No COBRA model available for removal simulation")
             test_model = self._cobra_model.copy()
             rxn = test_model.reactions.get_by_id(self._reaction_id)
             test_model.remove_reactions([rxn], remove_orphans=True)
@@ -143,7 +145,9 @@ class ReactionRemovalDialog(QDialog):
         # Buttons
         self._buttons = QDialogButtonBox()
         self._cancel_btn = self._buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
-        self._remove_btn = self._buttons.addButton("Remove Reaction", QDialogButtonBox.ButtonRole.AcceptRole)
+        self._remove_btn = self._buttons.addButton(
+            "Remove Reaction", QDialogButtonBox.ButtonRole.AcceptRole
+        )
         self._remove_btn.setStyleSheet(
             "QPushButton { background-color: #c0392b; color: white; font-weight: bold; padding: 6px 16px; }"
             "QPushButton:hover { background-color: #e74c3c; }"
@@ -161,9 +165,7 @@ class ReactionRemovalDialog(QDialog):
             self._summary_label.setVisible(True)
             return
 
-        worker = TaskSimulationWorker(
-            self._cobra_model, self._reaction.id, self._tasks
-        )
+        worker = TaskSimulationWorker(self._cobra_model, self._reaction.id, self._tasks)
         worker.signals.finished.connect(self._on_simulation_done)
         worker.signals.error.connect(self._on_simulation_error)
         QThreadPool.globalInstance().start(worker)
@@ -227,7 +229,9 @@ class ReactionRemovalDialog(QDialog):
             self._warning_label.setText(f"{regressions} task(s) will fail after removal.")
             self._warning_label.setStyleSheet("color: #f39c12; font-weight: bold; padding: 4px;")
         else:
-            self._warning_label.setText(f"{regressions} tasks will fail — significant model impact!")
+            self._warning_label.setText(
+                f"{regressions} tasks will fail — significant model impact!"
+            )
             self._warning_label.setStyleSheet("color: #e74c3c; font-weight: bold; padding: 4px;")
         self._warning_label.setVisible(True)
 

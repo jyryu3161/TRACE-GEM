@@ -98,9 +98,7 @@ class ModelOverviewWidget(QWidget):
         self._uni_evaluated.setText(f"0 / {candidates}")
 
         if self._universal_tab_index is None:
-            self._universal_tab_index = self._tabs.addTab(
-                self._universal_page, "Universal"
-            )
+            self._universal_tab_index = self._tabs.addTab(self._universal_page, "Universal")
         self._tabs.setCurrentIndex(self._universal_tab_index)
 
     def update_universal_evaluation_count(self, evaluated: int, total: int) -> None:

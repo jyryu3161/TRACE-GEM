@@ -1,5 +1,8 @@
 """Constants for MetaTaskGapFill."""
 
+import site
+import sys
+import sysconfig
 from pathlib import Path
 
 APP_NAME = "MetaTaskGapFill"
@@ -10,6 +13,24 @@ CONFIG_DIR = Path.home() / ".metataskgapfill"
 CACHE_DB_PATH = CONFIG_DIR / "cache.db"
 CONFIG_FILE_PATH = CONFIG_DIR / "config.json"
 LOG_DIR = CONFIG_DIR / "logs"
+
+# Source checkouts keep data beside ``src``; wheels install the same files
+# below the environment prefix via ``tool.setuptools.data-files``.
+_SOURCE_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DATA_DIR_CANDIDATES = (
+    _SOURCE_DATA_DIR,
+    Path(sysconfig.get_path("data") or sys.prefix) / "share" / "metatask-gapfill" / "data",
+    Path(site.USER_BASE or sys.prefix) / "share" / "metatask-gapfill" / "data",
+    Path(sys.prefix) / "share" / "metatask-gapfill" / "data",
+)
+DATA_DIR = next(
+    (
+        candidate
+        for candidate in _DATA_DIR_CANDIDATES
+        if (candidate / "universal_essential_tasks.csv").is_file()
+    ),
+    _DATA_DIR_CANDIDATES[1],
+)
 
 # Cache TTL (seconds)
 API_CACHE_TTL = 7 * 24 * 3600  # 7 days
@@ -24,12 +45,6 @@ BIGG_API_BASE = "https://bigg.ucsd.edu/api/v2"
 RATE_LIMITS = {
     "kegg": 3.0,
     "bigg": 5.0,
-}
-
-# Scoring weights
-SOURCE_WEIGHTS = {
-    "kegg": 0.70,
-    "bigg": 0.30,
 }
 
 # Batch processing
@@ -49,10 +64,9 @@ KEGG_CODE_TO_NAME: dict[str, str] = {
 
 # Common organism mappings (model ID prefix -> KEGG org code)
 # Gap-fill defaults
-DEFAULT_UNIVERSAL_MODEL = "data/bigg_universal_model_fixed.json"
-DEFAULT_TASK_FILE = "data/universal_essential_tasks.csv"
+DEFAULT_UNIVERSAL_MODEL = str(DATA_DIR / "bigg_universal_model_fixed.json")
+DEFAULT_TASK_FILE = str(DATA_DIR / "universal_essential_tasks.csv")
 GAPFILL_LOWER_BOUND = 0.05
-GAPFILL_MAX_PENALTY = 1000.0
 ORGANISM_FILTER_CACHE_TTL = 30 * 24 * 3600  # 30 days
 
 # Version control defaults

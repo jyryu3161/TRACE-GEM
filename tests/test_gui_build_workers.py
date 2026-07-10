@@ -181,8 +181,16 @@ def test_build_model_worker_success(monkeypatch) -> None:
 
     built = _fake_built()
 
-    def fake_build_one(self, fasta_path, kegg_code, options=None, output_path=None,
-                       on_line=None, cancel_token=None, label=""):
+    def fake_build_one(
+        self,
+        fasta_path,
+        kegg_code,
+        options=None,
+        output_path=None,
+        on_line=None,
+        cancel_token=None,
+        label="",
+    ):
         if on_line:
             on_line("carve: building...")
         return built
@@ -228,8 +236,15 @@ def test_batch_build_worker(monkeypatch) -> None:
     from src.gui.workers import BatchBuildWorker
     from src.utils.config import Config
 
-    def fake_build_batch(self, jobs, options=None, output_dir=None, on_line=None,
-                         on_model_built=None, cancel_token=None):
+    def fake_build_batch(
+        self,
+        jobs,
+        options=None,
+        output_dir=None,
+        on_line=None,
+        on_model_built=None,
+        cancel_token=None,
+    ):
         results = []
         for i, job in enumerate(jobs):
             item = BuildItemResult(job=job, carve_result=None, built=_fake_built(job.label))

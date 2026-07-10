@@ -35,15 +35,22 @@ class TestModelDataRemoveReaction:
     def test_orphaned_metabolites_cleaned(self):
         """Metabolites only used by the removed reaction should be cleaned up."""
         rxn_a = Reaction(
-            id="A", name="A", equation="x -> y",
-            reactants={"x_c": 1.0}, products={"y_c": 1.0},
+            id="A",
+            name="A",
+            equation="x -> y",
+            reactants={"x_c": 1.0},
+            products={"y_c": 1.0},
         )
         rxn_b = Reaction(
-            id="B", name="B", equation="y -> z",
-            reactants={"y_c": 1.0}, products={"z_c": 1.0},
+            id="B",
+            name="B",
+            equation="y -> z",
+            reactants={"y_c": 1.0},
+            products={"z_c": 1.0},
         )
         model = ModelData(
-            id="test", name="Test",
+            id="test",
+            name="Test",
             reactions=[rxn_a, rxn_b],
             metabolites=[
                 Metabolite(id="x_c", name="X"),
@@ -55,21 +62,28 @@ class TestModelDataRemoveReaction:
         model.remove_reaction("A")
         met_ids = {m.id for m in model.metabolites}
         assert "x_c" not in met_ids  # orphaned, removed
-        assert "y_c" in met_ids      # still used by B
-        assert "z_c" in met_ids      # still used by B
+        assert "y_c" in met_ids  # still used by B
+        assert "z_c" in met_ids  # still used by B
 
     def test_orphaned_genes_cleaned(self):
         """Genes only used by the removed reaction should be cleaned up."""
         rxn_a = Reaction(
-            id="A", name="A", equation="x -> y",
-            genes=["g1", "g2"], gene_reaction_rule="g1 and g2",  # genes are str IDs
+            id="A",
+            name="A",
+            equation="x -> y",
+            genes=["g1", "g2"],
+            gene_reaction_rule="g1 and g2",  # genes are str IDs
         )
         rxn_b = Reaction(
-            id="B", name="B", equation="y -> z",
-            genes=["g2", "g3"], gene_reaction_rule="g2 or g3",
+            id="B",
+            name="B",
+            equation="y -> z",
+            genes=["g2", "g3"],
+            gene_reaction_rule="g2 or g3",
         )
         model = ModelData(
-            id="test", name="Test",
+            id="test",
+            name="Test",
             reactions=[rxn_a, rxn_b],
             genes=[
                 Gene(id="g1", name="Gene1"),
@@ -80,8 +94,8 @@ class TestModelDataRemoveReaction:
         model.remove_reaction("A")
         gene_ids = {g.id for g in model.genes}
         assert "g1" not in gene_ids  # orphaned, removed
-        assert "g2" in gene_ids      # still used by B
-        assert "g3" in gene_ids      # still used by B
+        assert "g2" in gene_ids  # still used by B
+        assert "g3" in gene_ids  # still used by B
 
     def test_shared_metabolites_kept(self, sample_model):
         """h2o_c used by ENO should remain if other reactions also use it."""
