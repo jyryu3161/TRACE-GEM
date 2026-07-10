@@ -16,6 +16,8 @@ jobs:
       QT_API: pyside6
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - name: Install Qt runtime libraries
         run: |
           sudo apt-get update
@@ -35,6 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
