@@ -31,7 +31,8 @@ interface, and can be orchestrated end-to-end from a single YAML configuration f
 9. [Important notes and caveats](#important-notes-and-caveats)
 10. [Testing](#testing)
 11. [Project structure](#project-structure)
-12. [Citing](#citing-and-acknowledgements)
+12. [Related projects](#related-projects)
+13. [Citing](#citing-and-acknowledgements)
 
 ---
 
@@ -440,6 +441,16 @@ src/
 ├── app.py             # GUI entry point
 └── cli.py             # CLI entry point (gap-fill / build / pipeline)
 ```
+
+---
+
+## Related projects
+
+TRACE-GEM is part of a complementary genome-scale metabolic modeling toolchain:
+
+- [**CMM — Cellular Metabolic Modeling Platform**](https://github.com/jyryu3161/CMM): constraint-based single-model analysis, omics integration, perturbation, strain-design, and visualization workflows.
+- [**CMIG — Community Metabolic Interaction GUI**](https://github.com/jyryu3161/CMIG): desktop and command-line workflows for microbial-community and host–microbe metabolic interaction analysis.
+- [**troppo — modified fork**](https://github.com/jyryu3161/troppo): this project's maintained fork of the [BioSystemsUM/troppo](https://github.com/BioSystemsUM/troppo) reconstruction-algorithms library for Python.
 
 ---
 
