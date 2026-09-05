@@ -528,6 +528,10 @@ class MainWindow(QMainWindow):
             return
         self._model = model
         self._workflow_checkpoint = None  # Clear checkpoint on new model load
+        if self._pending_project is None:
+            self._project_path = None
+            self._project_dirty = False
+            self._update_title()
 
         # Skip organism dialog when loading from a project file
         result: tuple[str, str] | None

@@ -211,6 +211,8 @@ class TaskRunner:
     @staticmethod
     def _build_id_maps(
         model: cobra.Model,
+        *,
+        additional_model: cobra.Model | None = None,
     ) -> tuple[dict[str, str], dict[str, str], dict[str, list[str]]]:
         """Build normalised-ID → actual-ID maps for reactions and metabolites.
 
@@ -227,12 +229,31 @@ class TaskRunner:
         ``EX_glc_e`` vs ``EX_glc__D_e``), we also pair them by shared
         boundary metabolite and merge the groups.
 
+        An optional additional model supplies candidate IDs after the draft's
+        IDs, matching COBRA's insertion order without adding its reactions.
+
         Returns ``(reaction_map, metabolite_map, exchange_groups)``.
         """
+        reactions = list(model.reactions)
+        metabolites = list(model.metabolites)
+        if additional_model is not None:
+            reaction_ids = {reaction.id for reaction in reactions}
+            metabolite_ids = {metabolite.id for metabolite in metabolites}
+            reactions.extend(
+                reaction
+                for reaction in additional_model.reactions
+                if reaction.id not in reaction_ids
+            )
+            metabolites.extend(
+                metabolite
+                for metabolite in additional_model.metabolites
+                if metabolite.id not in metabolite_ids
+            )
+
         rxn_map: dict[str, str] = {}
         exchange_groups: dict[str, list[str]] = {}
 
-        for rxn in model.reactions:
+        for rxn in reactions:
             rxn_map[rxn.id] = rxn.id  # exact match always available
             norm = TaskRunner._normalize_id(rxn.id)
             if norm == rxn.id:
@@ -254,7 +275,7 @@ class TaskRunner:
         boundary_met_to_rxn: dict[str, str] = {}  # boundary_met_id → boundary EX_ rxn id
         lparen_met_to_key: dict[str, str] = {}  # boundary_met_id → normalised key of _LPAREN_ rxn
 
-        for rxn in model.reactions:
+        for rxn in reactions:
             if not rxn.id.startswith("EX_"):
                 continue
             met_ids = {m.id for m in rxn.metabolites}
@@ -284,7 +305,7 @@ class TaskRunner:
             exchange_groups[boundary_key] = all_ids_list
 
         met_map: dict[str, str] = {}
-        for met in model.metabolites:
+        for met in metabolites:
             met_map[met.id] = met.id
             norm = TaskRunner._normalize_id(met.id)
             if norm == met.id:
@@ -466,6 +487,7 @@ class TaskRunner:
             )
             model.add_reactions([obj_rxn])
             model.objective = obj_rxn.id
+            model.objective_direction = "max"
             return
 
         if task.task_type == "Reaction":
@@ -473,6 +495,7 @@ class TaskRunner:
             if not actual_rxn_id:
                 raise ValueError(f"Reaction '{task.target_id}' not found in model")
             model.objective = actual_rxn_id
+            model.objective_direction = "max"
             return
 
         raise ValueError(f"Unknown task type: {task.task_type}")
@@ -641,8 +664,7 @@ class TaskRunner:
                 for actual_id in group:
                     try:
                         rxn = model.reactions.get_by_id(actual_id)
-                        rxn.lower_bound = lower
-                        rxn.upper_bound = upper
+                        rxn.bounds = (lower, upper)
                     except KeyError:
                         logger.warning(
                             "Reaction '%s' (group member '%s') not found for constraint",
@@ -656,8 +678,7 @@ class TaskRunner:
                 if actual_id:
                     try:
                         rxn = model.reactions.get_by_id(actual_id)
-                        rxn.lower_bound = lower
-                        rxn.upper_bound = upper
+                        rxn.bounds = (lower, upper)
                     except KeyError:
                         logger.warning("Reaction '%s' (resolved '%s') not found", rxn_id, actual_id)
                 else:

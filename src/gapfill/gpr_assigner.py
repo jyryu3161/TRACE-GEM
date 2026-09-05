@@ -36,7 +36,7 @@ class GPRAssigner:
         return self._session
 
     async def _kegg_get(self, path: str) -> str | None:
-        """Make a rate-limited GET request to KEGG API."""
+        """Return KEGG text, empty text for 404, or None for a failed lookup."""
         await self._rate_limiter.acquire()
         url = f"{KEGG_API_BASE}/{path.lstrip('/')}"
         try:
@@ -45,7 +45,7 @@ class GPRAssigner:
                 if resp.status == 200:
                     return await resp.text()
                 if resp.status == 404:
-                    return None
+                    return ""
                 logger.warning("KEGG API returned %d for %s", resp.status, path)
                 return None
         except (aiohttp.ClientError, TimeoutError) as e:
@@ -88,7 +88,8 @@ class GPRAssigner:
         GET /link/{organism}/ko:{ko_id}
         Uses cache with 30-day TTL.
         """
-        cache_key = f"ko_genes:{self._organism}:{ko_id}"
+        # Legacy entries may contain temporary lookup failures cached as absence.
+        cache_key = f"ko_genes:v2:{self._organism}:{ko_id}"
 
         if self._cache:
             cached = await self._cache.get(cache_key)
@@ -96,6 +97,9 @@ class GPRAssigner:
                 return [str(gene) for gene in cached]
 
         text = await self._kegg_get(f"link/{self._organism}/ko:{ko_id}")
+        if text is None:
+            # A temporary lookup failure must not become cached gene absence.
+            return []
         genes: list[str] = []
         if text:
             genes = self._parse_link_response(text)
@@ -171,7 +175,7 @@ class GPRAssigner:
         for i, candidate in enumerate(candidates):
             evidence = (evidence_results or {}).get(candidate.reaction.id)
             kegg_ids = list(evidence.verified_kegg_reaction_ids) if evidence else []
-            if not kegg_ids:
+            if evidence is None:
                 kegg_ids = candidate.reaction.annotation.get(
                     "kegg.reaction", []
                 ) or candidate.reaction.annotation.get("KEGG Reaction", [])

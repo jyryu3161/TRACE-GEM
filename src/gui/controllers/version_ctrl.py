@@ -127,6 +127,7 @@ class VersionController:
 
             # Refresh both the COBRA model and the GUI-facing ModelData lists.
             sync_model_data_from_cobra(self._w._model, restored_model)
+            self._w._mark_dirty()
 
             # Refresh all panels
             self._w._reaction_table.set_model_data(self._w._model)

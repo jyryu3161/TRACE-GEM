@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
-from src.core.models import CandidateReaction, Reaction
+from src.cache.cache_manager import CacheManager
+from src.core.models import CandidateReaction, EvaluationStatus, Reaction, ReactionEvidence
 from src.gapfill.gpr_assigner import GPRAssigner
 
 
@@ -14,6 +16,15 @@ class TestGPRAssigner:
     @pytest.fixture
     def assigner(self) -> GPRAssigner:
         return GPRAssigner(organism_code="eco", cache_manager=None)
+
+    @pytest.fixture
+    async def cache(self, tmp_path):
+        cache = CacheManager(tmp_path / "gpr_cache.db")
+        await cache.initialize()
+        try:
+            yield cache
+        finally:
+            await cache.close()
 
     async def test_assign_gpr_single_ko(self, assigner: GPRAssigner) -> None:
         """Single KO with multiple genes -> 'gene1 or gene2'."""
@@ -143,6 +154,115 @@ class TestGPRAssigner:
 
         mock_assign.assert_awaited_once_with("R01324", allowed_gene_ids=None)
         assert candidate.assigned_gpr == "b0118"
+
+    @pytest.mark.parametrize("evidence_state", ["missing", "rejected", "verified"])
+    async def test_assign_batch_respects_verified_identity(
+        self, assigner: GPRAssigner, evidence_state: str
+    ) -> None:
+        candidate = CandidateReaction(
+            Reaction(
+                id="RXN_A",
+                name="A",
+                equation="A -> B",
+                annotation={"kegg.reaction": ["R00001"]},
+            )
+        )
+        evidence_results = {}
+        if evidence_state != "missing":
+            evidence_results["RXN_A"] = ReactionEvidence(
+                reaction_id="RXN_A",
+                status=EvaluationStatus.EVALUATED,
+                kegg_reaction_ids=["R00001"],
+                verified_kegg_reaction_ids=["R00002"] if evidence_state == "verified" else [],
+                kegg_anchored=True,
+                reconciliation_state="full"
+                if evidence_state == "verified"
+                else "none_contradictory",
+            )
+        progress = []
+        with patch.object(assigner, "assign_gpr", new_callable=AsyncMock) as mock_assign:
+            mock_assign.return_value = ("b2388", ["b2388"])
+            await assigner.assign_batch(
+                [candidate],
+                evidence_results=evidence_results,
+                allowed_gene_ids={"b2388"},
+                progress_callback=lambda current, total, rid: progress.append(
+                    (current, total, rid)
+                ),
+            )
+
+        if evidence_state == "rejected":
+            mock_assign.assert_not_awaited()
+            assert candidate.assigned_gpr == ""
+            assert candidate.kegg_organism_genes == []
+        else:
+            expected_id = "R00002" if evidence_state == "verified" else "R00001"
+            mock_assign.assert_awaited_once_with(expected_id, allowed_gene_ids={"b2388"})
+            assert candidate.assigned_gpr == "b2388"
+            assert candidate.kegg_organism_genes == ["b2388"]
+        assert progress == [(1, 1, "RXN_A")]
+
+    @pytest.mark.parametrize(
+        "failure",
+        [503, 429, TimeoutError("timeout"), aiohttp.ClientConnectionError("connection lost")],
+        ids=["http503", "http429", "timeout", "connection_error"],
+    )
+    async def test_gene_lookup_recovers_after_uncached_failure(
+        self, cache: CacheManager, failure: int | Exception
+    ) -> None:
+        assigner = GPRAssigner("eco", cache)
+        failed_context = MagicMock()
+        if isinstance(failure, Exception):
+            failed_context.__aenter__.side_effect = failure
+        else:
+            failed_context.__aenter__.return_value = MagicMock(status=failure)
+        recovered_response = MagicMock(status=200)
+        recovered_response.text = AsyncMock(return_value="ko:K01689\teco:b2779\n")
+        recovered_context = MagicMock()
+        recovered_context.__aenter__.return_value = recovered_response
+        session = MagicMock()
+        session.get.side_effect = [failed_context, recovered_context]
+
+        with patch.object(assigner, "_get_session", new_callable=AsyncMock, return_value=session):
+            assert await assigner._get_genes_for_ko("K01689") == []
+            assert await cache.get("ko_genes:v2:eco:K01689") is None
+            assert await assigner._get_genes_for_ko("K01689") == ["b2779"]
+            assert await cache.get("ko_genes:v2:eco:K01689") == ["b2779"]
+            assert await assigner._get_genes_for_ko("K01689") == ["b2779"]
+
+        assert session.get.call_count == 2
+
+    @pytest.mark.parametrize("status", [200, 404])
+    async def test_confirmed_empty_gene_lookup_is_cached(
+        self, cache: CacheManager, status: int
+    ) -> None:
+        assigner = GPRAssigner("eco", cache)
+        response = MagicMock(status=status)
+        response.text = AsyncMock(return_value="")
+        session = MagicMock()
+        session.get.return_value.__aenter__.return_value = response
+
+        with patch.object(assigner, "_get_session", new_callable=AsyncMock, return_value=session):
+            assert await assigner._get_genes_for_ko("K01689") == []
+            assert await cache.get("ko_genes:v2:eco:K01689") == []
+            assert await assigner._get_genes_for_ko("K01689") == []
+
+        assert session.get.call_count == 1
+
+    async def test_legacy_empty_gene_cache_is_refreshed(self, cache: CacheManager) -> None:
+        await cache.set("ko_genes:eco:K01689", [])
+        assigner = GPRAssigner("eco", cache)
+        response = MagicMock(status=200)
+        response.text = AsyncMock(return_value="ko:K01689\teco:b2779\n")
+        session = MagicMock()
+        session.get.return_value.__aenter__.return_value = response
+
+        with patch.object(assigner, "_get_session", new_callable=AsyncMock, return_value=session):
+            assert await assigner._get_genes_for_ko("K01689") == ["b2779"]
+            assert await cache.get("ko_genes:v2:eco:K01689") == ["b2779"]
+            assert await assigner._get_genes_for_ko("K01689") == ["b2779"]
+
+        assert session.get.call_count == 1
 
     async def test_assign_gpr_filters_to_genes_present_in_model(
         self, assigner: GPRAssigner

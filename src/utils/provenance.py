@@ -157,7 +157,11 @@ def build_gapfill_manifest(
             "tier_counts": dict(sorted(tier_counts.items())),
         },
         "configuration": _config_snapshot(config),
-        "penalty_policy": PenaltyCalculator(config).parameters(),
+        "penalty_policy": (
+            {"mode": "unweighted", "candidate_penalty": 1.0}
+            if (extra or {}).get("skip_evaluation", False)
+            else {"mode": "evidence_weighted", **PenaltyCalculator(config).parameters()}
+        ),
         "result": {
             "total_tasks": result.total_tasks,
             "tasks_fixed": result.tasks_fixed,

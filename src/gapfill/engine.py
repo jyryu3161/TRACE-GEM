@@ -47,8 +47,9 @@ class GapFillEngine:
     5. testing_after: Run all tasks on improved model
     """
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, *, evidence_weighted: bool = True) -> None:
         self._config = config
+        self._evidence_weighted = evidence_weighted
         self._task_runner = TaskRunner()
         self._penalty_calc = PenaltyCalculator(config)
         self._gpr_assigner: GPRAssigner | None = None
@@ -61,12 +62,13 @@ class GapFillEngine:
         mapping_data: MappingData | None = None,
     ) -> None:
         """Initialize organism filter and GPR assigner."""
-        self._organism_filter = OrganismFilter(
-            organism_code=organism_code,
-            cache_manager=cache_manager,
-            mapping_data=mapping_data,
-        )
-        await self._organism_filter.initialize()
+        if self._evidence_weighted:
+            self._organism_filter = OrganismFilter(
+                organism_code=organism_code,
+                cache_manager=cache_manager,
+                mapping_data=mapping_data,
+            )
+            await self._organism_filter.initialize()
 
         self._gpr_assigner = GPRAssigner(
             organism_code=organism_code,
@@ -109,6 +111,9 @@ class GapFillEngine:
 
         Returns:
             GapFillResult with before/after task results and added reactions.
+
+        With ``evidence_weighted=False``, every candidate costs 1 regardless of
+        evidence or organism annotations. GPR assignment happens after selection.
         """
         result = preloaded_result or GapFillResult()
         result.total_tasks = len(tasks)
@@ -165,7 +170,7 @@ class GapFillEngine:
 
         # Phase 2: Organism filtering
         if start_phase <= 2:
-            if self._organism_filter:
+            if self._evidence_weighted and self._organism_filter:
                 _progress("filtering", 0, len(candidates), "Filtering by organism...")
                 await self._organism_filter.filter_candidates(
                     candidates,
@@ -174,13 +179,19 @@ class GapFillEngine:
                 logger.info("Phase 2 complete: organism filtering done")
 
             # Calculate penalties
-            penalties = self._penalty_calc.calculate_batch(candidates, evidence_results)
+            penalties = (
+                self._penalty_calc.calculate_batch(candidates, evidence_results)
+                if self._evidence_weighted
+                else {candidate.reaction.id: 1.0 for candidate in candidates}
+            )
             # Update candidate penalties
             for candidate in candidates:
                 if candidate.reaction.id in penalties:
                     candidate.penalty = penalties[candidate.reaction.id]
                 ev = evidence_results.get(candidate.reaction.id)
-                if ev is not None:
+                if not self._evidence_weighted:
+                    candidate.evidence_tier = None
+                elif ev is not None:
                     candidate.evidence_tier = ev.evidence_tier
 
             result.all_candidates = list(candidates)
@@ -191,12 +202,18 @@ class GapFillEngine:
                 return result
         else:
             # Still need penalties for Phase 3
-            penalties = self._penalty_calc.calculate_batch(candidates, evidence_results)
+            penalties = (
+                self._penalty_calc.calculate_batch(candidates, evidence_results)
+                if self._evidence_weighted
+                else {candidate.reaction.id: 1.0 for candidate in candidates}
+            )
             for candidate in candidates:
                 if candidate.reaction.id in penalties:
                     candidate.penalty = penalties[candidate.reaction.id]
                 ev = evidence_results.get(candidate.reaction.id)
-                if ev is not None:
+                if not self._evidence_weighted:
+                    candidate.evidence_tier = None
+                elif ev is not None:
                     candidate.evidence_tier = ev.evidence_tier
 
         latest_after_results: list[TaskResult] | None = None
@@ -678,11 +695,11 @@ class GapFillEngine:
         try:
             test_model = model.copy()
             self._preseed_missing_task_target(test_model, universal, task)
-            test_model = self._task_runner.prepare_task_model(test_model, task, copy_model=False)
             existing = set(test_model.reactions.list_attr("id"))
             to_add = [r.copy() for r in reactions if r.id not in existing]
             if to_add:
                 test_model.add_reactions(to_add)
+            test_model = self._task_runner.prepare_task_model(test_model, task, copy_model=False)
             solution = test_model.optimize()
             actual = (
                 solution.objective_value
@@ -804,15 +821,30 @@ class GapFillEngine:
     ) -> list[list[cobra.Reaction]]:
         """Run gap-fill for a task and return alternative reaction sets."""
         test_model = model.copy()
-        preseeded = self._preseed_missing_task_target(test_model, universal, task)
+        # Keep permanent additions separate from the task-local bounds applied
+        # to the temporary target reaction in test_model.
+        preseeded = [
+            reaction.copy()
+            for reaction in self._preseed_missing_task_target(test_model, universal, task)
+        ]
+        solver_universal = universal.copy()
         try:
             test_model = self._task_runner.prepare_task_model(test_model, task, copy_model=False)
+            # Candidates absent from the draft still have to obey this task's
+            # bounds and medium. Apply only the environment, without adding any
+            # objective, demand, or turnover reactions to the universal.
+            reaction_map, _, exchange_groups = self._task_runner._build_id_maps(
+                test_model, additional_model=solver_universal
+            )
+            self._task_runner._apply_task_environment(
+                solver_universal, task, reaction_map, exchange_groups
+            )
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 
         result = cobra.flux_analysis.gapfilling.gapfill(
             test_model,
-            universal,
+            solver_universal,
             lower_bound=lower_bound,
             penalties=penalties,
             demand_reactions=False,
@@ -826,7 +858,8 @@ class GapFillEngine:
         for solution in result:
             reactions_by_id = {rxn.id: rxn for rxn in preseeded}
             for rxn in solution:
-                reactions_by_id.setdefault(rxn.id, rxn)
+                if rxn.id not in reactions_by_id:
+                    reactions_by_id[rxn.id] = universal.reactions.get_by_id(rxn.id).copy()
             reactions = list(reactions_by_id.values())
             if reactions:
                 solutions.append(reactions)

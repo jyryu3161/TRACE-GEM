@@ -93,7 +93,7 @@ async def refine_model_data(
         tasks_path: Path to metabolic tasks CSV.
         base_medium: Pre-resolved base medium ({EX_id: lower_bound}); merged into
             each task (task-specific medium wins).
-        skip_evaluation: Skip evidence evaluation of model + candidate reactions.
+        skip_evaluation: Skip candidate evidence and use a uniform cost of 1 per candidate.
         include_exchange_gapfill: Allow exchange/demand/sink reactions as candidates.
         progress_callback: ``(phase, current, total, detail)`` forwarded to the engine.
         log: Optional milestone logger ``(str) -> None``.
@@ -150,7 +150,7 @@ async def refine_model_data(
         # which universal reactions to add). Model quality is judged by tasks,
         # not by per-reaction evidence.
         if skip_evaluation:
-            _log("Skipping candidate evidence evaluation")
+            _log("Unweighted gap-fill: skipping candidate evidence; every candidate costs 1")
         else:
             _log(f"Evaluating {len(candidates)} candidate reactions...")
 
@@ -162,7 +162,7 @@ async def refine_model_data(
                 candidates, progress_callback=_cand_progress
             )
 
-        gapfill_engine = GapFillEngine(config)
+        gapfill_engine = GapFillEngine(config, evidence_weighted=not skip_evaluation)
         try:
             # initialize inside the try so a failure still closes the engine
             # (OrganismFilter's aiohttp session).

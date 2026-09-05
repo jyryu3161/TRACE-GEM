@@ -53,8 +53,9 @@ async def test_refine_model_data_orchestration(monkeypatch) -> None:
     gf_result = GapFillResult(total_tasks=1, tasks_fixed=1)
 
     class FakeGapFill:
-        def __init__(self, config):
+        def __init__(self, config, *, evidence_weighted=True):
             self.config = config
+            assert evidence_weighted is False
 
         async def initialize(self, **kwargs):
             self.org = kwargs.get("organism_code")
@@ -94,6 +95,7 @@ async def test_refine_model_data_orchestration(monkeypatch) -> None:
     assert len(outcome.tasks) == 1
     # skip_evaluation -> evidence engine not queried
     ev_engine.evaluate_batch.assert_not_called()
+    ev_engine.evaluate_candidates_batch.assert_not_called()
     assert any("Gap-fill complete" in m for m in logs)
 
 

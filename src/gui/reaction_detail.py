@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTextBrowser,
@@ -37,6 +38,7 @@ class ReactionDetailWidget(QWidget):
         self._reaction: Reaction | None = None
         self._model: ModelData | None = None
         self._read_only = False
+        self._displayed_bounds: tuple[float, float] | None = None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -73,12 +75,12 @@ class ReactionDetailWidget(QWidget):
         # Bounds
         bounds_layout = QHBoxLayout()
         self._lower_bound_spin = QDoubleSpinBox()
-        self._lower_bound_spin.setRange(-1000.0, 1000.0)
-        self._lower_bound_spin.setDecimals(1)
+        self._lower_bound_spin.setDecimals(15)
+        self._lower_bound_spin.setRange(float("-inf"), float("inf"))
         self._lower_bound_spin.setPrefix("lower: ")
         self._upper_bound_spin = QDoubleSpinBox()
-        self._upper_bound_spin.setRange(-1000.0, 1000.0)
-        self._upper_bound_spin.setDecimals(1)
+        self._upper_bound_spin.setDecimals(15)
+        self._upper_bound_spin.setRange(float("-inf"), float("inf"))
         self._upper_bound_spin.setPrefix("upper: ")
         bounds_layout.addWidget(self._lower_bound_spin)
         bounds_layout.addWidget(self._upper_bound_spin)
@@ -177,6 +179,10 @@ class ReactionDetailWidget(QWidget):
         self._subsystem_edit.setText(reaction.subsystem or "")
         self._lower_bound_spin.setValue(reaction.lower_bound)
         self._upper_bound_spin.setValue(reaction.upper_bound)
+        self._displayed_bounds = (
+            self._lower_bound_spin.value(),
+            self._upper_bound_spin.value(),
+        )
         self._equation_id_display.setPlainText(reaction.equation_id or reaction.equation)
         self._equation_edit.setPlainText(reaction.equation)
         self._gpr_edit.setPlainText(reaction.gene_reaction_rule or "")
@@ -221,6 +227,7 @@ class ReactionDetailWidget(QWidget):
 
     def clear(self) -> None:
         self._reaction = None
+        self._displayed_bounds = None
         self._title.setText("Select a reaction")
         self._id_label.setText("-")
         self._name_edit.clear()
@@ -244,18 +251,22 @@ class ReactionDetailWidget(QWidget):
 
         reaction = self._reaction
 
-        # Update Reaction dataclass fields
-        reaction.name = self._name_edit.text()
-        reaction.subsystem = self._subsystem_edit.text() or None
+        name = self._name_edit.text()
+        subsystem = self._subsystem_edit.text() or None
+        gene_rule = self._gpr_edit.toPlainText()
         lb = self._lower_bound_spin.value()
         ub = self._upper_bound_spin.value()
+        # Keep the exact original bounds when the user did not edit them, even
+        # when their precision exceeds the editor's displayed decimal places.
+        if self._displayed_bounds is not None:
+            if lb == self._displayed_bounds[0]:
+                lb = reaction.lower_bound
+            if ub == self._displayed_bounds[1]:
+                ub = reaction.upper_bound
         if lb > ub:
             lb, ub = ub, lb
-        reaction.lower_bound = lb
-        reaction.upper_bound = ub
-        reaction.gene_reaction_rule = self._gpr_edit.toPlainText()
 
-        # Sync with cobra model if available
+        # Commit to the calculation model before changing the GUI model.
         if self._model and self._model.cobra_model:
             try:
                 import cobra
@@ -263,12 +274,34 @@ class ReactionDetailWidget(QWidget):
                 cm = self._model.cobra_model
                 if isinstance(cm, cobra.Model):
                     cobra_rxn = cm.reactions.get_by_id(reaction.id)
-                    cobra_rxn.name = reaction.name
-                    cobra_rxn.lower_bound = reaction.lower_bound
-                    cobra_rxn.upper_bound = reaction.upper_bound
-                    cobra_rxn.gene_reaction_rule = reaction.gene_reaction_rule
-                    cobra_rxn.subsystem = reaction.subsystem or ""
+                    original = (
+                        cobra_rxn.bounds,
+                        cobra_rxn.name,
+                        cobra_rxn.gene_reaction_rule,
+                        cobra_rxn.subsystem,
+                    )
+                    try:
+                        cobra_rxn.bounds = (lb, ub)
+                        cobra_rxn.gene_reaction_rule = gene_rule
+                        cobra_rxn.name = name
+                        cobra_rxn.subsystem = subsystem or ""
+                    except Exception:
+                        (
+                            cobra_rxn.bounds,
+                            cobra_rxn.name,
+                            cobra_rxn.gene_reaction_rule,
+                            cobra_rxn.subsystem,
+                        ) = original
+                        raise
             except Exception as e:
                 logger.warning("Failed to sync cobra model for %s: %s", reaction.id, e)
+                QMessageBox.warning(self, "Save Changes Error", str(e))
+                return
 
+        reaction.name = name
+        reaction.subsystem = subsystem
+        reaction.lower_bound = lb
+        reaction.upper_bound = ub
+        reaction.gene_reaction_rule = gene_rule
+        self.set_reaction(reaction)
         self.reaction_modified.emit(reaction.id)

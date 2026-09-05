@@ -133,7 +133,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gf_group.add_argument(
         "--skip-evaluation",
         action="store_true",
-        help="Skip KEGG evidence evaluation of gap-fill candidates (use default penalties)",
+        help="Use unweighted gap-fill: skip candidate evidence and give every candidate cost 1",
     )
     gf_group.add_argument(
         "--include-exchange-gapfill",
@@ -475,7 +475,7 @@ async def async_gapfill_main(
         # KEGG evidence is computed only for gap-fill candidates (to weight
         # which universal reactions to add). Model quality is judged by tasks.
         if skip_evaluation:
-            _eprint("Skipping candidate evidence evaluation (--skip-evaluation)")
+            _eprint("Unweighted gap-fill: skipping candidate evidence; every candidate costs 1")
         else:
             _eprint(f"Evaluating {len(candidates)} candidate reactions...")
             cand_start = time.monotonic()
@@ -500,7 +500,7 @@ async def async_gapfill_main(
         _eprint("Starting gap-fill pipeline...")
         assert model_data.cobra_model is not None, "COBRA model not available"
 
-        gapfill_engine = GapFillEngine(config)
+        gapfill_engine = GapFillEngine(config, evidence_weighted=not skip_evaluation)
         cache_mgr = evidence_engine.cache_manager
         mapping_data = evidence_engine.mapping_data
 
